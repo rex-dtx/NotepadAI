@@ -25,7 +25,9 @@
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QTextBlock>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -51,6 +53,27 @@ void configureBubbleBrowser(QTextBrowser *b)
     b->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     b->setFrameShape(QFrame::NoFrame);
     b->document()->setDocumentMargin(0);
+}
+
+// QTextBlock carries an implicit top/bottom margin (paragraph leading) that
+// `documentMargin(0)` does NOT zero. The result is that `doc->size().height()`
+// over-reports the rendered text height by ~one line's worth of leading,
+// inflating bubbles with empty space below the last visible line. Walk every
+// block and merge a zero-margin block format so the document's size matches
+// what the user actually sees.
+void normalizeBlockMargins(QTextDocument *doc)
+{
+    if (!doc) return;
+    QTextBlockFormat zero;
+    zero.setTopMargin(0);
+    zero.setBottomMargin(0);
+    QTextCursor cur(doc);
+    cur.movePosition(QTextCursor::Start);
+    do {
+        QTextCursor blockCur = cur;
+        blockCur.select(QTextCursor::BlockUnderCursor);
+        blockCur.mergeBlockFormat(zero);
+    } while (cur.movePosition(QTextCursor::NextBlock));
 }
 
 } // namespace
@@ -83,12 +106,18 @@ AcpMessageWidget::AcpMessageWidget(QString role, QWidget *parent)
         m_thoughtHeader->setChecked(true); // start expanded while streaming
         m_thoughtHeader->setStyleSheet(QStringLiteral("QToolButton { border: none; padding: 0; margin: 0; font-style: italic; color: palette(placeholder-text); text-align: left; }"));
         m_thoughtHeader->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        m_thoughtHeader->setFixedHeight(m_thoughtHeader->fontMetrics().height());
         m_layout->addWidget(m_thoughtHeader);
 
         m_browser = new QTextBrowser(this);
         m_browser->setStyleSheet(QStringLiteral("QTextBrowser { background: transparent; border: none; font-style: italic; padding-left: 4px; }"));
         m_browser->setOpenExternalLinks(true);
         configureBubbleBrowser(m_browser);
+        // QTextDocument paragraphs carry an implicit ~12px bottom margin even
+        // with documentMargin=0; zero it out so the bubble doesn't sprout
+        // phantom whitespace below the last line.
+        m_browser->document()->setDefaultStyleSheet(
+            QStringLiteral("p, body { margin: 0; padding: 0; }"));
         m_layout->addWidget(m_browser);
 
         connect(m_thoughtHeader, &QToolButton::toggled, this, [this](bool checked) {
@@ -232,8 +261,21 @@ void AcpMessageWidget::rerender()
         html.replace(QRegularExpression(QStringLiteral("<table([^>]*)>")),
                      QStringLiteral("<table\\1 cellspacing=\"0\" cellpadding=\"8\">"));
         m_browser->document()->setHtml(html);
+        normalizeBlockMargins(m_browser->document());
     } else {
-        m_browser->document()->setPlainText(m_text);
+        // Streamed chunks often end with "\n", which QTextDocument turns into
+        // an empty trailing block that adds a full line-height of phantom
+        // whitespace below the visible text. Strip trailing whitespace so the
+        // document size matches what the user actually reads.
+        QString text = m_text;
+        while (!text.isEmpty() && (text.endsWith(QLatin1Char('\n'))
+                                   || text.endsWith(QLatin1Char('\r'))
+                                   || text.endsWith(QLatin1Char(' '))
+                                   || text.endsWith(QLatin1Char('\t')))) {
+            text.chop(1);
+        }
+        m_browser->document()->setPlainText(text);
+        normalizeBlockMargins(m_browser->document());
     }
     refitBrowserHeight();
 }
@@ -263,7 +305,10 @@ void AcpMessageWidget::refitBrowserHeight()
     // bubble. Computing the bubble height here directly is authoritative.
     int bubbleH = marginT + marginB;
     if (m_thoughtHeader) {
-        bubbleH += m_thoughtHeader->sizeHint().height();
+        // Use font metrics for the header height; QToolButton::sizeHint()
+        // adds style-derived button margins even with stylesheet padding:0,
+        // which adds phantom vertical space inside the bubble.
+        bubbleH += m_thoughtHeader->fontMetrics().height();
         if (m_browser->isVisible()) {
             bubbleH += m_layout->spacing() + browserH;
         }
