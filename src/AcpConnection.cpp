@@ -503,9 +503,21 @@ void AcpConnection::setConfigOption(const QString &id, const QJsonValue &value)
     params.insert(QStringLiteral("configId"), id);
     params.insert(QStringLiteral("value"), value);
     sendRequest(AcpProtocol::kMethodSessionSetConfig, params,
-                [this](const QJsonValue &, const QJsonValue &error) {
+                [this](const QJsonValue &result, const QJsonValue &error) {
                     if (!error.isUndefined() && !error.isNull()) {
                         emit requestFailed(rpcErrorMessage(error));
+                        return;
+                    }
+                    // Agents (e.g. Claude Code) return the refreshed
+                    // configOptions inside the result rather than firing a
+                    // separate session/update notification. Apply the result
+                    // payload through the same path as the notification so the
+                    // model and UI see the new currentValue.
+                    const QJsonObject obj = result.toObject();
+                    const QJsonValue opts = obj.value(QStringLiteral("configOptions"));
+                    if (opts.isArray()) {
+                        m_configOptions = parseConfigOptions(opts.toArray());
+                        emit configOptionsUpdated(m_configOptions);
                     }
                 });
 }

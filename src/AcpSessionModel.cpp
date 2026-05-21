@@ -490,6 +490,25 @@ void AcpSessionModel::onCurrentModeChanged(const QString &modeId)
 void AcpSessionModel::onConfigOptionsUpdated(const QList<AcpConfigOption> &options)
 {
     m_configOptions = options;
+
+    // Agents (e.g. Claude Code) signal a model or mode change via a
+    // config_option_update notification rather than the dedicated
+    // session/set_model or current_mode_update channels. Without syncing the
+    // single-field current* state, the next metadata-driven re-hydration
+    // would snap the combo back to whatever was set at session creation.
+    for (const auto &opt : options) {
+        if (opt.id == QLatin1String("model")) {
+            const QString v = opt.currentValue.toString();
+            if (!v.isEmpty()) m_currentModelId = v;
+        } else if (opt.id == QLatin1String("mode")) {
+            const QString v = opt.currentValue.toString();
+            if (!v.isEmpty() && v != m_currentModeId) {
+                m_currentModeId = v;
+                emit currentModeChanged(v);
+            }
+        }
+    }
+
     emit metadataChanged();
 }
 
