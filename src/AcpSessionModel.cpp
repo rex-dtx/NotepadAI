@@ -70,8 +70,14 @@ QJsonObject usageToJson(const AcpUsage &u)
                u.inputTokens.has_value() ? QJsonValue(*u.inputTokens) : QJsonValue());
     obj.insert(QStringLiteral("outputTokens"),
                u.outputTokens.has_value() ? QJsonValue(*u.outputTokens) : QJsonValue());
+    obj.insert(QStringLiteral("totalTokens"),
+               u.totalTokens.has_value() ? QJsonValue(*u.totalTokens) : QJsonValue());
     obj.insert(QStringLiteral("maxTokens"),
                u.maxTokens.has_value() ? QJsonValue(*u.maxTokens) : QJsonValue());
+    obj.insert(QStringLiteral("costAmount"),
+               u.costAmount.has_value() ? QJsonValue(*u.costAmount) : QJsonValue());
+    obj.insert(QStringLiteral("costCurrency"),
+               u.costCurrency.has_value() ? QJsonValue(*u.costCurrency) : QJsonValue());
     return obj;
 }
 
@@ -86,9 +92,21 @@ AcpUsage usageFromJson(const QJsonObject &obj)
     if (out.isDouble()) {
         u.outputTokens = out.toInt();
     }
+    const auto tot = obj.value(QStringLiteral("totalTokens"));
+    if (tot.isDouble()) {
+        u.totalTokens = tot.toInt();
+    }
     const auto mx = obj.value(QStringLiteral("maxTokens"));
     if (mx.isDouble()) {
         u.maxTokens = mx.toInt();
+    }
+    const auto amt = obj.value(QStringLiteral("costAmount"));
+    if (amt.isDouble()) {
+        u.costAmount = amt.toDouble();
+    }
+    const auto cur = obj.value(QStringLiteral("costCurrency"));
+    if (cur.isString()) {
+        u.costCurrency = cur.toString();
     }
     return u;
 }
@@ -530,7 +548,18 @@ void AcpSessionModel::onConfigOptionsUpdated(const QList<AcpConfigOption> &optio
 
 void AcpSessionModel::onUsageUpdated(const AcpUsage &usage)
 {
-    m_usage = usage;
+    // Merge into existing snapshot: different wire events (usage_update vs.
+    // session_info_update vs. session/prompt response) carry overlapping but
+    // not identical fields. Replacing wholesale would drop e.g. maxTokens
+    // when a later event only reports totalTokens.
+    AcpUsage merged = m_usage.value_or(AcpUsage{});
+    if (usage.inputTokens.has_value())  merged.inputTokens  = usage.inputTokens;
+    if (usage.outputTokens.has_value()) merged.outputTokens = usage.outputTokens;
+    if (usage.totalTokens.has_value())  merged.totalTokens  = usage.totalTokens;
+    if (usage.maxTokens.has_value())    merged.maxTokens    = usage.maxTokens;
+    if (usage.costAmount.has_value())   merged.costAmount   = usage.costAmount;
+    if (usage.costCurrency.has_value()) merged.costCurrency = usage.costCurrency;
+    m_usage = merged;
     emit usageChanged();
     schedulePersistIfNeeded();
 }

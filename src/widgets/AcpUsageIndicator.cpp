@@ -40,7 +40,7 @@ AcpUsageIndicator::AcpUsageIndicator(QWidget *parent)
 
     m_label = new QLabel(this);
     m_label->setAccessibleName(tr("Token usage"));
-    m_label->setAccessibleDescription(tr("Input and output tokens used in this session"));
+    m_label->setAccessibleDescription(tr("Total tokens used in the latest turn"));
     m_label->hide();
 
     m_bar = new QProgressBar(this);
@@ -72,23 +72,32 @@ void AcpUsageIndicator::setUsage(const std::optional<AcpProtocol::AcpUsage> &usa
 
     const AcpProtocol::AcpUsage &u = *usage;
 
-    if (u.inputTokens.has_value() || u.outputTokens.has_value()) {
-        const int in = u.inputTokens.value_or(0);
-        const int out = u.outputTokens.value_or(0);
-        m_label->setText(tr("In: %1 / Out: %2")
-                             .arg(formatThousands(in),
-                                  formatThousands(out)));
+    // Prefer totalTokens (authoritative end-of-turn / running session total).
+    // Fall back to inputTokens + outputTokens if the agent didn't send a total.
+    std::optional<int> total = u.totalTokens;
+    if (!total.has_value() && (u.inputTokens.has_value() || u.outputTokens.has_value())) {
+        total = u.inputTokens.value_or(0) + u.outputTokens.value_or(0);
+    }
+
+    if (total.has_value()) {
+        QString text = formatThousands(*total);
+        if (u.costAmount.has_value()) {
+            const QString currency = u.costCurrency.value_or(QStringLiteral("USD")).toLower();
+            text += QStringLiteral(" (") + QString::number(*u.costAmount, 'f', 1)
+                  + currency + QStringLiteral(")");
+        }
+        m_label->setText(text);
         m_label->show();
     } else {
         m_label->hide();
     }
 
-    if (u.maxTokens.has_value() && *u.maxTokens > 0) {
-        const int in = u.inputTokens.value_or(0);
+    if (u.maxTokens.has_value() && *u.maxTokens > 0 && total.has_value()) {
+        const int used = *total;
         const int maxTok = *u.maxTokens;
         m_bar->setRange(0, maxTok);
-        m_bar->setValue(qMin(in, maxTok));
-        const double frac = static_cast<double>(in) / static_cast<double>(maxTok);
+        m_bar->setValue(qMin(used, maxTok));
+        const double frac = static_cast<double>(used) / static_cast<double>(maxTok);
         QString level;
         if (frac >= 1.0) {
             level = QStringLiteral("error");

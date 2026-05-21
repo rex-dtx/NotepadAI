@@ -76,7 +76,10 @@ struct AcpUsage
 {
     std::optional<int> inputTokens;
     std::optional<int> outputTokens;
+    std::optional<int> totalTokens;
     std::optional<int> maxTokens;
+    std::optional<double> costAmount;
+    std::optional<QString> costCurrency;
 };
 
 struct AcpToolCall

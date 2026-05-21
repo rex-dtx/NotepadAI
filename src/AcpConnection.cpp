@@ -458,9 +458,25 @@ void AcpConnection::sendPrompt(const QString &text, const QList<QPair<QByteArray
 
     beginPrompt();
     sendRequest(AcpProtocol::kMethodSessionPrompt, params,
-                [this](const QJsonValue &, const QJsonValue &error) {
+                [this](const QJsonValue &result, const QJsonValue &error) {
                     if (!error.isUndefined() && !error.isNull()) {
                         emit requestFailed(rpcErrorMessage(error));
+                    } else if (result.isObject()) {
+                        const QJsonObject usageObj =
+                            result.toObject().value(QStringLiteral("usage")).toObject();
+                        if (!usageObj.isEmpty()) {
+                            AcpProtocol::AcpUsage usage;
+                            if (usageObj.contains(QStringLiteral("inputTokens"))) {
+                                usage.inputTokens = usageObj.value(QStringLiteral("inputTokens")).toInt();
+                            }
+                            if (usageObj.contains(QStringLiteral("outputTokens"))) {
+                                usage.outputTokens = usageObj.value(QStringLiteral("outputTokens")).toInt();
+                            }
+                            if (usageObj.contains(QStringLiteral("totalTokens"))) {
+                                usage.totalTokens = usageObj.value(QStringLiteral("totalTokens")).toInt();
+                            }
+                            emit usageUpdated(usage);
+                        }
                     }
                     // session/prompt response is the authoritative end-of-turn
                     // — regardless of whether the agent also sent a
@@ -706,8 +722,33 @@ void AcpConnection::handleInboundNotification(const QString &method, const QJson
         if (usageObj.contains(QStringLiteral("outputTokens"))) {
             usage.outputTokens = usageObj.value(QStringLiteral("outputTokens")).toInt();
         }
+        if (usageObj.contains(QStringLiteral("totalTokens"))) {
+            usage.totalTokens = usageObj.value(QStringLiteral("totalTokens")).toInt();
+        }
         if (usageObj.contains(QStringLiteral("maxTokens"))) {
             usage.maxTokens = usageObj.value(QStringLiteral("maxTokens")).toInt();
+        }
+        emit usageUpdated(usage);
+    } else if (kind == QLatin1String("usage_update")) {
+        // Flat shape: { sessionUpdate: "usage_update", used: N, size: N, cost: {...} }
+        AcpProtocol::AcpUsage usage;
+        if (update.contains(QStringLiteral("used"))) {
+            usage.totalTokens = update.value(QStringLiteral("used")).toInt();
+        }
+        if (update.contains(QStringLiteral("size"))) {
+            usage.maxTokens = update.value(QStringLiteral("size")).toInt();
+        }
+        const QJsonValue costVal = update.value(QStringLiteral("cost"));
+        if (costVal.isObject()) {
+            const QJsonObject costObj = costVal.toObject();
+            const QJsonValue amount = costObj.value(QStringLiteral("amount"));
+            if (amount.isDouble()) {
+                usage.costAmount = amount.toDouble();
+            }
+            const QJsonValue currency = costObj.value(QStringLiteral("currency"));
+            if (currency.isString()) {
+                usage.costCurrency = currency.toString();
+            }
         }
         emit usageUpdated(usage);
     } else if (kind == QLatin1String("prompt_start")) {

@@ -318,7 +318,14 @@ void AcpSessionView::buildUi()
     m_autoApproveCheck->setToolTip(tr("Automatically allow all tool calls this agent requests"));
     m_autoApproveCheck->setStyleSheet(QStringLiteral(
         "QCheckBox:checked { color: #856404; font-weight: 600; }"));
-    outer->addWidget(m_autoApproveCheck);
+    auto *autoApproveRow = new QHBoxLayout();
+    autoApproveRow->setContentsMargins(0, 0, 0, 0);
+    autoApproveRow->setSpacing(6);
+    autoApproveRow->addWidget(m_autoApproveCheck);
+    autoApproveRow->addStretch();
+    m_usageIndicator = new AcpUsageIndicator(this);
+    autoApproveRow->addWidget(m_usageIndicator);
+    outer->addLayout(autoApproveRow);
 
     // 5. Image attachments.
     m_attachmentList = new AcpImageAttachmentList(this);
@@ -354,8 +361,6 @@ void AcpSessionView::buildUi()
     btnRow->addWidget(m_modeCombo);
     btnRow->addWidget(m_effortCombo);
     btnRow->addStretch();
-    m_usageIndicator = new AcpUsageIndicator(this);
-    btnRow->addWidget(m_usageIndicator);
 
     m_elapsedTimer = new QTimer(this);
     m_elapsedTimer->setInterval(100); // 0.1 s precision

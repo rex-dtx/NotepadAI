@@ -21,6 +21,7 @@ private slots:
     void warning_level_at_80_percent();
     void error_level_at_or_above_100_percent();
     void label_only_when_no_max();
+    void label_includes_cost_when_present();
 
 private:
     template<typename T>
@@ -47,6 +48,7 @@ void TestAcpUsageIndicator::label_and_bar_shown_with_full_usage()
     AcpProtocol::AcpUsage usage;
     usage.inputTokens = 1234;
     usage.outputTokens = 567;
+    usage.totalTokens = 1801;
     usage.maxTokens = 100000;
     w.setUsage(usage);
 
@@ -56,9 +58,9 @@ void TestAcpUsageIndicator::label_and_bar_shown_with_full_usage()
     QVERIFY(bar);
     QVERIFY(!label->isHidden());
     QVERIFY(!bar->isHidden());
-    QVERIFY(label->text().contains(QStringLiteral("1.2k")));
-    QVERIFY(label->text().contains(QStringLiteral("0.6k")));
-    QCOMPARE(bar->value(), 1234);
+    // Single total label, formatted as "X.Xk".
+    QCOMPARE(label->text(), QStringLiteral("1.8k"));
+    QCOMPARE(bar->value(), 1801);
     QCOMPARE(bar->maximum(), 100000);
 }
 
@@ -107,5 +109,20 @@ void TestAcpUsageIndicator::label_only_when_no_max()
     QVERIFY(bar->isHidden());
 }
 
+void TestAcpUsageIndicator::label_includes_cost_when_present()
+{
+    AcpUsageIndicator w;
+    AcpProtocol::AcpUsage usage;
+    usage.totalTokens = 44030;
+    usage.costAmount = 0.29799275;
+    usage.costCurrency = QStringLiteral("USD");
+    w.setUsage(usage);
+
+    auto *label = w.findChild<QLabel *>();
+    QVERIFY(label);
+    QCOMPARE(label->text(), QStringLiteral("44.0k (0.3usd)"));
+}
+
 QTEST_MAIN(TestAcpUsageIndicator)
 #include "test_acp_usage_indicator.moc"
+
