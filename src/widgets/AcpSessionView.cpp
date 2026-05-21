@@ -209,14 +209,17 @@ void AcpSessionView::buildUi()
     m_scroll->setWidget(m_transcriptHost);
     outer->addWidget(m_scroll, 1);
 
-    // Jump-to-bottom overlay.
-    m_jumpToBottom = new QToolButton(m_transcriptHost);
+    // Jump-to-bottom overlay. Parented to the scroll area's viewport (not the
+    // transcript host) so the button stays pinned to the bottom-right of the
+    // visible region instead of scrolling away with the content.
+    m_jumpToBottom = new QToolButton(m_scroll->viewport());
     m_jumpToBottom->setText(QStringLiteral("↓"));
     m_jumpToBottom->setToolTip(tr("Jump to bottom"));
     m_jumpToBottom->setAutoRaise(false);
     m_jumpToBottom->setStyleSheet(QStringLiteral(
         "QToolButton { background: palette(button); border: 1px solid palette(mid); border-radius: 12px; min-width: 24px; min-height: 24px; }"));
     m_jumpToBottom->hide();
+    m_scroll->viewport()->installEventFilter(this);
     connect(m_jumpToBottom, &QToolButton::clicked, this, &AcpSessionView::onJumpToBottomClicked);
 
     if (auto *vbar = m_scroll->verticalScrollBar()) {
@@ -1017,18 +1020,23 @@ void AcpSessionView::updateJumpButtonVisibility()
 
 void AcpSessionView::positionJumpButton()
 {
-    if (!m_jumpToBottom || !m_transcriptHost) return;
-    const QSize hostSize = m_transcriptHost->size();
+    if (!m_jumpToBottom || !m_scroll) return;
+    QWidget *vp = m_scroll->viewport();
+    if (!vp) return;
+    const QSize vpSize = vp->size();
     const QSize btnSize = m_jumpToBottom->sizeHint();
-    const int x = qMax(0, hostSize.width() - btnSize.width() - 8);
-    const int y = qMax(0, hostSize.height() - btnSize.height() - 8);
+    constexpr int kMargin = 8;
+    const int x = qMax(0, vpSize.width() - btnSize.width() - kMargin);
+    const int y = qMax(0, vpSize.height() - btnSize.height() - kMargin);
     m_jumpToBottom->move(x, y);
     m_jumpToBottom->resize(btnSize);
 }
 
 bool AcpSessionView::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_transcriptHost && event->type() == QEvent::Resize) {
+    if (event->type() == QEvent::Resize
+        && (watched == m_transcriptHost
+            || (m_scroll && watched == m_scroll->viewport()))) {
         positionJumpButton();
     }
     return QWidget::eventFilter(watched, event);
