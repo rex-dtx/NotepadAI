@@ -88,7 +88,7 @@ QVector<DiffLine> lcsLineDiff(const QStringList &oldLines, const QStringList &ne
             out.prepend({DiffKind::Context, i, j, oldLines[i - 1]});
             --i;
             --j;
-        } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+        } else if (dp[i - 1][j] > dp[i][j - 1]) {
             out.prepend({DiffKind::Remove, i, 0, oldLines[i - 1]});
             --i;
         } else {
@@ -138,18 +138,11 @@ QString renderDiffRow(const DiffLine &line, const DiffPalette &pal, int numWidth
             bg = QStringLiteral("transparent");
             mark = QStringLiteral(" ");
             markColor = pal.dim;
-            // Prefer the new-side line number so reviewers can map back to
-            // the post-change file; falls back to the old number if the
-            // diff is one-sided (shouldn't happen for context rows, but be
-            // defensive).
             displayNum = line.newLine > 0 ? line.newLine : line.oldLine;
             break;
     }
-    // Single line-number column, padded with NBSP so digit positions align
-    // regardless of row kind (the previous two-column layout shifted the
-    // number to the left for deletions and to the right for additions).
     return QStringLiteral(
-               "<div style=\"background:%1; color:%2; white-space:pre; "
+               "<div style=\"background:%1; color:%2; white-space:pre-wrap; "
                "font-family: Consolas, monospace; padding: 0 4px;\">"
                "<span style=\"color:%3;\">%4</span> "
                "<span style=\"color:%5;\">%6</span> %7</div>")
@@ -169,6 +162,7 @@ QString renderDiffBlock(const QJsonObject &block, const DiffPalette &pal)
     auto splitLines = [](const QString &s) {
         QStringList lines = s.split(QLatin1Char('\n'));
         if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
+        lines.removeAll(QStringLiteral("No newline at end of file"));
         return lines;
     };
     const QStringList oldLines = splitLines(oldText);
@@ -205,6 +199,9 @@ QString renderDiffBlock(const QJsonObject &block, const DiffPalette &pal)
     html += QStringLiteral("<div style=\"border: 1px solid %1; border-radius: 4px;\">")
                 .arg(pal.border);
     for (const auto &row : rows) {
+        if (row.kind == DiffKind::Context && row.text.isEmpty()) {
+            continue;
+        }
         html += renderDiffRow(row, pal, numWidth);
     }
     html += QStringLiteral("</div>");

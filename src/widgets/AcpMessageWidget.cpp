@@ -22,6 +22,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
+#include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QTextBrowser>
@@ -34,11 +35,11 @@
 namespace {
 
 constexpr const char *kFrameStyleUser =
-    "AcpMessageWidget[role=\"user\"] { background: palette(alternate-base); border-radius: 6px; }";
+    "AcpMessageWidget[role=\"user\"] { background: rgba(128, 128, 128, 38); border-radius: 6px; margin-left: 12px; }";
 constexpr const char *kFrameStyleAssistant =
     "AcpMessageWidget[role=\"assistant\"] { background: palette(base); border-radius: 6px; }";
 constexpr const char *kFrameStyleThought =
-    "AcpMessageWidget[role=\"thought\"] { background: palette(window); border: 1px dashed palette(mid); border-radius: 6px; }";
+    "AcpMessageWidget[role=\"thought\"] { background: palette(base); border-radius: 6px; }";
 
 // Inline message bubbles size to content — they must never show a scrollbar
 // (it would reserve viewport width and create a feedback loop where the height
@@ -65,7 +66,11 @@ AcpMessageWidget::AcpMessageWidget(QString role, QWidget *parent)
                   QString::fromLatin1(kFrameStyleThought));
 
     m_layout = new QVBoxLayout(this);
-    m_layout->setContentsMargins(8, 6, 8, 6);
+    if (m_role == QLatin1String("thought")) {
+        m_layout->setContentsMargins(4, 4, 4, 4);
+    } else {
+        m_layout->setContentsMargins(8, 6, 8, 6);
+    }
     m_layout->setSpacing(2);
 
     if (m_role == QLatin1String("user")) {
@@ -76,12 +81,12 @@ AcpMessageWidget::AcpMessageWidget(QString role, QWidget *parent)
         m_thoughtHeader->setText(tr("Thinking…"));
         m_thoughtHeader->setCheckable(true);
         m_thoughtHeader->setChecked(true); // start expanded while streaming
-        m_thoughtHeader->setStyleSheet(QStringLiteral("QToolButton { border: none; font-style: italic; color: palette(placeholder-text); }"));
+        m_thoughtHeader->setStyleSheet(QStringLiteral("QToolButton { border: none; padding: 0; margin: 0; font-style: italic; color: palette(placeholder-text); text-align: left; }"));
         m_thoughtHeader->setToolButtonStyle(Qt::ToolButtonTextOnly);
         m_layout->addWidget(m_thoughtHeader);
 
         m_browser = new QTextBrowser(this);
-        m_browser->setStyleSheet(QStringLiteral("QTextBrowser { background: transparent; border: none; font-style: italic; }"));
+        m_browser->setStyleSheet(QStringLiteral("QTextBrowser { background: transparent; border: none; font-style: italic; padding-left: 4px; }"));
         m_browser->setOpenExternalLinks(true);
         configureBubbleBrowser(m_browser);
         m_layout->addWidget(m_browser);
@@ -210,7 +215,23 @@ void AcpMessageWidget::rerender()
     if (!m_browser) return;
 
     if (m_role == QLatin1String("assistant")) {
-        m_browser->document()->setMarkdown(m_text);
+        const QString borderColor = palette().color(QPalette::Mid).name();
+        const QString headerBg = palette().color(QPalette::AlternateBase).name();
+        m_browser->document()->setDefaultStyleSheet(QStringLiteral(
+            "table { border-collapse: collapse; }"
+            "th, td { border: 1px solid %1; padding: 8px; }"
+            "th { background-color: %2; }"
+        ).arg(borderColor, headerBg));
+
+        // QTextDocument renders markdown tables with default cellspacing,
+        // producing visible double borders. Re-emit the HTML with
+        // cellspacing="0" so border-collapse actually collapses.
+        QTextDocument tmp;
+        tmp.setMarkdown(m_text);
+        QString html = tmp.toHtml();
+        html.replace(QRegularExpression(QStringLiteral("<table([^>]*)>")),
+                     QStringLiteral("<table\\1 cellspacing=\"0\" cellpadding=\"8\">"));
+        m_browser->document()->setHtml(html);
     } else {
         m_browser->document()->setPlainText(m_text);
     }
@@ -263,8 +284,6 @@ void AcpMessageWidget::changeEvent(QEvent *event)
 {
     QFrame::changeEvent(event);
     if (event->type() == QEvent::FontChange) {
-        // QTextDocument lays out under the new font metrics; we must re-fit so
-        // setFixedHeight() above matches the new doc->size().height().
         refitBrowserHeight();
     }
 }
@@ -284,7 +303,5 @@ void AcpMessageWidget::applyCollapsed(bool collapsed)
     if (m_browser) {
         m_browser->setVisible(!collapsed);
     }
-    // Re-pin the bubble so it shrinks to header-only when collapsed (and
-    // grows back when re-expanded).
     refitBrowserHeight();
 }
