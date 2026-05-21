@@ -43,6 +43,12 @@ const int MARK_HIDELINESBEGIN = 23;
 const int MARK_HIDELINESEND = 22;
 const int MARK_HIDELINESUNDERLINE = 21;
 
+// Property key used to stash the per-style lexer foregrounds before the
+// dark-mode DarkPalette transform mutates them in-place. Restored on a
+// dark→light transition so the user sees the lexer's original light-mode
+// colors instead of dark-lightened ones on a white background.
+namespace { constexpr const char *kLexerFgCacheProp = "nade.lexerFg"; }
+
 
 EditorManager::EditorManager(ApplicationSettings *settings, QObject *parent)
     : QObject(parent), settings(settings)
@@ -294,9 +300,35 @@ void EditorManager::setupEditor(ScintillaNext *editor)
 
 void EditorManager::applyTheme(bool dark)
 {
+    const bool transitionToLight = darkTheme && !dark;
     darkTheme = dark;
 
     for (auto &editor : getEditors()) {
+        if (!editor) continue;
+
+        if (transitionToLight) {
+            // Coming from dark, where applyThemeToEditor lightened the lexer
+            // foregrounds in-place. The original lexer-written values were
+            // cached on entry to the dark transform — restore them now so
+            // the user gets the lexer's light-mode palette instead of the
+            // dark-lightened one painted on a white background.
+            //
+            // ScintillaEdit shadows QObject::setProperty with its own Scintilla
+            // string-property overload, so we qualify with QObject:: to reach
+            // Qt's dynamic-property API.
+            const QVariant cached = editor->QObject::property(kLexerFgCacheProp);
+            if (cached.isValid()) {
+                const QByteArray bytes = cached.toByteArray();
+                if (bytes.size() == static_cast<int>((STYLE_MAX + 1) * sizeof(int))) {
+                    const int *p = reinterpret_cast<const int*>(bytes.constData());
+                    for (int i = 0; i <= STYLE_MAX; ++i) {
+                        editor->styleSetFore(i, p[i]);
+                    }
+                }
+                editor->QObject::setProperty(kLexerFgCacheProp, QVariant());
+            }
+        }
+
         applyThemeToEditor(editor, dark, /*initialSetup=*/false);
     }
 }
@@ -356,10 +388,20 @@ void EditorManager::applyThemeToEditor(ScintillaNext *editor, bool dark, bool in
     // pure transform so e.g. dark-green comments and pure-black identifiers
     // become readable on #1E1E1E. Chrome styles (line number, brace, indent
     // guide) are re-asserted below so this loop never wins over them.
+    //
+    // Snapshot the pre-transform values onto the editor first: that's the
+    // original lexer fg (lexerChanged is the only path that mutates style
+    // fgs between calls), and we'll restore it on the dark→light transition
+    // so the lexer's light-mode palette is recovered without re-running it.
     if (dark && !initialSetup) {
+        QByteArray cache((STYLE_MAX + 1) * static_cast<int>(sizeof(int)), Qt::Uninitialized);
+        int *p = reinterpret_cast<int*>(cache.data());
         for (int i = 0; i <= STYLE_MAX; ++i) {
-            const int sciFg = static_cast<int>(editor->styleFore(i));
-            editor->styleSetFore(i, DarkPalette::lightenSciForeground(sciFg));
+            p[i] = static_cast<int>(editor->styleFore(i));
+        }
+        editor->QObject::setProperty(kLexerFgCacheProp, cache);
+        for (int i = 0; i <= STYLE_MAX; ++i) {
+            editor->styleSetFore(i, DarkPalette::lightenSciForeground(p[i]));
         }
     }
 
