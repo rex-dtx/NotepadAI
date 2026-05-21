@@ -487,6 +487,12 @@ void AcpSessionModel::onCurrentModeChanged(const QString &modeId)
     schedulePersistIfNeeded();
 }
 
+void AcpSessionModel::onConfigOptionsUpdated(const QList<AcpConfigOption> &options)
+{
+    m_configOptions = options;
+    emit metadataChanged();
+}
+
 void AcpSessionModel::onUsageUpdated(const AcpUsage &usage)
 {
     m_usage = usage;

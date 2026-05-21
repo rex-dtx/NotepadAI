@@ -130,13 +130,20 @@ struct AcpModelInfo
     QString description;
 };
 
+struct AcpConfigOptionChoice
+{
+    QString value; // canonical id sent back via session/set_config_option
+    QString name;  // user-facing label
+};
+
 struct AcpConfigOption
 {
     QString id;
     QString name;
     QString description;
-    QJsonValue value;
-    QJsonArray choices;
+    QString category; // optional, e.g. "thought_level"
+    QJsonValue currentValue;
+    QList<AcpConfigOptionChoice> options;
 };
 
 struct AcpAgentInfo

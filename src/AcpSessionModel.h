@@ -133,6 +133,7 @@ public slots:
     void onPlanReceived(const QList<AcpProtocol::AcpPlanEntry> &plan);
     void onAvailableCommandsUpdated(const QStringList &commands);
     void onCurrentModeChanged(const QString &modeId);
+    void onConfigOptionsUpdated(const QList<AcpProtocol::AcpConfigOption> &options);
     void onUsageUpdated(const AcpProtocol::AcpUsage &usage);
     void onPromptStarted();
     void onPromptEnded();

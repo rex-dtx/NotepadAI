@@ -173,7 +173,7 @@ private:
     QPlainTextEdit *m_input = nullptr;
     QPushButton *m_sendBtn = nullptr;
     QPushButton *m_cancelBtn = nullptr;
-    QPushButton *m_attachBtn = nullptr;
+    QToolButton *m_attachBtn = nullptr;
 
     // Usage
     AcpUsageIndicator *m_usageIndicator = nullptr;

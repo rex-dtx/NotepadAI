@@ -130,8 +130,8 @@ AcpSessionView::~AcpSessionView() = default;
 void AcpSessionView::buildUi()
 {
     auto *outer = new QVBoxLayout(this);
-    outer->setContentsMargins(4, 4, 4, 4);
-    outer->setSpacing(4);
+    outer->setContentsMargins(8, 8, 8, 8);
+    outer->setSpacing(6);
 
     // 1. Status banner.
     m_banner = new QFrame(this);
@@ -245,31 +245,40 @@ void AcpSessionView::buildUi()
         });
     }
 
-    // 3. Selectors row.
-    auto *selectorsRow = new QHBoxLayout();
-    selectorsRow->setContentsMargins(0, 0, 0, 0);
-    selectorsRow->setSpacing(4);
-
+    // 3. Selectors (model / mode / effort). Constructed here so other
+    // buildUi() steps and hydrateFromModel() can populate them; placed into
+    // the button row below so the chat surface keeps a single chrome row.
+    // AdjustToContents lets each combo hug its current selection — no fixed
+    // pixel widths, no row of equally-stretched dropdowns competing with the
+    // Send button for space.
+    const QString kCompactComboCss = QStringLiteral(
+        "QComboBox { padding: 1px 4px; border: 1px solid palette(mid); border-radius: 3px; }"
+        "QComboBox::drop-down { width: 14px; }");
     m_modelCombo = new QComboBox(this);
     m_modelCombo->setToolTip(tr("Model"));
+    m_modelCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_modelCombo->setStyleSheet(kCompactComboCss);
     m_modelCombo->hide();
     m_modeCombo = new QComboBox(this);
     m_modeCombo->setToolTip(tr("Mode"));
+    m_modeCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_modeCombo->setStyleSheet(kCompactComboCss);
     m_modeCombo->hide();
     m_effortCombo = new QComboBox(this);
     m_effortCombo->setToolTip(tr("Effort"));
+    m_effortCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_effortCombo->setStyleSheet(kCompactComboCss);
     m_effortCombo->hide();
-    selectorsRow->addWidget(m_modelCombo);
-    selectorsRow->addWidget(m_modeCombo);
-    selectorsRow->addWidget(m_effortCombo);
-    selectorsRow->addStretch();
-    outer->addLayout(selectorsRow);
 
-    // 4. Auto-approve checkbox.
+    // 4. Auto-approve checkbox. The toggle is dangerous (the agent can run
+    // any tool unattended), so the checked state must be unmistakable — but
+    // a full-bleed warning-yellow block is chrome-shouting. Per the DNA, the
+    // soft warning palette is reserved for transient banners; here we settle
+    // for warning-tone bold text + the checkbox indicator itself.
     m_autoApproveCheck = new QCheckBox(tr("Auto-approve permissions"), this);
     m_autoApproveCheck->setToolTip(tr("Automatically allow all tool calls this agent requests"));
     m_autoApproveCheck->setStyleSheet(QStringLiteral(
-        "QCheckBox:checked { color: #856404; background-color: #fff3cd; padding: 2px 4px; border-radius: 2px; }"));
+        "QCheckBox:checked { color: #856404; font-weight: 600; }"));
     outer->addWidget(m_autoApproveCheck);
 
     // 5. Image attachments.
@@ -283,16 +292,27 @@ void AcpSessionView::buildUi()
     m_input = cb;
     outer->addWidget(m_input);
 
-    // 7. Button row + usage.
+    // 7. Button row + usage. Attach is a secondary chrome action — render it
+    // as a flat tool-button so Send remains the only prominent button.
     auto *btnRow = new QHBoxLayout();
     btnRow->setContentsMargins(0, 0, 0, 0);
     btnRow->setSpacing(4);
-    m_attachBtn = new QPushButton(tr("Attach"), this);
+    m_attachBtn = new QToolButton(this);
+    m_attachBtn->setText(tr("Attach"));
+    m_attachBtn->setAutoRaise(true);
+    m_attachBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_attachBtn->setToolTip(tr("Attach an image"));
+    m_attachBtn->setStyleSheet(QStringLiteral(
+        "QToolButton { color: palette(placeholder-text); padding: 4px 10px; border: 1px solid transparent; border-radius: 3px; }"
+        "QToolButton:hover { color: palette(text); border: 1px solid palette(mid); }"));
     m_cancelBtn = new QPushButton(tr("Cancel"), this);
     m_sendBtn = new QPushButton(tr("Send"), this);
     m_cancelBtn->setEnabled(false);
     m_cancelBtn->hide();
     btnRow->addWidget(m_attachBtn);
+    btnRow->addWidget(m_modelCombo);
+    btnRow->addWidget(m_modeCombo);
+    btnRow->addWidget(m_effortCombo);
     btnRow->addStretch();
     m_usageIndicator = new AcpUsageIndicator(this);
     btnRow->addWidget(m_usageIndicator);
@@ -307,7 +327,7 @@ void AcpSessionView::buildUi()
 
     connect(m_sendBtn,   &QPushButton::clicked, this, &AcpSessionView::onSendClicked);
     connect(m_cancelBtn, &QPushButton::clicked, this, &AcpSessionView::onCancelClicked);
-    connect(m_attachBtn, &QPushButton::clicked, this, &AcpSessionView::onAttachClicked);
+    connect(m_attachBtn, &QToolButton::clicked, this, &AcpSessionView::onAttachClicked);
 
     // Auto-approve state from registry.
     if (m_registry) {
@@ -681,28 +701,36 @@ void AcpSessionView::onMetadataChanged()
     }
     m_modeCombo->setVisible(!modes.isEmpty());
 
-    // Effort/reasoning config-option combo.
+    // Effort/reasoning config-option combo. Matches on id, category, or name
+    // so we pick up Claude Code's `effort` (category: "thought_level") as well
+    // as agents that surface a different label.
     m_effortCombo->clear();
     m_effortConfigOptionId.clear();
     const auto &configOpts = m_model->configOptions();
     for (const auto &opt : configOpts) {
-        const QString lower = opt.id.toLower();
-        if (lower.contains(QLatin1String("effort"))
-            || lower.contains(QLatin1String("reasoning"))) {
-            m_effortConfigOptionId = opt.id;
-            for (const auto &choiceVal : opt.choices) {
-                const QString label = choiceVal.toString();
-                if (!label.isEmpty()) {
-                    m_effortCombo->addItem(label, label);
-                }
+        const QString idLower = opt.id.toLower();
+        const QString catLower = opt.category.toLower();
+        const QString nameLower = opt.name.toLower();
+        const bool matches = idLower.contains(QLatin1String("effort"))
+            || idLower.contains(QLatin1String("reasoning"))
+            || catLower.contains(QLatin1String("thought"))
+            || catLower.contains(QLatin1String("reasoning"))
+            || nameLower.contains(QLatin1String("effort"))
+            || nameLower.contains(QLatin1String("reasoning"));
+        if (!matches) continue;
+        m_effortConfigOptionId = opt.id;
+        for (const auto &ch : opt.options) {
+            const QString label = ch.name.isEmpty() ? ch.value : ch.name;
+            if (!label.isEmpty()) {
+                m_effortCombo->addItem(label, ch.value);
             }
-            const QString currentVal = opt.value.toString();
-            if (!currentVal.isEmpty()) {
-                const int idx = m_effortCombo->findData(currentVal);
-                if (idx >= 0) m_effortCombo->setCurrentIndex(idx);
-            }
-            break;
         }
+        const QString currentVal = opt.currentValue.toString();
+        if (!currentVal.isEmpty()) {
+            const int idx = m_effortCombo->findData(currentVal);
+            if (idx >= 0) m_effortCombo->setCurrentIndex(idx);
+        }
+        break;
     }
     m_effortCombo->setVisible(m_effortCombo->count() > 0);
 

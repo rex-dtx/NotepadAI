@@ -74,6 +74,44 @@ QString rpcErrorMessage(const QJsonValue &error)
     return QString();
 }
 
+QList<AcpProtocol::AcpConfigOption> parseConfigOptions(const QJsonArray &arr)
+{
+    QList<AcpProtocol::AcpConfigOption> out;
+    for (const auto &v : arr) {
+        const QJsonObject o = v.toObject();
+        AcpProtocol::AcpConfigOption co;
+        co.id = o.value(QStringLiteral("id")).toString();
+        co.name = o.value(QStringLiteral("name")).toString();
+        co.description = o.value(QStringLiteral("description")).toString();
+        co.category = o.value(QStringLiteral("category")).toString();
+        // Spec: `currentValue`. Tolerate legacy flat `value`.
+        co.currentValue = o.contains(QStringLiteral("currentValue"))
+            ? o.value(QStringLiteral("currentValue"))
+            : o.value(QStringLiteral("value"));
+        // Spec: `options` (array of {value, name}). Tolerate legacy
+        // `choices` (array of strings).
+        if (o.contains(QStringLiteral("options"))) {
+            for (const auto &cv : o.value(QStringLiteral("options")).toArray()) {
+                const QJsonObject co2 = cv.toObject();
+                AcpProtocol::AcpConfigOptionChoice ch;
+                ch.value = co2.value(QStringLiteral("value")).toString();
+                ch.name = co2.value(QStringLiteral("name")).toString();
+                if (ch.name.isEmpty()) ch.name = ch.value;
+                if (!ch.value.isEmpty()) co.options.append(ch);
+            }
+        } else {
+            for (const auto &cv : o.value(QStringLiteral("choices")).toArray()) {
+                AcpProtocol::AcpConfigOptionChoice ch;
+                ch.value = cv.toString();
+                ch.name = cv.toString();
+                if (!ch.value.isEmpty()) co.options.append(ch);
+            }
+        }
+        out.append(co);
+    }
+    return out;
+}
+
 } // namespace
 
 AcpConnection::AcpConnection(QObject *parent)
@@ -259,8 +297,15 @@ void AcpConnection::sendNewSession()
                         m_availableCommands.append(v.toString());
                     }
 
+                    // ACP V1: modes/models are nested objects; older agents
+                    // (pre-spec) emitted them flat at the top level. Accept
+                    // either so we don't regress against existing agents.
+                    const QJsonObject modesObj = r.value(QStringLiteral("modes")).toObject();
+                    const QJsonArray modesArr = modesObj.contains(QStringLiteral("availableModes"))
+                        ? modesObj.value(QStringLiteral("availableModes")).toArray()
+                        : r.value(QStringLiteral("availableModes")).toArray();
                     m_modes.clear();
-                    for (const auto &v : r.value(QStringLiteral("availableModes")).toArray()) {
+                    for (const auto &v : modesArr) {
                         const QJsonObject o = v.toObject();
                         AcpProtocol::AcpModeInfo m;
                         m.id = o.value(QStringLiteral("id")).toString();
@@ -268,30 +313,30 @@ void AcpConnection::sendNewSession()
                         m.description = o.value(QStringLiteral("description")).toString();
                         m_modes.append(m);
                     }
-                    m_currentMode = r.value(QStringLiteral("currentMode")).toString();
+                    m_currentMode = modesObj.contains(QStringLiteral("currentModeId"))
+                        ? modesObj.value(QStringLiteral("currentModeId")).toString()
+                        : r.value(QStringLiteral("currentMode")).toString();
 
+                    const QJsonObject modelsObj = r.value(QStringLiteral("models")).toObject();
+                    const QJsonArray modelsArr = modelsObj.contains(QStringLiteral("availableModels"))
+                        ? modelsObj.value(QStringLiteral("availableModels")).toArray()
+                        : r.value(QStringLiteral("availableModels")).toArray();
                     m_models.clear();
-                    for (const auto &v : r.value(QStringLiteral("availableModels")).toArray()) {
+                    for (const auto &v : modelsArr) {
                         const QJsonObject o = v.toObject();
                         AcpProtocol::AcpModelInfo m;
-                        m.id = o.value(QStringLiteral("id")).toString();
+                        // Spec calls the field modelId; tolerate plain id.
+                        m.id = o.value(QStringLiteral("modelId")).toString();
+                        if (m.id.isEmpty()) m.id = o.value(QStringLiteral("id")).toString();
                         m.name = o.value(QStringLiteral("name")).toString();
                         m.description = o.value(QStringLiteral("description")).toString();
                         m_models.append(m);
                     }
-                    m_currentModel = r.value(QStringLiteral("currentModel")).toString();
+                    m_currentModel = modelsObj.contains(QStringLiteral("currentModelId"))
+                        ? modelsObj.value(QStringLiteral("currentModelId")).toString()
+                        : r.value(QStringLiteral("currentModel")).toString();
 
-                    m_configOptions.clear();
-                    for (const auto &v : r.value(QStringLiteral("configOptions")).toArray()) {
-                        const QJsonObject o = v.toObject();
-                        AcpProtocol::AcpConfigOption co;
-                        co.id = o.value(QStringLiteral("id")).toString();
-                        co.name = o.value(QStringLiteral("name")).toString();
-                        co.description = o.value(QStringLiteral("description")).toString();
-                        co.value = o.value(QStringLiteral("value"));
-                        co.choices = o.value(QStringLiteral("choices")).toArray();
-                        m_configOptions.append(co);
-                    }
+                    m_configOptions = parseConfigOptions(r.value(QStringLiteral("configOptions")).toArray());
 
                     emit initialized(m_agentInfo, m_availableCommands,
                                      m_modes, m_currentMode,
@@ -453,7 +498,9 @@ void AcpConnection::setConfigOption(const QString &id, const QJsonValue &value)
 {
     QJsonObject params;
     params.insert(QStringLiteral("sessionId"), m_sessionId);
-    params.insert(QStringLiteral("optionId"), id);
+    // Spec: configId. (Old field was `optionId`; agents validating against
+    // the spec reject the request as invalid params.)
+    params.insert(QStringLiteral("configId"), id);
     params.insert(QStringLiteral("value"), value);
     sendRequest(AcpProtocol::kMethodSessionSetConfig, params,
                 [this](const QJsonValue &, const QJsonValue &error) {
@@ -621,9 +668,15 @@ void AcpConnection::handleInboundNotification(const QString &method, const QJson
         }
         emit availableCommandsUpdated(cmds);
     } else if (kind == QLatin1String("current_mode_update")) {
-        const QString id = update.value(QStringLiteral("currentMode")).toString();
+        // Spec field: currentModeId. Pre-spec agents emitted currentMode.
+        const QString id = update.contains(QStringLiteral("currentModeId"))
+            ? update.value(QStringLiteral("currentModeId")).toString()
+            : update.value(QStringLiteral("currentMode")).toString();
         m_currentMode = id;
         emit currentModeChanged(id);
+    } else if (kind == QLatin1String("config_option_update")) {
+        m_configOptions = parseConfigOptions(update.value(QStringLiteral("configOptions")).toArray());
+        emit configOptionsUpdated(m_configOptions);
     } else if (kind == QLatin1String("session_info_update")) {
         const QJsonObject usageObj = update.value(QStringLiteral("usage")).toObject();
         AcpProtocol::AcpUsage usage;

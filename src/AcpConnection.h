@@ -108,6 +108,7 @@ signals:
     void planReceived(const QList<AcpProtocol::AcpPlanEntry> &plan);
     void availableCommandsUpdated(const QStringList &commands);
     void currentModeChanged(const QString &id);
+    void configOptionsUpdated(const QList<AcpProtocol::AcpConfigOption> &options);
     void usageUpdated(const AcpProtocol::AcpUsage &usage);
     void promptStarted();
     void promptEnded();
