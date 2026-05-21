@@ -462,10 +462,10 @@ void AcpConnection::sendPrompt(const QString &text, const QList<QPair<QByteArray
                     if (!error.isUndefined() && !error.isNull()) {
                         emit requestFailed(rpcErrorMessage(error));
                     } else if (result.isObject()) {
+                        AcpProtocol::AcpUsage usage;
                         const QJsonObject usageObj =
                             result.toObject().value(QStringLiteral("usage")).toObject();
                         if (!usageObj.isEmpty()) {
-                            AcpProtocol::AcpUsage usage;
                             if (usageObj.contains(QStringLiteral("inputTokens"))) {
                                 usage.inputTokens = usageObj.value(QStringLiteral("inputTokens")).toInt();
                             }
@@ -476,6 +476,12 @@ void AcpConnection::sendPrompt(const QString &text, const QList<QPair<QByteArray
                                 usage.totalTokens = usageObj.value(QStringLiteral("totalTokens")).toInt();
                             }
                             emit usageUpdated(usage);
+                        }
+                        const bool hasUsage = usage.inputTokens.value_or(0) > 0
+                            || usage.outputTokens.value_or(0) > 0
+                            || usage.totalTokens.value_or(0) > 0;
+                        if (!m_promptProducedOutput && !hasUsage) {
+                            emit requestFailed(QStringLiteral("The agent ended the turn without a response. Open Debug for details."));
                         }
                     }
                     // session/prompt response is the authoritative end-of-turn
@@ -656,18 +662,21 @@ void AcpConnection::handleInboundNotification(const QString &method, const QJson
     const QString kind = update.value(QStringLiteral("sessionUpdate")).toString();
 
     if (kind == QLatin1String("agent_message_chunk")) {
+        m_promptProducedOutput = true;
         const QString text = update.value(QStringLiteral("content"))
                                  .toObject()
                                  .value(QStringLiteral("text"))
                                  .toString();
         emit messageChunk(text);
     } else if (kind == QLatin1String("agent_thought_chunk")) {
+        m_promptProducedOutput = true;
         const QString text = update.value(QStringLiteral("content"))
                                  .toObject()
                                  .value(QStringLiteral("text"))
                                  .toString();
         emit thoughtChunk(text);
     } else if (kind == QLatin1String("tool_call")) {
+        m_promptProducedOutput = true;
         AcpProtocol::AcpToolCall tc;
         tc.id = update.value(QStringLiteral("toolCallId")).toString();
         tc.title = update.value(QStringLiteral("title")).toString();
@@ -676,6 +685,7 @@ void AcpConnection::handleInboundNotification(const QString &method, const QJson
         tc.groupId = update.value(QStringLiteral("groupId")).toInt(0);
         emit toolCallReceived(tc);
     } else if (kind == QLatin1String("tool_call_update")) {
+        m_promptProducedOutput = true;
         AcpProtocol::AcpToolCallUpdate u;
         u.id = update.value(QStringLiteral("toolCallId")).toString();
         const QJsonValue st = update.value(QStringLiteral("status"));
@@ -688,6 +698,7 @@ void AcpConnection::handleInboundNotification(const QString &method, const QJson
         }
         emit toolCallUpdated(u);
     } else if (kind == QLatin1String("plan")) {
+        m_promptProducedOutput = true;
         QList<AcpProtocol::AcpPlanEntry> plan;
         for (const auto &v : update.value(QStringLiteral("entries")).toArray()) {
             const QJsonObject o = v.toObject();
@@ -1191,6 +1202,7 @@ void AcpConnection::beginPrompt()
         return;
     }
     m_promptInFlight = true;
+    m_promptProducedOutput = false;
     emit promptStarted();
 }
 

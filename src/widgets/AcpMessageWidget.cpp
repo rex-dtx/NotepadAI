@@ -18,6 +18,7 @@
 
 #include "AcpMessageWidget.h"
 
+#include <QEvent>
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
@@ -256,6 +257,16 @@ void AcpMessageWidget::resizeEvent(QResizeEvent *event)
     QFrame::resizeEvent(event);
     refitBrowserHeight();
     rescaleUserImages();
+}
+
+void AcpMessageWidget::changeEvent(QEvent *event)
+{
+    QFrame::changeEvent(event);
+    if (event->type() == QEvent::FontChange) {
+        // QTextDocument lays out under the new font metrics; we must re-fit so
+        // setFixedHeight() above matches the new doc->size().height().
+        refitBrowserHeight();
+    }
 }
 
 void AcpMessageWidget::markStreamingDone()

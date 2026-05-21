@@ -104,6 +104,7 @@ private slots:
     void onIsProcessingChanged(bool processing);
     void onTurnEnded(int groupId);
     void onPermissionRequested(const AcpProtocol::AcpPermissionRequest &req);
+    void onRequestFailed(const QString &message);
     void onErrorOccurred(AcpErrorClassifier::AcpErrorKind kind, const QString &friendly);
 
     void onSendClicked();
@@ -127,6 +128,7 @@ private:
     // All bubbles, tool-call cards, plan widgets, and permission prompts go
     // through here so the heartbeat always trails the freshest content.
     void insertTimelineWidget(QWidget *w);
+    void syncTranscriptHostWidth();
     void scrollToBottomDeferred();
     void updateJumpButtonVisibility();
     void positionJumpButton();
@@ -143,6 +145,11 @@ private:
     // the running session. Called once per session after metadata first
     // populates the available catalogs.
     void applySavedPreferences();
+
+    // Apply the user's Default Font (ApplicationSettings::fontName/fontSize)
+    // to the transcript host + input. Chrome (banner, selectors, buttons)
+    // stays on the system font.
+    void applyChatFont();
 
     AcpSessionModel *m_model = nullptr;       // non-owning
     AcpConnection *m_connection = nullptr;    // non-owning

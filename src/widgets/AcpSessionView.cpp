@@ -27,6 +27,7 @@
 #include "AcpSessionModel.h"
 #include "AcpToolCallCard.h"
 #include "AcpUsageIndicator.h"
+#include "ApplicationSettings.h"
 
 #include <QBuffer>
 #include <QCheckBox>
@@ -35,6 +36,7 @@
 #include <QDialog>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFont>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -84,6 +86,11 @@ QIcon tintedIcon(const QString &svgPath, const QColor &color)
         dst.addPixmap(pm);
     }
     return dst;
+}
+
+ApplicationSettings *appSettings()
+{
+    return qApp ? qApp->findChild<ApplicationSettings *>() : nullptr;
 }
 
 // Custom QPlainTextEdit that submits on Enter (Shift+Enter for newline) and
@@ -225,6 +232,7 @@ void AcpSessionView::buildUi()
     // 2. Transcript area.
     m_scroll = new QScrollArea(this);
     m_scroll->setWidgetResizable(true);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_scroll->setFrameShape(QFrame::NoFrame);
 
     m_transcriptHost = new QWidget(m_scroll);
@@ -246,6 +254,7 @@ void AcpSessionView::buildUi()
     m_transcriptLayout->addStretch();
 
     m_scroll->setWidget(m_transcriptHost);
+    syncTranscriptHostWidth();
     outer->addWidget(m_scroll, 1);
 
     // Jump-to-bottom overlay. Parented to the scroll area's viewport (not the
@@ -402,6 +411,17 @@ void AcpSessionView::buildUi()
             this, &AcpSessionView::onModeComboChanged);
     connect(m_effortCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &AcpSessionView::onEffortComboChanged);
+
+    // Apply the Default Font preference to transcript + input, and follow
+    // live preference edits. Chrome (banner, selectors, buttons) keeps the
+    // system font.
+    if (auto *settings = appSettings()) {
+        connect(settings, &ApplicationSettings::fontNameChanged,
+                this, &AcpSessionView::applyChatFont);
+        connect(settings, &ApplicationSettings::fontSizeChanged,
+                this, &AcpSessionView::applyChatFont);
+    }
+    applyChatFont();
 }
 
 void AcpSessionView::wireSignals()
@@ -436,6 +456,8 @@ void AcpSessionView::wireSignals()
     if (m_connection) {
         connect(m_connection, &AcpConnection::permissionRequested,
                 this, &AcpSessionView::onPermissionRequested);
+        connect(m_connection, &AcpConnection::requestFailed,
+                this, &AcpSessionView::onRequestFailed);
         connect(m_connection, &AcpConnection::errorOccurred,
                 this, &AcpSessionView::onErrorOccurred);
         connect(m_connection, &AcpConnection::planReceived,
@@ -612,6 +634,18 @@ void AcpSessionView::insertTimelineWidget(QWidget *w)
         }
     }
     m_transcriptLayout->insertWidget(idx, w);
+    syncTranscriptHostWidth();
+}
+
+void AcpSessionView::syncTranscriptHostWidth()
+{
+    if (!m_scroll || !m_transcriptHost) return;
+    QWidget *vp = m_scroll->viewport();
+    if (!vp) return;
+    const int width = vp->width();
+    if (width > 0 && m_transcriptHost->width() != width) {
+        m_transcriptHost->setFixedWidth(width);
+    }
 }
 
 void AcpSessionView::appendMessageWidget(int idx)
@@ -871,6 +905,15 @@ void AcpSessionView::onPermissionRequested(const AcpProtocol::AcpPermissionReque
         }
     });
     scrollToBottomDeferred();
+}
+
+void AcpSessionView::onRequestFailed(const QString &message)
+{
+    const QString trimmed = message.trimmed();
+    setBanner(trimmed.isEmpty()
+                  ? tr("Agent request failed — open Debug for details")
+                  : tr("Agent request failed — %1").arg(trimmed),
+              BannerKind::Error);
 }
 
 void AcpSessionView::onErrorOccurred(AcpErrorClassifier::AcpErrorKind kind, const QString &friendly)
@@ -1204,6 +1247,7 @@ bool AcpSessionView::eventFilter(QObject *watched, QEvent *event)
     if (event->type() == QEvent::Resize
         && (watched == m_transcriptHost
             || (m_scroll && watched == m_scroll->viewport()))) {
+        syncTranscriptHostWidth();
         positionJumpButton();
     }
     return QWidget::eventFilter(watched, event);
@@ -1228,6 +1272,16 @@ void AcpSessionView::rebuildAttachIcon()
     if (!m_attachBtn) return;
     m_attachBtn->setIcon(tintedIcon(QStringLiteral(":/icons/paperclip.svg"),
                                     palette().color(QPalette::WindowText)));
+}
+
+void AcpSessionView::applyChatFont()
+{
+    auto *settings = appSettings();
+    if (!settings) return;
+
+    QFont f(settings->fontName(), settings->fontSize());
+    if (m_transcriptHost) m_transcriptHost->setFont(f);
+    if (m_input) m_input->setFont(f);
 }
 
 bool AcpSessionView::inputKeyEventIsSubmit(QKeyEvent *ke) const

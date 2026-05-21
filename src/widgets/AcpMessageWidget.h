@@ -64,6 +64,11 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    // Bubble height is derived from QTextDocument::size() under the current
+    // font metrics; when the parent's font changes (Default Font preference)
+    // we need to re-fit, because Qt does not auto-relayout content widgets on
+    // font inheritance alone.
+    void changeEvent(QEvent *event) override;
 
 private:
     void rerender();

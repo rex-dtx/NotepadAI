@@ -228,6 +228,7 @@ private:
     };
     QList<PendingPrompt> m_pendingPrompts;
     bool m_promptInFlight = false;
+    bool m_promptProducedOutput = false;
 
     static constexpr int kDebugLogMaxLines = 2000;
     static constexpr int kDebugLogLineMaxChars = 4096;
