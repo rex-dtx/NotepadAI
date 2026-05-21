@@ -327,6 +327,12 @@ void EditorManager::applyThemeToEditor(ScintillaNext *editor, bool dark, bool in
     // modes. Format is 0xAABBGGRR.
     const unsigned int caretFore           = dark ? 0xFFD4D4D4U : 0xFF000000U;
     const unsigned int caretAdditionalFore = dark ? 0xFFA0A0A0U : 0xFF606060U;
+    // Selection: Scintilla defaults to a washed-out grey/white in dark mode
+    // that buries text under it. Use VSCode's dark-selection blue (#264F78)
+    // so highlighted text stays readable; light mode gets the pale blue we
+    // already use elsewhere (#ADD6FF). Format is 0xAABBGGRR.
+    const unsigned int selectionBack           = dark ? 0xFF784F26U : 0xFFFFD6ADU;
+    const unsigned int selectionAdditionalBack = dark ? 0xFF6A4520U : 0xFFEFCBA3U;
 
     editor->styleSetFore(STYLE_DEFAULT, defaultFore);
     editor->styleSetBack(STYLE_DEFAULT, defaultBack);
@@ -381,6 +387,8 @@ void EditorManager::applyThemeToEditor(ScintillaNext *editor, bool dark, bool in
     editor->setEdgeColour(edgeColour);
 
     // https://www.scintilla.org/ScintillaDoc.html#ElementColours
+    editor->setElementColour(SC_ELEMENT_SELECTION_BACK, selectionBack);
+    editor->setElementColour(SC_ELEMENT_SELECTION_ADDITIONAL_BACK, selectionAdditionalBack);
     editor->setElementColour(SC_ELEMENT_SELECTION_INACTIVE_BACK, selInactiveBack);
     editor->setElementColour(SC_ELEMENT_CARET_LINE_BACK, caretLineBack);
     editor->setElementColour(SC_ELEMENT_CARET, caretFore);
