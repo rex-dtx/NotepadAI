@@ -162,6 +162,13 @@ private:
     void cancelAllPendingPermissions();
     void emitClassifiedError(const QString &raw);
 
+    // Idempotent prompt-lifecycle wrappers. The agent may also signal these via
+    // session/update (prompt_start / prompt_end) — both code paths route
+    // through these helpers so listeners (model + view) see exactly one
+    // promptStarted/promptEnded per turn regardless of which agent emits what.
+    void beginPrompt();
+    void endPrompt();
+
     // Append a single line to the debug ring buffer and also forward to the
     // lcAcp logging category. Safe to call from anywhere on the owning thread.
     void appendDebugLog(QString line);
@@ -215,6 +222,7 @@ private:
         QList<QPair<QByteArray, QString>> images;
     };
     QList<PendingPrompt> m_pendingPrompts;
+    bool m_promptInFlight = false;
 
     static constexpr int kDebugLogMaxLines = 2000;
     static constexpr int kDebugLogLineMaxChars = 4096;

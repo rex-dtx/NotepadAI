@@ -22,10 +22,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QResizeEvent>
 #include <QTextBrowser>
 #include <QTextDocument>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 AcpToolCallCard::AcpToolCallCard(const AcpProtocol::AcpToolCall &initial, QWidget *parent)
     : QFrame(parent)
@@ -41,6 +44,7 @@ AcpToolCallCard::AcpToolCallCard(const AcpProtocol::AcpToolCall &initial, QWidge
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(6, 4, 6, 4);
     outer->setSpacing(2);
+    m_outer = outer;
 
     auto *header = new QHBoxLayout();
     header->setContentsMargins(0, 0, 0, 0);
@@ -64,6 +68,13 @@ AcpToolCallCard::AcpToolCallCard(const AcpProtocol::AcpToolCall &initial, QWidge
     m_body = new QTextBrowser(this);
     m_body->setStyleSheet(QStringLiteral("QTextBrowser { background: transparent; border: none; }"));
     m_body->setOpenExternalLinks(true);
+    // Cards size to content. Internal scroll on a card produces a nested
+    // scrollbar inside the transcript's own scroll area — bad UX. The expand
+    // button collapses verbose output instead.
+    m_body->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_body->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_body->setFrameShape(QFrame::NoFrame);
+    m_body->document()->setDocumentMargin(0);
     outer->addWidget(m_body);
 
     connect(m_expandBtn, &QToolButton::toggled, this, [this](bool checked) {
@@ -124,9 +135,30 @@ void AcpToolCallCard::rerenderBody()
         text = QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
     }
     m_body->document()->setPlainText(text);
-    m_body->document()->setTextWidth(m_body->viewport()->width());
-    const int h = static_cast<int>(m_body->document()->size().height()) + 8;
-    m_body->setFixedHeight(qMax(20, qMin(h, 400)));
+    refitBodyHeight();
+}
+
+void AcpToolCallCard::refitBodyHeight()
+{
+    if (!m_body) return;
+    // Width from our own already-set geometry, not the child viewport — the
+    // child has not been laid out yet inside our resizeEvent.
+    int marginL = 0, marginT = 0, marginR = 0, marginB = 0;
+    if (m_outer) {
+        m_outer->getContentsMargins(&marginL, &marginT, &marginR, &marginB);
+    }
+    const int w = width() - marginL - marginR;
+    if (w <= 0) return;
+    QTextDocument *doc = m_body->document();
+    doc->setTextWidth(w);
+    const int h = static_cast<int>(std::ceil(doc->size().height()));
+    m_body->setFixedHeight(qMax(0, h));
+}
+
+void AcpToolCallCard::resizeEvent(QResizeEvent *event)
+{
+    QFrame::resizeEvent(event);
+    refitBodyHeight();
 }
 
 void AcpToolCallCard::setCollapsed(bool collapsed)

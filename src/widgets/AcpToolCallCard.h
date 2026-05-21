@@ -45,9 +45,13 @@ public:
     void setCollapsed(bool collapsed);
     bool isCollapsed() const { return m_collapsed; }
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     void refreshHeader();
     void rerenderBody();
+    void refitBodyHeight();
     QString statusGlyph() const;
 
     QString m_id;
@@ -62,6 +66,7 @@ private:
     QLabel *m_titleLabel = nullptr;
     QToolButton *m_expandBtn = nullptr;
     QTextBrowser *m_body = nullptr;
+    QVBoxLayout *m_outer = nullptr;
 };
 
 #endif // ACP_TOOL_CALL_CARD_H

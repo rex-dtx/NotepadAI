@@ -19,10 +19,14 @@
 #include "AcpMessageWidget.h"
 
 #include <QLabel>
+#include <QResizeEvent>
+#include <QScrollBar>
 #include <QTextBrowser>
 #include <QTextDocument>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace {
 
@@ -33,14 +37,16 @@ constexpr const char *kFrameStyleAssistant =
 constexpr const char *kFrameStyleThought =
     "AcpMessageWidget[role=\"thought\"] { background: palette(window); border: 1px dashed palette(mid); border-radius: 6px; }";
 
-void resizeBrowserToContents(QTextBrowser *browser)
+// Inline message bubbles size to content — they must never show a scrollbar
+// (it would reserve viewport width and create a feedback loop where the height
+// fitter keeps reading a width that's smaller than what the parent actually
+// gives us).
+void configureBubbleBrowser(QTextBrowser *b)
 {
-    if (!browser) return;
-    QTextDocument *doc = browser->document();
-    doc->setTextWidth(browser->viewport()->width());
-    const int margin = 4;
-    const int h = static_cast<int>(doc->size().height()) + 2 * margin;
-    browser->setFixedHeight(qMax(20, h));
+    b->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    b->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    b->setFrameShape(QFrame::NoFrame);
+    b->document()->setDocumentMargin(0);
 }
 
 } // namespace
@@ -76,6 +82,7 @@ AcpMessageWidget::AcpMessageWidget(QString role, QWidget *parent)
         m_browser = new QTextBrowser(this);
         m_browser->setStyleSheet(QStringLiteral("QTextBrowser { background: transparent; border: none; font-style: italic; }"));
         m_browser->setOpenExternalLinks(true);
+        configureBubbleBrowser(m_browser);
         m_layout->addWidget(m_browser);
 
         connect(m_thoughtHeader, &QToolButton::toggled, this, [this](bool checked) {
@@ -86,6 +93,7 @@ AcpMessageWidget::AcpMessageWidget(QString role, QWidget *parent)
         m_browser = new QTextBrowser(this);
         m_browser->setStyleSheet(QStringLiteral("QTextBrowser { background: transparent; border: none; }"));
         m_browser->setOpenExternalLinks(true);
+        configureBubbleBrowser(m_browser);
         m_layout->addWidget(m_browser);
     }
 }
@@ -123,7 +131,35 @@ void AcpMessageWidget::rerender()
     } else {
         m_browser->document()->setPlainText(m_text);
     }
-    resizeBrowserToContents(m_browser);
+    refitBrowserHeight();
+}
+
+void AcpMessageWidget::refitBrowserHeight()
+{
+    if (!m_browser) return;
+    // Read the available width from our own already-set geometry, not from
+    // the child viewport. Inside resizeEvent the child hasn't been laid out
+    // yet, so m_browser->viewport()->width() is stale — using it produced a
+    // narrow wrap and a tall fixed height that the bubble never recovered
+    // from. The parent's contentsRect is authoritative.
+    int marginL = 0, marginT = 0, marginR = 0, marginB = 0;
+    if (m_layout) {
+        m_layout->getContentsMargins(&marginL, &marginT, &marginR, &marginB);
+    }
+    const int w = width() - marginL - marginR;
+    if (w <= 0) {
+        return;
+    }
+    QTextDocument *doc = m_browser->document();
+    doc->setTextWidth(w);
+    const int h = static_cast<int>(std::ceil(doc->size().height()));
+    m_browser->setFixedHeight(qMax(0, h));
+}
+
+void AcpMessageWidget::resizeEvent(QResizeEvent *event)
+{
+    QFrame::resizeEvent(event);
+    refitBrowserHeight();
 }
 
 void AcpMessageWidget::markStreamingDone()

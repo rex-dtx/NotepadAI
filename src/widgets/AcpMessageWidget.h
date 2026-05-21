@@ -56,8 +56,12 @@ public:
     QString role() const { return m_role; }
     QString plainText() const { return m_text; }
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     void rerender();
+    void refitBrowserHeight();
     void applyCollapsed(bool collapsed);
 
     QString m_role;

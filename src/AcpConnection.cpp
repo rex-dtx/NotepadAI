@@ -403,11 +403,16 @@ void AcpConnection::sendPrompt(const QString &text, const QList<QPair<QByteArray
     // ContentBlock), not `content`.
     params.insert(QStringLiteral("prompt"), content);
 
+    beginPrompt();
     sendRequest(AcpProtocol::kMethodSessionPrompt, params,
                 [this](const QJsonValue &, const QJsonValue &error) {
                     if (!error.isUndefined() && !error.isNull()) {
                         emit requestFailed(rpcErrorMessage(error));
                     }
+                    // session/prompt response is the authoritative end-of-turn
+                    // — regardless of whether the agent also sent a
+                    // session/update prompt_end notification.
+                    endPrompt();
                 });
 }
 
@@ -633,9 +638,9 @@ void AcpConnection::handleInboundNotification(const QString &method, const QJson
         }
         emit usageUpdated(usage);
     } else if (kind == QLatin1String("prompt_start")) {
-        emit promptStarted();
+        beginPrompt();
     } else if (kind == QLatin1String("prompt_end")) {
-        emit promptEnded();
+        endPrompt();
     } else {
         qCDebug(lcAcp) << "unknown session/update kind:" << kind;
     }
@@ -1047,6 +1052,8 @@ void AcpConnection::handleProcessFinished(int exitCode, QProcess::ExitStatus sta
                        .arg(status == QProcess::NormalExit ? QStringLiteral("normal")
                                                            : QStringLiteral("crash")));
     cancelAllPendingPermissions();
+    // If the process died mid-turn, close the turn so the UI re-enables Send.
+    endPrompt();
     // Surface the exit so the dock can switch into the "Agent exited" state.
     // No auto-reconnect — the user must click Restart.
     emit agentExited(exitCode, status);
@@ -1060,6 +1067,24 @@ void AcpConnection::emitClassifiedError(const QString &raw)
     appendDebugLog(QStringLiteral("error: kind=%1 raw=%2").arg(int(kind)).arg(raw));
     appendDebugLog(QStringLiteral("error: friendly=%1").arg(friendly));
     emit errorOccurred(kind, friendly);
+}
+
+void AcpConnection::beginPrompt()
+{
+    if (m_promptInFlight) {
+        return;
+    }
+    m_promptInFlight = true;
+    emit promptStarted();
+}
+
+void AcpConnection::endPrompt()
+{
+    if (!m_promptInFlight) {
+        return;
+    }
+    m_promptInFlight = false;
+    emit promptEnded();
 }
 
 void AcpConnection::clearDebugLog()
