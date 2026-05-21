@@ -29,10 +29,13 @@
 #include "AcpUsageIndicator.h"
 
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
+#include <QDialog>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -146,9 +149,17 @@ void AcpSessionView::buildUi()
         clearBanner();
         emit retryRequested();
     });
+    m_bannerDebug = new QPushButton(tr("Debug"), m_banner);
+    m_bannerDebug->setToolTip(tr("Show ACP protocol log for this session"));
+    connect(m_bannerDebug, &QPushButton::clicked, this, &AcpSessionView::onShowDebugLogClicked);
     banL->addWidget(m_bannerLabel, 1);
     banL->addWidget(m_bannerRetry);
-    m_banner->hide();
+    banL->addWidget(m_bannerDebug);
+    // The banner stays visible at all times so the Debug button is always
+    // reachable — even when there's no error to surface. clearBanner() hides
+    // the label + Retry so the row looks neutral.
+    m_bannerLabel->hide();
+    m_banner->setProperty("bannerKind", QStringLiteral("info"));
     outer->addWidget(m_banner);
 
     // 2. Transcript area.
@@ -365,6 +376,7 @@ void AcpSessionView::setBanner(const QString &text, BannerKind kind)
 {
     if (!m_banner) return;
     m_bannerLabel->setText(text);
+    m_bannerLabel->setVisible(!text.isEmpty());
     QString kindStr;
     switch (kind) {
     case BannerKind::Info:    kindStr = QStringLiteral("info"); break;
@@ -380,7 +392,16 @@ void AcpSessionView::setBanner(const QString &text, BannerKind kind)
 
 void AcpSessionView::clearBanner()
 {
-    if (m_banner) m_banner->hide();
+    if (!m_banner) return;
+    // Keep the banner widget itself visible so the Debug button stays
+    // reachable, but drop the colored error/warning styling and hide the
+    // label + Retry button.
+    m_bannerLabel->clear();
+    m_bannerLabel->hide();
+    m_bannerRetry->hide();
+    m_banner->setProperty("bannerKind", QStringLiteral("info"));
+    m_banner->style()->unpolish(m_banner);
+    m_banner->style()->polish(m_banner);
 }
 
 void AcpSessionView::rebind(AcpSessionModel *model, AcpConnection *connection)
@@ -419,6 +440,16 @@ void AcpSessionView::rebind(AcpSessionModel *model, AcpConnection *connection)
     clearBanner();
     if (m_usageIndicator) {
         m_usageIndicator->setUsage(std::nullopt);
+    }
+
+    // If the debug-log popup is open, repoint its content at the new
+    // connection's log so the user sees the freshly-restarted session.
+    if (m_debugDialog && m_debugDialogText) {
+        if (m_connection) {
+            m_debugDialogText->setPlainText(m_connection->debugLog().join(QLatin1Char('\n')));
+        } else {
+            m_debugDialogText->setPlainText(tr("(no active connection)"));
+        }
     }
 
     // Restore Send/Cancel default visibility.
@@ -744,6 +775,89 @@ void AcpSessionView::onJumpToBottomClicked()
     auto *vbar = m_scroll->verticalScrollBar();
     if (vbar) vbar->setValue(vbar->maximum());
     if (m_jumpToBottom) m_jumpToBottom->hide();
+}
+
+void AcpSessionView::onShowDebugLogClicked()
+{
+    auto refresh = [this]() {
+        if (!m_debugDialogText) return;
+        if (m_connection) {
+            m_debugDialogText->setPlainText(m_connection->debugLog().join(QLatin1Char('\n')));
+        } else {
+            m_debugDialogText->setPlainText(tr("(no active connection)"));
+        }
+        m_debugDialogText->verticalScrollBar()->setValue(
+            m_debugDialogText->verticalScrollBar()->maximum());
+    };
+
+    if (m_debugDialog) {
+        refresh();
+        m_debugDialog->show();
+        m_debugDialog->raise();
+        m_debugDialog->activateWindow();
+        return;
+    }
+
+    auto *dlg = new QDialog(window());
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(tr("ACP Debug Log"));
+    dlg->resize(800, 500);
+
+    auto *layout = new QVBoxLayout(dlg);
+    layout->setContentsMargins(8, 8, 8, 8);
+
+    auto *text = new QPlainTextEdit(dlg);
+    text->setReadOnly(true);
+    text->setLineWrapMode(QPlainTextEdit::NoWrap);
+    QFont mono = text->font();
+    mono.setFamily(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::Monospace);
+    text->setFont(mono);
+    layout->addWidget(text, 1);
+
+    auto *btnRow = new QHBoxLayout();
+    auto *refreshBtn = new QPushButton(tr("Refresh"), dlg);
+    auto *copyBtn = new QPushButton(tr("Copy all"), dlg);
+    auto *clearBtn = new QPushButton(tr("Clear buffer"), dlg);
+    auto *closeBtn = new QPushButton(tr("Close"), dlg);
+    btnRow->addWidget(refreshBtn);
+    btnRow->addWidget(copyBtn);
+    btnRow->addWidget(clearBtn);
+    btnRow->addStretch();
+    btnRow->addWidget(closeBtn);
+    layout->addLayout(btnRow);
+
+    m_debugDialog = dlg;
+    m_debugDialogText = text;
+
+    QPointer<AcpSessionView> self(this);
+    connect(refreshBtn, &QPushButton::clicked, dlg, [self]() {
+        if (!self || !self->m_debugDialogText) return;
+        if (self->m_connection) {
+            self->m_debugDialogText->setPlainText(
+                self->m_connection->debugLog().join(QLatin1Char('\n')));
+        } else {
+            self->m_debugDialogText->setPlainText(tr("(no active connection)"));
+        }
+        self->m_debugDialogText->verticalScrollBar()->setValue(
+            self->m_debugDialogText->verticalScrollBar()->maximum());
+    });
+    connect(copyBtn, &QPushButton::clicked, dlg, [text]() {
+        QGuiApplication::clipboard()->setText(text->toPlainText());
+    });
+    connect(clearBtn, &QPushButton::clicked, dlg, [self, text]() {
+        if (self && self->m_connection) {
+            self->m_connection->clearDebugLog();
+        }
+        text->clear();
+    });
+    connect(closeBtn, &QPushButton::clicked, dlg, &QDialog::close);
+    connect(dlg, &QDialog::destroyed, this, [self]() {
+        if (self) self->m_debugDialogText = nullptr;
+    });
+
+    refresh();
+    dlg->show();
 }
 
 void AcpSessionView::scrollToBottomDeferred()

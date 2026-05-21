@@ -33,9 +33,13 @@
 
 namespace AcpProtocol {
 
-// Protocol version that we negotiate at `initialize`. Must match the
-// `agent-client-protocol` crate's wire constant; bump in lockstep.
-constexpr const char *kProtocolVersion = "0.11.1";
+// Protocol version that we negotiate at `initialize`. Per the ACP spec this
+// is a u16 integer (V1 is the current stable; V0 was pre-release). Sent as a
+// JSON number — sending a string makes strict agents (Zod-validated TS
+// implementations) reject `initialize` with "expected number, received string".
+// Bump in lockstep with the upstream `agent-client-protocol` crate's
+// `ProtocolVersion::LATEST`.
+constexpr int kProtocolVersion = 1;
 
 // JSON-RPC method names — keep colocated so a protocol revision is one PR.
 constexpr const char *kMethodInitialize          = "initialize";

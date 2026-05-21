@@ -64,6 +64,13 @@ public:
     AcpAgentDefinition definition() const { return m_agent; }
     QString workingDirectory() const { return m_workingDir; }
 
+    // In-memory ring-buffered debug log of every spawn/stdin/stdout/stderr/error
+    // event seen by this connection. Each entry is a single timestamped line.
+    // Capped at kDebugLogMaxLines — oldest entries are dropped. Exposed for the
+    // dock's "Debug" popup so users can self-diagnose connection failures.
+    QStringList debugLog() const { return m_debugLog; }
+    void clearDebugLog();
+
     // Test seam — invokes handleProcessFinished as if the underlying QProcess
     // had exited with the given code/status. Used by exit/restart tests so the
     // suite doesn't need to spawn a real subprocess.
@@ -155,6 +162,11 @@ private:
     void cancelAllPendingPermissions();
     void emitClassifiedError(const QString &raw);
 
+    // Append a single line to the debug ring buffer and also forward to the
+    // lcAcp logging category. Safe to call from anywhere on the owning thread.
+    void appendDebugLog(QString line);
+    void appendDebugFrameLog(const char *direction, const QByteArray &bytes);
+
     struct TerminalState {
         QProcess *proc = nullptr;
         QByteArray buffer;
@@ -193,6 +205,10 @@ private:
 
     QHash<QString, TerminalState> m_terminals;
     int m_nextTerminalSeq = 1;
+
+    static constexpr int kDebugLogMaxLines = 2000;
+    static constexpr int kDebugLogLineMaxChars = 4096;
+    QStringList m_debugLog;
 };
 
 #endif // ACP_CONNECTION_H

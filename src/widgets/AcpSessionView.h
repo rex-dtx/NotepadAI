@@ -42,6 +42,7 @@ class AcpUsageIndicator;
 
 class QCheckBox;
 class QComboBox;
+class QDialog;
 class QFrame;
 class QLabel;
 class QPlainTextEdit;
@@ -76,6 +77,9 @@ public:
 
 signals:
     void retryRequested();
+
+private slots:
+    void onShowDebugLogClicked();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -123,6 +127,11 @@ private:
     QFrame *m_banner = nullptr;
     QLabel *m_bannerLabel = nullptr;
     QPushButton *m_bannerRetry = nullptr;
+    QPushButton *m_bannerDebug = nullptr;
+
+    // ACP debug log popup (non-modal, lazily created on first click).
+    QPointer<QDialog> m_debugDialog;
+    QPlainTextEdit *m_debugDialogText = nullptr;
 
     // Transcript
     QScrollArea *m_scroll = nullptr;

@@ -28,6 +28,7 @@
 #include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QTime>
 #include <QUuid>
 
 #ifdef Q_OS_WIN
@@ -144,6 +145,23 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
     m_process->setProgram(argv.first);
     m_process->setArguments(argv.second);
 
+    {
+        QStringList envOverrides;
+        envOverrides.reserve(agent.env.size());
+        for (auto it = agent.env.constBegin(); it != agent.env.constEnd(); ++it) {
+            envOverrides.append(it.key() + QStringLiteral("=") + it.value());
+        }
+        appendDebugLog(QStringLiteral("spawn: program=%1").arg(argv.first));
+        appendDebugLog(QStringLiteral("spawn: args=[%1]").arg(argv.second.join(QStringLiteral(", "))));
+        appendDebugLog(QStringLiteral("spawn: cwd=%1").arg(workingDirectory));
+        if (!envOverrides.isEmpty()) {
+            appendDebugLog(QStringLiteral("spawn: env-overrides=[%1]").arg(envOverrides.join(QStringLiteral(", "))));
+        }
+#ifdef Q_OS_WIN
+        appendDebugLog(QStringLiteral("spawn: PATH-resolved-command=%1").arg(resolved));
+#endif
+    }
+
     connect(m_process, &QProcess::readyReadStandardOutput, this, &AcpConnection::handleStdoutReady);
     connect(m_process, &QProcess::readyReadStandardError, this, &AcpConnection::handleStderrReady);
     connect(m_process, &QProcess::errorOccurred, this, &AcpConnection::handleProcessError);
@@ -152,6 +170,8 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
             this,
             &AcpConnection::handleProcessFinished);
     connect(m_process, &QProcess::started, this, &AcpConnection::initializeHandshake);
+    connect(m_process, &QProcess::started, this,
+            [this]() { appendDebugLog(QStringLiteral("process: started")); });
 
     m_process->start();
 }
@@ -177,7 +197,7 @@ void AcpConnection::sendInitialize()
 
     QJsonObject params;
     params.insert(QStringLiteral("protocolVersion"),
-                  QString::fromLatin1(AcpProtocol::kProtocolVersion));
+                  AcpProtocol::kProtocolVersion);
     params.insert(QStringLiteral("client"), client);
     params.insert(QStringLiteral("capabilities"), caps);
 
@@ -206,6 +226,10 @@ void AcpConnection::sendNewSession()
 {
     QJsonObject params;
     params.insert(QStringLiteral("cwd"), m_workingDir);
+    // ACP requires `mcpServers` as an array — strict (Zod) agents reject the
+    // request with "expected array, received undefined" if the key is absent.
+    // We don't configure any MCP servers ourselves; send an empty array.
+    params.insert(QStringLiteral("mcpServers"), QJsonArray{});
 
     sendRequest(AcpProtocol::kMethodSessionNew, params,
                 [this](const QJsonValue &result, const QJsonValue &error) {
@@ -267,6 +291,8 @@ void AcpConnection::sendNewSession()
 int AcpConnection::sendRequest(const char *method, const QJsonValue &params, const Callback &cb)
 {
     if (!m_process || m_process->state() == QProcess::NotRunning) {
+        appendDebugLog(QStringLiteral("send-request: dropped (process not running) method=%1")
+                           .arg(QString::fromLatin1(method)));
         if (cb) {
             QJsonObject err;
             err.insert(QStringLiteral("message"), QStringLiteral("Process not running"));
@@ -281,6 +307,7 @@ int AcpConnection::sendRequest(const char *method, const QJsonValue &params, con
     QJsonObject obj = makeRpcEnvelope(QJsonValue(id), QString::fromLatin1(method), params);
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
+    appendDebugFrameLog("→", bytes);
     m_process->write(bytes);
     return id;
 }
@@ -293,6 +320,7 @@ void AcpConnection::sendNotification(const char *method, const QJsonValue &param
     QJsonObject obj = makeRpcEnvelope(QJsonValue(), QString::fromLatin1(method), params);
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
+    appendDebugFrameLog("→", bytes);
     m_process->write(bytes);
 }
 
@@ -307,6 +335,7 @@ void AcpConnection::sendResponse(const QJsonValue &id, const QJsonValue &result)
     obj.insert(QStringLiteral("result"), result);
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
+    appendDebugFrameLog("→", bytes);
     m_process->write(bytes);
 }
 
@@ -324,6 +353,7 @@ void AcpConnection::sendErrorResponse(const QJsonValue &id, int code, const QStr
     obj.insert(QStringLiteral("error"), err);
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
+    appendDebugFrameLog("→", bytes);
     m_process->write(bytes);
 }
 
@@ -345,7 +375,9 @@ void AcpConnection::sendPrompt(const QString &text, const QList<QPair<QByteArray
     }
     QJsonObject params;
     params.insert(QStringLiteral("sessionId"), m_sessionId);
-    params.insert(QStringLiteral("content"), content);
+    // Per the ACP schema PromptRequest requires `prompt` (array of
+    // ContentBlock), not `content`.
+    params.insert(QStringLiteral("prompt"), content);
 
     sendRequest(AcpProtocol::kMethodSessionPrompt, params,
                 [this](const QJsonValue &, const QJsonValue &error) {
@@ -412,6 +444,7 @@ void AcpConnection::handleStdoutReady()
     m_stdoutBuffer.append(m_process->readAllStandardOutput());
     const QStringList frames = AcpProtocol::acpExtractFrames(m_stdoutBuffer);
     for (const QString &frame : frames) {
+        appendDebugFrameLog("←", frame.toUtf8());
         dispatchFrame(frame);
     }
 }
@@ -433,9 +466,11 @@ void AcpConnection::handleStderrReady()
             line.chop(1);
         }
         m_stderrBuffer.remove(0, nl + 1);
+        const QString text = QString::fromUtf8(line);
+        appendDebugLog(QStringLiteral("stderr: %1").arg(text));
         qWarning("[acp:%s] %s",
                  qUtf8Printable(m_sessionId.isEmpty() ? QStringLiteral("?") : m_sessionId),
-                 qUtf8Printable(QString::fromUtf8(line)));
+                 qUtf8Printable(text));
     }
 }
 
@@ -977,11 +1012,16 @@ void AcpConnection::handleProcessError(QProcess::ProcessError err)
         raw = m_process ? m_process->errorString() : QStringLiteral("Process error");
         break;
     }
+    appendDebugLog(QStringLiteral("process: errorOccurred kind=%1 raw=%2").arg(int(err)).arg(raw));
     emitClassifiedError(raw);
 }
 
 void AcpConnection::handleProcessFinished(int exitCode, QProcess::ExitStatus status)
 {
+    appendDebugLog(QStringLiteral("process: finished exitCode=%1 status=%2")
+                       .arg(exitCode)
+                       .arg(status == QProcess::NormalExit ? QStringLiteral("normal")
+                                                           : QStringLiteral("crash")));
     cancelAllPendingPermissions();
     // Surface the exit so the dock can switch into the "Agent exited" state.
     // No auto-reconnect — the user must click Restart.
@@ -993,5 +1033,38 @@ void AcpConnection::emitClassifiedError(const QString &raw)
     const auto kind = AcpErrorClassifier::classify(raw);
     const QString hint = AcpErrorClassifier::loginHint(m_agent.command, m_agent.args);
     const QString friendly = AcpErrorClassifier::friendlyMessage(kind, raw, hint);
+    appendDebugLog(QStringLiteral("error: kind=%1 raw=%2").arg(int(kind)).arg(raw));
+    appendDebugLog(QStringLiteral("error: friendly=%1").arg(friendly));
     emit errorOccurred(kind, friendly);
+}
+
+void AcpConnection::clearDebugLog()
+{
+    m_debugLog.clear();
+}
+
+void AcpConnection::appendDebugLog(QString line)
+{
+    if (line.size() > kDebugLogLineMaxChars) {
+        line.truncate(kDebugLogLineMaxChars);
+        line.append(QStringLiteral("… [truncated]"));
+    }
+    const QString prefixed =
+        QStringLiteral("[%1] %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss.zzz")), line);
+    m_debugLog.append(prefixed);
+    if (m_debugLog.size() > kDebugLogMaxLines) {
+        m_debugLog.erase(m_debugLog.begin(),
+                         m_debugLog.begin() + (m_debugLog.size() - kDebugLogMaxLines));
+    }
+    qCDebug(lcAcp).noquote() << prefixed;
+}
+
+void AcpConnection::appendDebugFrameLog(const char *direction, const QByteArray &bytes)
+{
+    QString text = QString::fromUtf8(bytes);
+    // Trim trailing newline so the log line stays single-line.
+    while (text.endsWith(QLatin1Char('\n')) || text.endsWith(QLatin1Char('\r'))) {
+        text.chop(1);
+    }
+    appendDebugLog(QStringLiteral("%1 %2").arg(QString::fromLatin1(direction), text));
 }
