@@ -113,6 +113,9 @@ bool NotepadNextApplication::init()
     PROFILE_SCOPE("NotepadNextApplication::init");
     qInfo(Q_FUNC_INFO);
 
+    {
+    PROFILE_SCOPE("NotepadNextApplication::init.preInit");
+
 #ifndef Q_OS_MACOS
     setWindowIcon(QIcon(QStringLiteral(":/icons/NotepadNext.png")));
 #endif
@@ -145,6 +148,8 @@ bool NotepadNextApplication::init()
     else {
         translationManager->loadSystemDefaultTranslation();
     }
+
+    } // init.preInit
 
     // This connection isn't needed since the application can not appropriately retranslate the UI at runtime
     //connect(settings, &ApplicationSettings::translationChanged, translationManager, &TranslationManager::loadTranslationByName);
@@ -213,10 +218,13 @@ bool NotepadNextApplication::init()
     });
 #endif
 
+    {
+    PROFILE_SCOPE("NotepadNextApplication::init.appDecorators");
     EditorConfigAppDecorator *ecad = new EditorConfigAppDecorator(this);
     ecad->setEnabled(true);
     MarkerAppDecorator *mad = new MarkerAppDecorator(this);
     mad->setEnabled(true);
+    }
 
     {
         PROFILE_SCOPE("NotepadNextApplication::initLuaScripts");
@@ -286,6 +294,7 @@ bool NotepadNextApplication::init()
     // If the window does not have any editors (meaning the no files were
     // specified on the command line) then create a new empty file
     if (window->editorCount() == 0) {
+        PROFILE_SCOPE("NotepadNextApplication::init.fallbackNewFile");
         window->newFile();
     }
 
@@ -303,7 +312,10 @@ bool NotepadNextApplication::init()
         window->setFolderAsWorkspacePath(dir);
     }
 
+    {
+    PROFILE_SCOPE("NotepadNextApplication::init.windowShow");
     window->show();
+    }
 
     DebugManager::resumeDebugOutput();
 

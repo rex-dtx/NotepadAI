@@ -190,6 +190,9 @@ void EditorManager::setupEditor(ScintillaNext *editor)
     PROFILE_SCOPE("EditorManager::setupEditor");
     qInfo(Q_FUNC_INFO);
 
+    {
+    PROFILE_SCOPE("EditorManager::setupEditor.scintillaConfig");
+
     editor->clearCmdKey(SCK_INSERT);
 
     editor->setFoldMarkers(QStringLiteral("box"));
@@ -236,7 +239,12 @@ void EditorManager::setupEditor(ScintillaNext *editor)
     editor->setCharsDefault();
     editor->setWordChars(editor->wordChars() + settings->additionalWordChars().toLatin1());
 
+    } // EditorManager::setupEditor.scintillaConfig
+
+    {
+    PROFILE_SCOPE("EditorManager::setupEditor.applyTheme");
     applyThemeToEditor(editor, darkTheme, /*initialSetup=*/true);
+    }
 
     // Lua's SetLanguage writes per-style fore/back from the language definition,
     // which hardcodes white backgrounds. Re-skin after the language is fully
@@ -269,6 +277,7 @@ void EditorManager::setupEditor(ScintillaNext *editor)
     }
 
     // Decorators
+    PROFILE_SCOPE("EditorManager::setupEditor.decorators");
     SmartHighlighter *s = new SmartHighlighter(editor);
     s->setEnabled(true);
 

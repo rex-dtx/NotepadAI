@@ -226,6 +226,8 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connect(dockedEditor, &DockedEditor::titleBarDoubleClicked, this, &MainWindow::newFile);
 
     // Set up the menus
+    {
+    PROFILE_SCOPE("MainWindow::ctor.actionWiring");
     connect(ui->actionNew, &QAction::triggered, this, &MainWindow::newFile);
     connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::openFileDialog);
     connect(ui->actionReload, &QAction::triggered, this, &MainWindow::reloadFile);
@@ -1054,6 +1056,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
 #endif
 
+    } // MainWindow::ctor.actionWiring
+
+    {
+    PROFILE_SCOPE("MainWindow::ctor.inspectorAndDocks");
     EditorInspectorDock *editorInspectorDock = new EditorInspectorDock(this);
     editorInspectorDock->hide();
     addDockWidget(Qt::RightDockWidgetArea, editorInspectorDock);
@@ -1108,14 +1114,21 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     // It seems restoreState() does not affect the status bar so set it manually
     ui->statusBar->setVisible(app->getSettings()->showStatusBar());
 
+    } // MainWindow::ctor.inspectorAndDocks
+
     {
         PROFILE_SCOPE("MainWindow::ctor.setupLanguageMenu");
         setupLanguageMenu();
     }
 
+    {
+    PROFILE_SCOPE("MainWindow::ctor.applyStyleSheet");
     applyStyleSheet();
     connect(app, &NotepadNextApplication::effectiveThemeChanged, this, &MainWindow::applyStyleSheet);
+    }
 
+    {
+    PROFILE_SCOPE("MainWindow::ctor.terminalManager");
     terminalManager = new TerminalManager(app, this);
     connect(app, &NotepadNextApplication::effectiveThemeChanged, terminalManager, &TerminalManager::applyTheme);
     connect(app->getSettings(), &ApplicationSettings::terminalFontChanged, terminalManager, &TerminalManager::applyFont);
@@ -1203,6 +1216,8 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
             attachAiAgentDock(dock);
         }
     });
+
+    } // MainWindow::ctor.terminalManager
 
     // Sweep every QAction that setupUi (and constructor-time code above) has
     // already created. The ActionAddedFilter installed right after setupUi
@@ -2646,27 +2661,37 @@ void MainWindow::closeEvent(QCloseEvent *event)
     const SessionManager *sessionManager = app->getSessionManager();
     QVector<ScintillaNext *> e;
 
-    // Check all editors to see if the session manager will not handle it
-    for (auto editor : editors()) {
-        if (!sessionManager->willFileGetStoredInSession(editor)) {
-            e.append(editor);
+    {
+        PROFILE_SCOPE("MainWindow::closeEvent.checkEditors");
+        // Check all editors to see if the session manager will not handle it
+        for (auto editor : editors()) {
+            if (!sessionManager->willFileGetStoredInSession(editor)) {
+                e.append(editor);
+            }
+        }
+
+        if (!checkEditorsBeforeClose(e)) {
+            event->ignore();
+            return;
         }
     }
 
-    if (!checkEditorsBeforeClose(e)) {
-        event->ignore();
-        return;
-    }
-
     if (terminalManager) {
+        PROFILE_SCOPE("MainWindow::closeEvent.terminalShutdown");
         terminalManager->shutdown();
     }
 
-    emit aboutToClose();
+    {
+        PROFILE_SCOPE("MainWindow::closeEvent.aboutToClose");
+        emit aboutToClose();
+    }
 
     event->accept();
 
-    QMainWindow::closeEvent(event);
+    {
+        PROFILE_SCOPE("MainWindow::closeEvent.QMainWindowCloseEvent");
+        QMainWindow::closeEvent(event);
+    }
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
