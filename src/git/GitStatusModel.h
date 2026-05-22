@@ -19,9 +19,11 @@
 #ifndef GIT_STATUS_MODEL_H
 #define GIT_STATUS_MODEL_H
 
+#include "GitNumstatParser.h"
 #include "GitStatusEntry.h"
 
 #include <QAbstractItemModel>
+#include <QHash>
 
 #include <cstdint>
 
@@ -42,7 +44,13 @@ public:
         SectionRole,
         XyRole,
         IsSectionRole,
-        EntryRole
+        EntryRole,
+        AddedLinesRole,
+        DeletedLinesRole,
+        IsBinaryRole,
+        HasUnstableEncodingRole,
+        OursShaRole,
+        TheirsShaRole
     };
 
     explicit GitStatusModel(QObject *parent = nullptr);
@@ -55,6 +63,11 @@ public:
     Qt::ItemFlags flags(const QModelIndex &index) const override;
 
     void setEntries(const GitStatusEntries &entries);
+    // Merge numstat hash (keyed by relPath) into the matching side. Emits
+    // dataChanged for affected rows; safe to call repeatedly.
+    void mergeNumstat(const QHash<QString, GitNumstatParser::Stat> &stats, bool stagedSide);
+
+    void setDarkPalette(bool isDark);
 
     bool isSection(const QModelIndex &i) const;
     GitStatusEntry::Section sectionOf(const QModelIndex &i) const;
@@ -76,6 +89,7 @@ private:
     GitStatusEntries m_buckets[GitStatusEntry::SectionCount];
     // Map from visible row index → real Section value. Sections with 0 entries are skipped.
     QVector<GitStatusEntry::Section> m_visibleSections;
+    bool m_isDark = false;
     void rebuildVisible();
 };
 

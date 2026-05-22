@@ -23,6 +23,8 @@
 #include <QDockWidget>
 #include <QPersistentModelIndex>
 
+#include "GitStatusEntry.h"
+
 namespace Ui {
 class FolderAsWorkspaceDock;
 }
@@ -30,6 +32,8 @@ class FolderAsWorkspaceDock;
 class QFileSystemModel;
 class QTimer;
 class GitTabWidget;
+class GitDiffViewController;
+class ScintillaNext;
 
 class FolderAsWorkspaceDock : public QDockWidget
 {
@@ -43,8 +47,23 @@ public:
     void setRootPath(const QString dir);
     QString rootPath() const;
 
+    // Returns the lazily-created Git tab, or nullptr if the user has never
+    // opened the Git tab in this dock yet.
+    GitTabWidget *gitTabWidget() const { return gitTab; }
+
+    // Forwards to the per-dock GitDiffViewController, creating it on first use.
+    // Host (MainWindow) calls this in response to gitDiffRequested.
+    void showGitDiffPreview(const GitStatusEntry &entry);
+
 signals:
     void fileDoubleClicked(const QString &filePath);
+    // Forwarded from GitTabWidget once the Git tab is created.
+    void gitDiffRequested(const GitStatusEntry &entry);
+    void gitOpenSubmoduleRequested(const QString &absPath);
+    // Forwarded from the per-dock GitDiffViewController — host raises this
+    // editor as the active tab so the user lands on the rendered diff.
+    void gitDiffPreviewRendered(ScintillaNext *editor);
+    void gitDiffPreviewFailed(const QString &relPath, const QString &message);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -57,11 +76,13 @@ private:
 
     QFileSystemModel *model;
     GitTabWidget *gitTab = nullptr;
+    GitDiffViewController *gitDiffViewController = nullptr;
 
     QTimer *tooltipTimer;
     QPersistentModelIndex pendingTooltipIndex;
 
     void ensureGitTab();
+    GitDiffViewController *ensureGitDiffViewController();
 };
 
 #endif // FOLDERASWORKSPACEDOCK_H

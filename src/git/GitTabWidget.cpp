@@ -241,6 +241,7 @@ void GitTabWidget::rebuildController()
     connect(m_controller, &GitController::remoteOpProgress,
             this, &GitTabWidget::onRemoteOpProgress);
     connect(m_tree, &QTreeView::doubleClicked, this, &GitTabWidget::onTreeDoubleClicked);
+    connect(m_tree, &QTreeView::clicked, this, &GitTabWidget::onTreeClicked);
 
     restoreCommitDraft();
     m_controller->initialize();
@@ -489,6 +490,42 @@ void GitTabWidget::onCommitRequested()
                          m_composer->amendChecked(),
                          m_composer->signoffChecked(),
                          m_composer->trackedOnly());
+}
+
+void GitTabWidget::onTreeClicked(const QModelIndex &index)
+{
+    if (!m_controller) return;
+    if (!index.isValid()) return;
+    if (index.data(GitStatusModel::IsSectionRole).toBool()) return;
+    const QString rel = index.data(GitStatusModel::RelPathRole).toString();
+    if (rel.isEmpty()) return;
+    const QString repo = m_controller->currentRepo();
+    if (repo.isEmpty()) return;
+
+    const QString abs = QDir(repo).filePath(rel);
+    // Submodule heuristic: status entry whose worktree path is a directory.
+    // Catches both registered submodules and embedded git repos.
+    if (QFileInfo(abs).isDir()) {
+        emit openSubmoduleRequested(abs);
+        return;
+    }
+
+    GitStatusEntry entry;
+    entry.relPath = rel;
+    entry.origRelPath = index.data(GitStatusModel::OrigPathRole).toString();
+    entry.change = static_cast<GitStatusEntry::Change>(
+        index.data(GitStatusModel::ChangeRole).toInt());
+    entry.stagedSide = index.data(GitStatusModel::StagedSideRole).toBool();
+    entry.section = static_cast<GitStatusEntry::Section>(
+        index.data(GitStatusModel::SectionRole).toInt());
+    entry.xy = index.data(GitStatusModel::XyRole).toString();
+    entry.hasUnstableEncoding = index.data(GitStatusModel::HasUnstableEncodingRole).toBool();
+    entry.isBinary = index.data(GitStatusModel::IsBinaryRole).toBool();
+    entry.addedLines = index.data(GitStatusModel::AddedLinesRole).toInt();
+    entry.deletedLines = index.data(GitStatusModel::DeletedLinesRole).toInt();
+    entry.oursSha = index.data(GitStatusModel::OursShaRole).toString();
+    entry.theirsSha = index.data(GitStatusModel::TheirsShaRole).toString();
+    emit diffRequested(entry);
 }
 
 void GitTabWidget::onTreeDoubleClicked(const QModelIndex &index)

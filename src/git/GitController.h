@@ -85,9 +85,14 @@ public slots:
     void forcePush(const QString &remote = {});
     void cancelCurrent();
 
+    // Request a unified diff for a single path. Side: false = working-tree
+    // (unstaged), true = index (staged). Emits diffReady on completion.
+    void requestDiff(const QString &relPath, bool stagedSide);
+
 signals:
     void stateChanged(GitController::State s);
     void statusUpdated();
+    void numstatUpdated();
     void branchesUpdated();
     void reposUpdated();
     void remoteOpProgress(const QString &line);
@@ -95,11 +100,15 @@ signals:
     void errorOccurred(const GitError &err);
     void gitMissing();
     void dirtyTreePromptRequested(const QString &targetBranch);
+    void diffReady(const QString &relPath, bool stagedSide, const QByteArray &diff);
+    void diffFailed(const QString &relPath, bool stagedSide, const QString &message);
 
 private:
     enum class OpKind : std::uint8_t {
         Discover, Toplevel, SubmodulesList,
         HeadSym, HeadSha, Refs, Remotes, Status,
+        NumstatStaged, NumstatUnstaged,
+        DiffPath,
         Stage, Unstage, StageAll, UnstageAll,
         Commit,
         SwitchBranch, CreateBranch, Stash,
@@ -152,6 +161,8 @@ private:
     void handleRefsDone(const QByteArray &out);
     void handleRemotesDone(const QByteArray &out);
     void handleStatusDone(const QByteArray &out);
+    void handleNumstatDone(const QByteArray &out, bool stagedSide);
+    void enqueueNumstatRefresh();
 
     QByteArray m_lastForEachRefOut;
     QByteArray m_lastHeadSymOut;

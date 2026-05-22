@@ -30,6 +30,18 @@ CPMAddPackage(
     GIT_TAG ab62f0554abf2bbe4d45427b36a8b2f81ca7b4ab
 )
 
+CPMAddPackage(
+    NAME xxhash
+    GITHUB_REPOSITORY Cyan4973/xxHash
+    GIT_TAG v0.8.2
+    DOWNLOAD_ONLY YES
+)
+if(xxhash_ADDED)
+    add_library(xxhash INTERFACE)
+    target_include_directories(xxhash SYSTEM INTERFACE ${xxhash_SOURCE_DIR})
+    target_compile_definitions(xxhash INTERFACE XXH_INLINE_ALL XXH_NO_STREAM)
+endif()
+
 add_subdirectory(lua)
 add_subdirectory(scintilla)
 add_subdirectory(lexilla)

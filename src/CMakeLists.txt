@@ -198,11 +198,27 @@ qt_add_executable(NotepadAI
 	git/BranchRefParser.h
 	git/CommitComposer.cpp
 	git/CommitComposer.h
+	git/FileEncodingDetector.cpp
+	git/FileEncodingDetector.h
 	git/GitController.cpp
 	git/GitController.h
+	git/GitDiffCache.cpp
+	git/GitDiffCache.h
+	git/GitDiffFetcher.cpp
+	git/GitDiffFetcher.h
+	git/GitDiffPainter.cpp
+	git/GitDiffPainter.h
+	git/GitDiffPalette.cpp
+	git/GitDiffPalette.h
+	git/GitDiffParser.cpp
+	git/GitDiffParser.h
+	git/GitDiffViewController.cpp
+	git/GitDiffViewController.h
 	git/GitError.h
 	git/GitErrorClassifier.cpp
 	git/GitErrorClassifier.h
+	git/GitNumstatParser.cpp
+	git/GitNumstatParser.h
 	git/GitProcessRunner.cpp
 	git/GitProcessRunner.h
 	git/GitRepoDiscovery.cpp
@@ -211,6 +227,8 @@ qt_add_executable(NotepadAI
 	git/GitRepoModel.cpp
 	git/GitRepoModel.h
 	git/GitStatusEntry.h
+	git/GitStatusItemDelegate.cpp
+	git/GitStatusItemDelegate.h
 	git/GitStatusModel.cpp
 	git/GitStatusModel.h
 	git/GitStatusParser.cpp
@@ -339,6 +357,7 @@ target_link_libraries(NotepadAI
         uchardet
         libvterm
         libptyqt
+        xxhash
 )
 
 target_compile_definitions(NotepadAI

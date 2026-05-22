@@ -46,6 +46,7 @@ class DefaultDirectoryManager;
 class TabsQuickActionsBar;
 class TerminalManager;
 class FolderAsWorkspaceDock;
+struct GitStatusEntry;
 
 class MainWindow : public QMainWindow
 {
@@ -168,6 +169,7 @@ private:
     void attachAiAgentDock(class AiAgentDock *dock);
     void registerWorkspaceDock(FolderAsWorkspaceDock *dock);
     void openFolderAsWorkspacePath(const QString &dir);
+    void wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock);
     FolderAsWorkspaceDock *activeWorkspaceDock() const;
     QString currentWorkspaceRoot() const;
 

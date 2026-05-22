@@ -20,6 +20,7 @@
 #define GIT_TAB_WIDGET_H
 
 #include "GitController.h"
+#include "GitStatusEntry.h"
 
 #include <QPointer>
 #include <QString>
@@ -48,8 +49,14 @@ public:
     void setWorkspaceRoot(const QString &root);
     void initializeIfNeeded();
 
+    GitController *controller() const { return m_controller; }
+
 signals:
     void fileActivated(const QString &absPath);
+    // Single click on a status entry — host opens a diff preview tab.
+    void diffRequested(const GitStatusEntry &entry);
+    // Click on a submodule entry — host opens the submodule as a new workspace.
+    void openSubmoduleRequested(const QString &absPath);
 
 private slots:
     void onRepoSelected(int index);
@@ -61,6 +68,7 @@ private slots:
     void onStageAllClicked();
     void onUnstageAllClicked();
     void onCommitRequested();
+    void onTreeClicked(const QModelIndex &index);
     void onTreeDoubleClicked(const QModelIndex &index);
 
     void onControllerState(GitController::State s);

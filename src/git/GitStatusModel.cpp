@@ -18,6 +18,9 @@
 
 #include "GitStatusModel.h"
 
+#include "GitDiffPalette.h"
+
+#include <QBrush>
 #include <QCoreApplication>
 
 namespace {
@@ -168,14 +171,82 @@ QVariant GitStatusModel::data(const QModelIndex &index, int role) const
             return QStringLiteral("%1  %2").arg(prefix, path);
         }
         case Qt::ToolTipRole:    return e.relPath;
-        case RelPathRole:        return e.relPath;
-        case OrigPathRole:       return e.origRelPath;
-        case ChangeRole:         return int(e.change);
-        case StagedSideRole:     return e.stagedSide;
-        case SectionRole:        return int(e.section);
-        case XyRole:             return e.xy;
-        case IsSectionRole:      return false;
+        case Qt::ForegroundRole: {
+            const auto &pal = GitDiffPalette::current(m_isDark);
+            if (sec == GitStatusEntry::Conflicts) return QBrush(pal.fgConflict);
+            switch (e.change) {
+                case GitStatusEntry::Added:        return QBrush(pal.fgAdded);
+                case GitStatusEntry::Untracked_:   return QBrush(pal.fgUntracked);
+                case GitStatusEntry::Modified:     return QBrush(pal.fgModified);
+                case GitStatusEntry::TypeChanged:  return QBrush(pal.fgModified);
+                case GitStatusEntry::Deleted:      return QBrush(pal.fgDeleted);
+                case GitStatusEntry::Renamed:      return QBrush(pal.fgRenamed);
+                case GitStatusEntry::Copied:       return QBrush(pal.fgRenamed);
+                case GitStatusEntry::Unmerged:     return QBrush(pal.fgConflict);
+            }
+            return {};
+        }
+        case RelPathRole:                return e.relPath;
+        case OrigPathRole:               return e.origRelPath;
+        case ChangeRole:                 return int(e.change);
+        case StagedSideRole:             return e.stagedSide;
+        case SectionRole:                return int(e.section);
+        case XyRole:                     return e.xy;
+        case IsSectionRole:              return false;
+        case AddedLinesRole:             return e.addedLines;
+        case DeletedLinesRole:           return e.deletedLines;
+        case IsBinaryRole:               return e.isBinary;
+        case HasUnstableEncodingRole:    return e.hasUnstableEncoding;
+        case OursShaRole:                return e.oursSha;
+        case TheirsShaRole:              return e.theirsSha;
         default: return {};
+    }
+}
+
+void GitStatusModel::mergeNumstat(const QHash<QString, GitNumstatParser::Stat> &stats, bool stagedSide)
+{
+    if (stats.isEmpty()) return;
+    // Update entries whose stagedSide matches. Emit per-row dataChanged so
+    // QStyledItemDelegate repaints only affected rows.
+    for (int s = 0; s < GitStatusEntry::SectionCount; ++s) {
+        const bool sectionIsStaged = (s == GitStatusEntry::Staged);
+        if (sectionIsStaged != stagedSide) continue;
+        auto &bucket = m_buckets[s];
+        for (int r = 0; r < bucket.size(); ++r) {
+            const auto it = stats.constFind(bucket.at(r).relPath);
+            if (it == stats.constEnd()) continue;
+            GitStatusEntry &e = bucket[r];
+            e.addedLines = it->added;
+            e.deletedLines = it->deleted;
+            e.isBinary = it->isBinary;
+
+            // Locate visible row index for this bucket position.
+            int visParent = -1;
+            for (int v = 0; v < m_visibleSections.size(); ++v) {
+                if (m_visibleSections.at(v) == s) { visParent = v; break; }
+            }
+            if (visParent < 0) continue;
+            const QModelIndex parentIdx = createIndex(visParent, 0, quintptr(-1));
+            const QModelIndex idx = index(r, 0, parentIdx);
+            emit dataChanged(idx, idx, { Qt::DisplayRole, AddedLinesRole, DeletedLinesRole, IsBinaryRole });
+        }
+    }
+}
+
+void GitStatusModel::setDarkPalette(bool isDark)
+{
+    if (m_isDark == isDark) return;
+    m_isDark = isDark;
+    if (m_visibleSections.isEmpty()) return;
+    const QModelIndex topLeft = index(0, 0);
+    const QModelIndex botRight = index(m_visibleSections.size() - 1, 0);
+    emit dataChanged(topLeft, botRight, { Qt::ForegroundRole });
+    // Children rows too
+    for (int v = 0; v < m_visibleSections.size(); ++v) {
+        const QModelIndex secIdx = index(v, 0);
+        const int rc = rowCount(secIdx);
+        if (rc == 0) continue;
+        emit dataChanged(index(0, 0, secIdx), index(rc - 1, 0, secIdx), { Qt::ForegroundRole });
     }
 }
 

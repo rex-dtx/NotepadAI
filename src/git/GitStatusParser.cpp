@@ -42,18 +42,22 @@ QList<QByteArray> splitFields(const QByteArray &line, int firstN)
 
 GitStatusEntry makeEntry(GitStatusEntry::Section sec,
                          GitStatusEntry::Change ch,
-                         const QString &path,
-                         const QString &orig,
+                         const QByteArray &rawPath,
+                         const QByteArray &rawOrig,
                          bool stagedSide,
                          const QString &xy)
 {
     GitStatusEntry e;
     e.section = sec;
     e.change = ch;
-    e.relPath = path;
-    e.origRelPath = orig;
+    e.relPath = QString::fromUtf8(rawPath);
+    e.origRelPath = QString::fromUtf8(rawOrig);
     e.stagedSide = stagedSide;
     e.xy = xy;
+    // Round-trip detect: if QString→UTF-8 doesn't round-trip the raw bytes, the
+    // path was not valid UTF-8 (git emits it verbatim with core.quotepath=false).
+    if (e.relPath.toUtf8() != rawPath) e.hasUnstableEncoding = true;
+    if (!rawOrig.isEmpty() && e.origRelPath.toUtf8() != rawOrig) e.hasUnstableEncoding = true;
     return e;
 }
 
@@ -108,7 +112,7 @@ GitStatusEntries GitStatusParser::parsePorcelainV2(const QByteArray &input)
             QList<QByteArray> fields = splitFields(rec, 8);
             if (fields.size() < 9) continue;
             const QByteArray &xyB = fields.at(1);
-            const QString path = QString::fromUtf8(fields.at(8));
+            const QByteArray &rawPath = fields.at(8);
             if (xyB.size() < 2) continue;
             const char x = xyB.at(0);
             const char y = xyB.at(1);
@@ -117,12 +121,12 @@ GitStatusEntries GitStatusParser::parsePorcelainV2(const QByteArray &input)
             if (x != '.' && x != ' ') {
                 result.append(makeEntry(GitStatusEntry::Staged,
                                         xyToChange(x, y, true),
-                                        path, {}, true, xy));
+                                        rawPath, {}, true, xy));
             }
             if (y != '.' && y != ' ') {
                 result.append(makeEntry(GitStatusEntry::Tracked,
                                         xyToChange(x, y, false),
-                                        path, {}, false, xy));
+                                        rawPath, {}, false, xy));
             }
         }
         else if (marker == '2') {
@@ -131,11 +135,11 @@ GitStatusEntries GitStatusParser::parsePorcelainV2(const QByteArray &input)
             QList<QByteArray> fields = splitFields(rec, 9);
             if (fields.size() < 10) continue;
             const QByteArray &xyB = fields.at(1);
-            const QString path = QString::fromUtf8(fields.at(9));
+            const QByteArray &rawPath = fields.at(9);
             // Read the orig path (next nul-terminated segment).
             int origEnd = input.indexOf('\0', i);
             if (origEnd < 0) origEnd = n;
-            const QString orig = QString::fromUtf8(input.mid(i, origEnd - i));
+            const QByteArray rawOrig = input.mid(i, origEnd - i);
             i = origEnd + 1;
             if (xyB.size() < 2) continue;
             const char x = xyB.at(0);
@@ -145,31 +149,36 @@ GitStatusEntries GitStatusParser::parsePorcelainV2(const QByteArray &input)
             if (x != '.' && x != ' ') {
                 result.append(makeEntry(GitStatusEntry::Staged,
                                         xyToChange(x, y, true),
-                                        path, orig, true, xy));
+                                        rawPath, rawOrig, true, xy));
             }
             if (y != '.' && y != ' ') {
                 result.append(makeEntry(GitStatusEntry::Tracked,
                                         xyToChange(x, y, false),
-                                        path, orig, false, xy));
+                                        rawPath, rawOrig, false, xy));
             }
         }
         else if (marker == 'u') {
             // "u XY sub m1 m2 m3 mW h1 h2 h3 path"
+            //   field index: 0  1  2  3  4  5  6  7  8  9  10
+            // h2 = stage2 (ours), h3 = stage3 (theirs)
             QList<QByteArray> fields = splitFields(rec, 10);
             if (fields.size() < 11) continue;
             const QByteArray &xyB = fields.at(1);
-            const QString path = QString::fromUtf8(fields.at(10));
+            const QByteArray &rawPath = fields.at(10);
             const QString xy = QString::fromLatin1(xyB);
-            result.append(makeEntry(GitStatusEntry::Conflicts,
-                                    GitStatusEntry::Unmerged,
-                                    path, {}, false, xy));
+            GitStatusEntry e = makeEntry(GitStatusEntry::Conflicts,
+                                         GitStatusEntry::Unmerged,
+                                         rawPath, {}, false, xy);
+            e.oursSha   = QString::fromLatin1(fields.at(8));
+            e.theirsSha = QString::fromLatin1(fields.at(9));
+            result.append(e);
         }
         else if (marker == '?') {
             // "? path"
-            QByteArray path = rec.mid(2);
+            QByteArray rawPath = rec.mid(2);
             result.append(makeEntry(GitStatusEntry::Untracked,
                                     GitStatusEntry::Untracked_,
-                                    QString::fromUtf8(path), {}, false,
+                                    rawPath, {}, false,
                                     QStringLiteral("??")));
         }
         else if (marker == '#' || marker == '!') {

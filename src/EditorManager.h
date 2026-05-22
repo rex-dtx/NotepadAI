@@ -22,6 +22,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 
 
 class ApplicationSettings;
@@ -46,6 +47,12 @@ public:
     // changes (and once during startup).
     void applyTheme(bool dark);
 
+    // Diff-view registry. ScintillaNext instances tagged here are treated as
+    // read-only diff previews — find/replace UI suppresses Replace, save
+    // dialogs skip them, etc. Auto-cleared when the editor is destroyed.
+    void registerAsDiffView(ScintillaNext *editor);
+    bool isDiffView(const ScintillaNext *editor) const;
+
 signals:
     void editorCreated(ScintillaNext *editor);
     void editorClosed(ScintillaNext *editor);
@@ -62,6 +69,7 @@ private:
     void applyThemeToEditor(ScintillaNext *editor, bool dark, bool initialSetup);
 
     QList<QPointer<ScintillaNext>> editors;
+    QSet<const ScintillaNext *> m_diffViews;
     ApplicationSettings *settings;
     bool darkTheme = false;
 };

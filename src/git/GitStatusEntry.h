@@ -35,6 +35,18 @@ struct GitStatusEntry
     QString origRelPath;
     bool stagedSide = false;
     QString xy;
+
+    // Numstat (filled lazily by GitController numstat ops). -1 = not yet known.
+    // For binary files, isBinary=true and both line counts stay at -1.
+    qint32 addedLines = -1;
+    qint32 deletedLines = -1;
+    bool isBinary = false;
+    bool isModeOnly = false;            // mode-only change (no content delta)
+    bool hasUnstableEncoding = false;   // raw path bytes aren't valid UTF-8
+
+    // For unmerged ('u') records: blob shas of ours / theirs sides.
+    QString oursSha;
+    QString theirsSha;
 };
 
 using GitStatusEntries = QVector<GitStatusEntry>;

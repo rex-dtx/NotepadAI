@@ -64,6 +64,7 @@
 #include "LanguageInspectorDock.h"
 #include "EditorInspectorDock.h"
 #include "FolderAsWorkspaceDock.h"
+#include "GitStatusEntry.h"
 #include "SearchResultsDock.h"
 #include "DebugLogDock.h"
 #include "FileListDock.h"
@@ -1093,6 +1094,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     DockMiddleClickCloser::install(fawDock);
     ui->menuView->addAction(fawDock->toggleViewAction());
     connect(fawDock, &FolderAsWorkspaceDock::fileDoubleClicked, this, &MainWindow::openFile);
+    wireWorkspaceGitSignals(fawDock);
     registerWorkspaceDock(fawDock);
 
     FileListDock *fileListDock = new FileListDock(this);
@@ -1601,6 +1603,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir)
     DockMiddleClickCloser::install(dock);
     ui->menuView->addAction(dock->toggleViewAction());
     connect(dock, &FolderAsWorkspaceDock::fileDoubleClicked, this, &MainWindow::openFile);
+    wireWorkspaceGitSignals(dock);
     registerWorkspaceDock(dock);
 
     if (anchor) {
@@ -1623,6 +1626,20 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
             CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
         }
     });
+}
+
+void MainWindow::wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock)
+{
+    connect(dock, &FolderAsWorkspaceDock::gitDiffRequested,
+            this, [dock](const GitStatusEntry &entry) {
+                dock->showGitDiffPreview(entry);
+            });
+    connect(dock, &FolderAsWorkspaceDock::gitOpenSubmoduleRequested,
+            this, &MainWindow::openFolderAsWorkspacePath);
+    connect(dock, &FolderAsWorkspaceDock::gitDiffPreviewRendered,
+            this, [this](ScintillaNext *editor) {
+                dockedEditor->switchToEditor(editor);
+            });
 }
 
 void MainWindow::restoreOpenWorkspaces()

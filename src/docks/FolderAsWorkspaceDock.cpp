@@ -19,7 +19,10 @@
 
 #include "FolderAsWorkspaceDock.h"
 #include "ApplicationSettings.h"
+#include "GitController.h"
+#include "GitDiffViewController.h"
 #include "GitTabWidget.h"
+#include "NotepadNextApplication.h"
 #include "ui_FolderAsWorkspaceDock.h"
 
 #include <QApplication>
@@ -259,5 +262,44 @@ void FolderAsWorkspaceDock::ensureGitTab()
     }
     connect(gitTab, &GitTabWidget::fileActivated,
             this, &FolderAsWorkspaceDock::fileDoubleClicked);
+    connect(gitTab, &GitTabWidget::diffRequested,
+            this, &FolderAsWorkspaceDock::gitDiffRequested);
+    connect(gitTab, &GitTabWidget::openSubmoduleRequested,
+            this, &FolderAsWorkspaceDock::gitOpenSubmoduleRequested);
     gitTab->initializeIfNeeded();
+}
+
+GitDiffViewController *FolderAsWorkspaceDock::ensureGitDiffViewController()
+{
+    if (gitDiffViewController) return gitDiffViewController;
+
+    ensureGitTab();
+    if (!gitTab || !gitTab->controller()) return nullptr;
+
+    auto *app = qobject_cast<NotepadNextApplication*>(qApp);
+    if (!app) return nullptr;
+
+    gitDiffViewController = new GitDiffViewController(gitTab->controller(),
+                                                      app->getEditorManager(),
+                                                      this);
+    gitDiffViewController->setDarkPalette(app->isEffectiveThemeDark());
+
+    connect(gitDiffViewController, &GitDiffViewController::diffRendered,
+            this, &FolderAsWorkspaceDock::gitDiffPreviewRendered);
+    connect(gitDiffViewController, &GitDiffViewController::diffFailed,
+            this, &FolderAsWorkspaceDock::gitDiffPreviewFailed);
+
+    connect(app, &NotepadNextApplication::effectiveThemeChanged,
+            gitDiffViewController, [this, app]() {
+                gitDiffViewController->setDarkPalette(app->isEffectiveThemeDark());
+            });
+
+    return gitDiffViewController;
+}
+
+void FolderAsWorkspaceDock::showGitDiffPreview(const GitStatusEntry &entry)
+{
+    if (auto *c = ensureGitDiffViewController()) {
+        c->showDiffFor(entry);
+    }
 }

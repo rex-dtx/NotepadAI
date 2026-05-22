@@ -1,0 +1,78 @@
+/*
+ * This file is part of Notepad Next.
+ * Copyright 2026 NotepadAI contributors
+ *
+ * Notepad Next is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Notepad Next is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Notepad Next.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "GitDiffPalette.h"
+
+const GitDiffPalette &GitDiffPalette::light()
+{
+    static const GitDiffPalette p = []() {
+        GitDiffPalette x;
+        // Primer light tokens
+        x.fgAdded       = QColor(0x1A, 0x7F, 0x37);   // success.fg
+        x.fgModified    = QColor(0x09, 0x69, 0xDA);   // accent.fg
+        x.fgDeleted     = QColor(0x65, 0x6D, 0x76);   // fg.muted (gray)
+        x.fgRenamed     = QColor(0x82, 0x50, 0xDF);   // done.fg (purple)
+        x.fgUntracked   = QColor(0x1A, 0x7F, 0x37);
+        x.fgConflict    = QColor(0xCF, 0x22, 0x2E);   // danger.fg
+        x.fgPlus        = QColor(0x1A, 0x7F, 0x37);
+        x.fgMinus       = QColor(0xCF, 0x22, 0x2E);
+
+        // diffBlob.additionLineBgColor / deletionLineBgColor (GitHub light)
+        x.bgAddLine     = QColor(0xDA, 0xFB, 0xE1);   // #dafbe1
+        x.bgDelLine     = QColor(0xFF, 0xEB, 0xE9);   // #ffebe9
+        x.bgAddWord     = QColor(0xAC, 0xEE, 0xBB);   // #aceebb
+        x.bgDelWord     = QColor(0xFF, 0xCE, 0xCB);   // #ffcecb
+        x.fgHunkHeader  = QColor(0x65, 0x6D, 0x76);
+        x.bgHunkHeader  = QColor(0xDD, 0xF4, 0xFF);   // accent.muted
+        x.fgGutter      = QColor(0x8C, 0x95, 0x9F);
+        return x;
+    }();
+    return p;
+}
+
+const GitDiffPalette &GitDiffPalette::dark()
+{
+    static const GitDiffPalette p = []() {
+        GitDiffPalette x;
+        // Primer dark tokens
+        x.fgAdded       = QColor(0x3F, 0xB9, 0x50);   // success.fg
+        x.fgModified    = QColor(0x58, 0xA6, 0xFF);   // accent.fg
+        x.fgDeleted     = QColor(0x8B, 0x94, 0x9E);   // fg.muted (gray)
+        x.fgRenamed     = QColor(0xA3, 0x71, 0xF7);   // done.fg
+        x.fgUntracked   = QColor(0x3F, 0xB9, 0x50);
+        x.fgConflict    = QColor(0xF8, 0x51, 0x49);   // danger.fg
+        x.fgPlus        = QColor(0x3F, 0xB9, 0x50);
+        x.fgMinus       = QColor(0xF8, 0x51, 0x49);
+
+        // GitHub dark diff backgrounds (subtle, alpha-blended on #0d1117)
+        x.bgAddLine     = QColor(0x03, 0x3A, 0x16);   // #033a16
+        x.bgDelLine     = QColor(0x67, 0x06, 0x0C);   // #67060c
+        x.bgAddWord     = QColor(0x1F, 0x6F, 0x2C);   // #1f6f2c
+        x.bgDelWord     = QColor(0xAA, 0x09, 0x14);   // #aa0914
+        x.fgHunkHeader  = QColor(0x8B, 0x94, 0x9E);
+        x.bgHunkHeader  = QColor(0x38, 0x8B, 0xFD, 0x40); // accent.muted alpha
+        x.fgGutter      = QColor(0x6E, 0x76, 0x81);
+        return x;
+    }();
+    return p;
+}
+
+const GitDiffPalette &GitDiffPalette::current(bool isDark)
+{
+    return isDark ? dark() : light();
+}

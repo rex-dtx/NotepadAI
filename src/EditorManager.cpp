@@ -475,6 +475,22 @@ QList<QPointer<ScintillaNext> > EditorManager::getEditors()
     return editors;
 }
 
+void EditorManager::registerAsDiffView(ScintillaNext *editor)
+{
+    if (!editor) return;
+    m_diffViews.insert(editor);
+    // Auto-untrack on destruction. Capturing the raw pointer is safe because
+    // QObject::destroyed fires before the pointer is invalidated for QSet ops.
+    connect(editor, &QObject::destroyed, this, [this](QObject *obj) {
+        m_diffViews.remove(static_cast<const ScintillaNext *>(obj));
+    });
+}
+
+bool EditorManager::isDiffView(const ScintillaNext *editor) const
+{
+    return m_diffViews.contains(editor);
+}
+
 int EditorManager::detectEOLMode(ScintillaNext *editor) const
 {
     qInfo(Q_FUNC_INFO);

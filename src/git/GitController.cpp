@@ -20,6 +20,7 @@
 
 #include "BranchRefParser.h"
 #include "GitErrorClassifier.h"
+#include "GitNumstatParser.h"
 #include "GitProcessRunner.h"
 #include "GitRepoDiscovery.h"
 #include "GitRepoModel.h"
@@ -523,6 +524,66 @@ void GitController::handleStatusDone(const QByteArray &out)
 {
     m_status->setEntries(GitStatusParser::parsePorcelainV2(out));
     emit statusUpdated();
+    enqueueNumstatRefresh();
+}
+
+void GitController::enqueueNumstatRefresh()
+{
+    if (m_currentRepo.isEmpty()) return;
+
+    // Unstaged: worktree vs index (or worktree vs HEAD if empty repo)
+    {
+        Op op;
+        op.kind = OpKind::NumstatUnstaged;
+        op.argv = { QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
+                    QStringLiteral("-C"), m_currentRepo,
+                    QStringLiteral("diff"), QStringLiteral("--numstat"), QStringLiteral("-z"),
+                    QStringLiteral("--no-renames") };
+        op.timeoutMs = kTimeoutStatus;
+        enqueue(op);
+    }
+    // Staged: index vs HEAD (skip on empty repo — would error)
+    if (!m_empty) {
+        Op op;
+        op.kind = OpKind::NumstatStaged;
+        op.argv = { QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
+                    QStringLiteral("-C"), m_currentRepo,
+                    QStringLiteral("diff"), QStringLiteral("--cached"),
+                    QStringLiteral("--numstat"), QStringLiteral("-z"),
+                    QStringLiteral("--no-renames") };
+        op.timeoutMs = kTimeoutStatus;
+        enqueue(op);
+    }
+}
+
+void GitController::handleNumstatDone(const QByteArray &out, bool stagedSide)
+{
+    const auto stats = GitNumstatParser::parse(out);
+    m_status->mergeNumstat(stats, stagedSide);
+    // Emit only after the staged side completes (the second of the pair).
+    // On empty repos we only run the unstaged op, so emit there too.
+    if (stagedSide || m_empty) emit numstatUpdated();
+}
+
+void GitController::requestDiff(const QString &relPath, bool stagedSide)
+{
+    if (m_currentRepo.isEmpty() || relPath.isEmpty()) return;
+
+    Op op;
+    op.kind = OpKind::DiffPath;
+    op.argv = { QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
+                QStringLiteral("-C"), m_currentRepo,
+                QStringLiteral("diff") };
+    if (stagedSide) op.argv.append(QStringLiteral("--cached"));
+    op.argv.append({ QStringLiteral("--no-color"), QStringLiteral("--no-ext-diff"),
+                     QStringLiteral("--src-prefix=a/"), QStringLiteral("--dst-prefix=b/"),
+                     QStringLiteral("--"), relPath });
+    op.timeoutMs = kTimeoutNormal;
+    QVariantMap meta;
+    meta[QStringLiteral("relPath")] = relPath;
+    meta[QStringLiteral("stagedSide")] = stagedSide;
+    op.meta = meta;
+    enqueue(op);
 }
 
 void GitController::onRunFinished(int exit, const QByteArray &out, const QByteArray &err)
@@ -579,6 +640,20 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
             popAndAdvance();
             return;
         }
+        // Numstat ops are best-effort — a failure (e.g. unborn HEAD edge cases,
+        // missing object) shouldn't tip the controller into Error or block UI.
+        if (kind == OpKind::NumstatStaged || kind == OpKind::NumstatUnstaged) {
+            popAndAdvance();
+            return;
+        }
+        // Diff-path failures are surfaced to the requester only, never block.
+        if (kind == OpKind::DiffPath) {
+            emit diffFailed(m_current.meta.value(QStringLiteral("relPath")).toString(),
+                            m_current.meta.value(QStringLiteral("stagedSide")).toBool(),
+                            QString::fromUtf8(err));
+            popAndAdvance();
+            return;
+        }
         setState(State::Error);
         m_queue.clear();
         emit errorOccurred(e);
@@ -592,6 +667,13 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
         case OpKind::Refs:            handleRefsDone(out); break;
         case OpKind::Remotes:         handleRemotesDone(out); break;
         case OpKind::Status:          handleStatusDone(out); break;
+        case OpKind::NumstatStaged:   handleNumstatDone(out, true); break;
+        case OpKind::NumstatUnstaged: handleNumstatDone(out, false); break;
+        case OpKind::DiffPath:
+            emit diffReady(m_current.meta.value(QStringLiteral("relPath")).toString(),
+                           m_current.meta.value(QStringLiteral("stagedSide")).toBool(),
+                           out);
+            break;
         case OpKind::Stage:
         case OpKind::Unstage:
         case OpKind::StageAll:

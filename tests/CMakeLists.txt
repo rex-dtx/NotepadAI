@@ -440,3 +440,38 @@ target_sources(test_shutdown_diagnostics PRIVATE
 )
 target_compile_definitions(test_shutdown_diagnostics PRIVATE APP_VERSION="test")
 add_test(NAME ShutdownDiagnostics COMMAND test_shutdown_diagnostics)
+
+# --- GitDiffParser: unified diff → flat parallel arrays.
+#     Hot-path parser; the 5k-line bench hard-fails > 60 ms so a regression in
+#     the diff parser is caught at CI time, not at the user's keystroke. ---
+qt_add_executable(test_git_diff_parser test_git_diff_parser.cpp)
+target_include_directories(test_git_diff_parser PRIVATE ${CMAKE_SOURCE_DIR}/src/git)
+target_link_libraries(test_git_diff_parser PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_git_diff_parser PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.h
+)
+add_test(NAME GitDiffParser COMMAND test_git_diff_parser)
+
+# --- GitNumstatParser: porcelain `git diff --numstat -z` decoder
+#     (normal, renamed triplet, binary `-\t-\t`, UTF-8 paths, truncated input). ---
+qt_add_executable(test_git_numstat_parser test_git_numstat_parser.cpp)
+target_include_directories(test_git_numstat_parser PRIVATE ${CMAKE_SOURCE_DIR}/src/git)
+target_link_libraries(test_git_numstat_parser PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_git_numstat_parser PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/git/GitNumstatParser.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitNumstatParser.h
+)
+add_test(NAME GitNumstatParser COMMAND test_git_numstat_parser)
+
+# --- GitDiffCache: byte-budget LRU keyed by xxHash3 of (repo, relPath, staged). ---
+qt_add_executable(test_git_diff_cache test_git_diff_cache.cpp)
+target_include_directories(test_git_diff_cache PRIVATE ${CMAKE_SOURCE_DIR}/src/git)
+target_link_libraries(test_git_diff_cache PRIVATE Qt6::Core Qt6::Test xxhash)
+target_sources(test_git_diff_cache PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffCache.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffCache.h
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.h
+)
+add_test(NAME GitDiffCache COMMAND test_git_diff_cache)
