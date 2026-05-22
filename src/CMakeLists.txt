@@ -184,7 +184,34 @@ qt_add_executable(NotepadAI
 	docks/FolderAsWorkspaceDock.h
 	docks/FolderAsWorkspaceDock.ui
 
-
+	git/BranchPickerPopup.cpp
+	git/BranchPickerPopup.h
+	git/BranchRefParser.cpp
+	git/BranchRefParser.h
+	git/CommitComposer.cpp
+	git/CommitComposer.h
+	git/GitController.cpp
+	git/GitController.h
+	git/GitError.h
+	git/GitErrorClassifier.cpp
+	git/GitErrorClassifier.h
+	git/GitProcessRunner.cpp
+	git/GitProcessRunner.h
+	git/GitRepoDiscovery.cpp
+	git/GitRepoDiscovery.h
+	git/GitRepoInfo.h
+	git/GitRepoModel.cpp
+	git/GitRepoModel.h
+	git/GitStatusEntry.h
+	git/GitStatusModel.cpp
+	git/GitStatusModel.h
+	git/GitStatusParser.cpp
+	git/GitStatusParser.h
+	git/GitTabWidget.cpp
+	git/GitTabWidget.h
+	git/GitTypes.cpp
+	git/GitWatcher.cpp
+	git/GitWatcher.h
 
 	docks/LanguageInspectorDock.cpp
 	docks/LanguageInspectorDock.h
@@ -261,6 +288,7 @@ target_include_directories(NotepadAI
         ${CMAKE_CURRENT_SOURCE_DIR}/decorators
         ${CMAKE_CURRENT_SOURCE_DIR}/dialogs
         ${CMAKE_CURRENT_SOURCE_DIR}/docks
+        ${CMAKE_CURRENT_SOURCE_DIR}/git
         ${CMAKE_CURRENT_SOURCE_DIR}/widgets
         ${CMAKE_CURRENT_SOURCE_DIR}
 )

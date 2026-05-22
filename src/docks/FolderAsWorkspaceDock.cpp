@@ -19,6 +19,7 @@
 
 #include "FolderAsWorkspaceDock.h"
 #include "ApplicationSettings.h"
+#include "GitTabWidget.h"
 #include "ui_FolderAsWorkspaceDock.h"
 
 #include <QApplication>
@@ -29,8 +30,10 @@
 #include <QFileSystemModel>
 #include <QHelpEvent>
 #include <QStyle>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolTip>
+#include <QVBoxLayout>
 
 ApplicationSetting<QString> rootPathSetting{"FolderAsWorkspace/RootPath"};
 
@@ -90,6 +93,8 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(QWidget *parent) :
 
     ui->treeView->viewport()->installEventFilter(this);
 
+    connect(ui->tabs, &QTabWidget::currentChanged, this, &FolderAsWorkspaceDock::onTabChanged);
+
     ApplicationSettings settings;
     setRootPath(settings.get(rootPathSetting));
 }
@@ -132,6 +137,8 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget
 
     ui->treeView->viewport()->installEventFilter(this);
 
+    connect(ui->tabs, &QTabWidget::currentChanged, this, &FolderAsWorkspaceDock::onTabChanged);
+
     // Explicit-path ctor: skip the saved-setting load so additional workspaces
     // don't briefly flash the previous global root before showing their own.
     setRootPath(initialPath);
@@ -149,6 +156,10 @@ void FolderAsWorkspaceDock::setRootPath(const QString dir)
 
     model->setRootPath(dir);
     ui->treeView->setRootIndex(model->index(dir));
+
+    if (gitTab) {
+        gitTab->setWorkspaceRoot(dir);
+    }
 
     // Window title doubles as the tab label when several workspaces are tabified
     // alongside each other, so make it the folder basename rather than the static
@@ -216,4 +227,37 @@ bool FolderAsWorkspaceDock::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QDockWidget::eventFilter(watched, event);
+}
+
+void FolderAsWorkspaceDock::onTabChanged(int index)
+{
+    // Lazy-create the Git tab the first time the user looks at it,
+    // so docks that never need it don't spawn a GitController.
+    if (index < 0) return;
+    QWidget *page = ui->tabs->widget(index);
+    if (page == ui->gitTab) {
+        ensureGitTab();
+    }
+}
+
+void FolderAsWorkspaceDock::ensureGitTab()
+{
+    if (gitTab) {
+        gitTab->initializeIfNeeded();
+        return;
+    }
+    gitTab = new GitTabWidget(rootPath(), this);
+    auto *layout = qobject_cast<QVBoxLayout *>(ui->gitTab->layout());
+    if (layout) {
+        layout->addWidget(gitTab);
+    } else {
+        // Defensive: .ui should always provide a layout, but fall back if not.
+        auto *fallback = new QVBoxLayout(ui->gitTab);
+        fallback->setContentsMargins(0, 0, 0, 0);
+        fallback->setSpacing(0);
+        fallback->addWidget(gitTab);
+    }
+    connect(gitTab, &GitTabWidget::fileActivated,
+            this, &FolderAsWorkspaceDock::fileDoubleClicked);
+    gitTab->initializeIfNeeded();
 }

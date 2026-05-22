@@ -27,14 +27,51 @@
     <property name="bottomMargin">
      <number>0</number>
     </property>
+    <property name="spacing">
+     <number>0</number>
+    </property>
     <item>
-     <widget class="QTreeView" name="treeView">
-      <property name="frameShape">
-       <enum>QFrame::NoFrame</enum>
+     <widget class="QTabWidget" name="tabs">
+      <property name="documentMode">
+       <bool>true</bool>
       </property>
-      <attribute name="headerVisible">
-       <bool>false</bool>
-      </attribute>
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <widget class="QWidget" name="filesTab">
+       <attribute name="title">
+        <string>Files</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="filesLayout">
+        <property name="leftMargin"><number>0</number></property>
+        <property name="topMargin"><number>0</number></property>
+        <property name="rightMargin"><number>0</number></property>
+        <property name="bottomMargin"><number>0</number></property>
+        <property name="spacing"><number>0</number></property>
+        <item>
+         <widget class="QTreeView" name="treeView">
+          <property name="frameShape">
+           <enum>QFrame::NoFrame</enum>
+          </property>
+          <attribute name="headerVisible">
+           <bool>false</bool>
+          </attribute>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="gitTab">
+       <attribute name="title">
+        <string>Git</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="gitLayout">
+        <property name="leftMargin"><number>0</number></property>
+        <property name="topMargin"><number>0</number></property>
+        <property name="rightMargin"><number>0</number></property>
+        <property name="bottomMargin"><number>0</number></property>
+        <property name="spacing"><number>0</number></property>
+       </layout>
+      </widget>
      </widget>
     </item>
    </layout>

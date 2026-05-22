@@ -29,6 +29,7 @@ class FolderAsWorkspaceDock;
 
 class QFileSystemModel;
 class QTimer;
+class GitTabWidget;
 
 class FolderAsWorkspaceDock : public QDockWidget
 {
@@ -48,13 +49,19 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
+private slots:
+    void onTabChanged(int index);
+
 private:
     Ui::FolderAsWorkspaceDock *ui;
 
     QFileSystemModel *model;
+    GitTabWidget *gitTab = nullptr;
 
     QTimer *tooltipTimer;
     QPersistentModelIndex pendingTooltipIndex;
+
+    void ensureGitTab();
 };
 
 #endif // FOLDERASWORKSPACEDOCK_H
