@@ -89,6 +89,12 @@ CREATE_SETTING(Terminal, TerminalFont, terminalFont, QString, []() {
     return QFontDatabase::systemFont(QFontDatabase::FixedFont).toString();
 })
 
+#ifndef NDEBUG
+// Debug-only diagnostics: emit shutdown_report.txt on clean exit. See
+// ShutdownDiagnostics.{h,cpp} and "Help -> Debug -> Shutdown Diagnostics" toggle.
+CREATE_SETTING(Debug, ShutdownDiagnosticsEnabled, shutdownDiagnosticsEnabled, bool, true)
+#endif
+
 // --- AI / ACP agent settings ---------------------------------------------------
 //
 // Declared by hand (not via CREATE_SETTING) because the auto-approve setter

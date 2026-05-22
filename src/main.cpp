@@ -27,12 +27,16 @@
 
 #include "CrashHandler.h"
 #include "NotepadNextApplication.h"
+#include "ShutdownDiagnostics.h"
 
 int main(int argc, char *argv[])
 {
     // Install crash handlers before anything else so faults during early init
     // (Qt plugin load, settings parse, ...) still produce a crash_report.txt.
     CrashHandler::install();
+
+    // Stamp startup time for debug-build shutdown diagnostics. No-op in Release.
+    ShutdownDiagnostics::install();
 
     // Test-only CLI flag wired up to scripts/test-crash-handler.sh. Parsed
     // before QApplication so we don't depend on SingleApplication forwarding.

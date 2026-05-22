@@ -1225,6 +1225,22 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 CrashHandler::triggerCrashForTest(kindBytes.constData());
             });
         }
+
+        // Shutdown diagnostics toggle. Writes shutdown_report.txt on clean exit.
+        ApplicationSettings *settings = app->getSettings();
+        QAction *diagAction = debugMenu->addAction(tr("Shutdown Diagnostics"));
+        diagAction->setCheckable(true);
+        diagAction->setChecked(settings->shutdownDiagnosticsEnabled());
+        connect(diagAction, &QAction::toggled, this, [settings](bool checked) {
+            settings->setShutdownDiagnosticsEnabled(checked);
+        });
+        connect(settings, &ApplicationSettings::shutdownDiagnosticsEnabledChanged,
+                diagAction, [diagAction](bool enabled) {
+                    if (diagAction->isChecked() != enabled) {
+                        QSignalBlocker block(diagAction);
+                        diagAction->setChecked(enabled);
+                    }
+                });
     }
 #endif
 

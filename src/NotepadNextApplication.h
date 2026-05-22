@@ -80,6 +80,9 @@ signals:
 
 protected:
     bool event(QEvent *event) override;
+#ifndef NDEBUG
+    bool notify(QObject *receiver, QEvent *event) override;
+#endif
 
 private slots:
     void saveSettings();

@@ -63,6 +63,8 @@ qt_add_executable(NotepadAI
 	ThemeResolver.h
 	StylesheetResource.h
 	DarkPalette.h
+	ProfileScope.h
+	ShutdownDiagnostics.h
 	resources.qrc
 	scripts.qrc
 	ApplicationSettings.cpp
@@ -117,6 +119,8 @@ qt_add_executable(NotepadAI
 	TranslationManager.cpp
 	UndoAction.cpp
 	ZoomEventWatcher.cpp
+	ProfileScope.cpp
+	ShutdownDiagnostics.cpp
 	decorators/ApplicationDecorator.cpp
 	decorators/ApplicationDecorator.h
 	decorators/AutoCompletion.cpp

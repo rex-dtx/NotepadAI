@@ -133,6 +133,10 @@ public:
     DEFINE_SETTING(ShellCommand, shellCommand, QString)
     DEFINE_SETTING(TerminalFont, terminalFont, QString)
 
+#ifndef NDEBUG
+    DEFINE_SETTING(ShutdownDiagnosticsEnabled, shutdownDiagnosticsEnabled, bool)
+#endif
+
     // AI / ACP agent settings. Stored under the "Ai/" group.
 public:
     QString defaultAiAgentId() const;

@@ -413,3 +413,26 @@ target_sources(test_acp_message_widget_streaming PRIVATE
     ${CMAKE_SOURCE_DIR}/src/widgets/AcpMessageWidget.h
 )
 add_test(NAME AcpMessageWidgetStreaming COMMAND test_acp_message_widget_streaming)
+
+# --- ProfileScope: lock-free per-tag timing aggregation ---
+qt_add_executable(test_profile_scope test_profile_scope.cpp)
+target_include_directories(test_profile_scope PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_profile_scope PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_profile_scope PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.h
+)
+add_test(NAME ProfileScope COMMAND test_profile_scope)
+
+# --- ShutdownDiagnostics: report formatting, event recording, file output ---
+qt_add_executable(test_shutdown_diagnostics test_shutdown_diagnostics.cpp)
+target_include_directories(test_shutdown_diagnostics PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_shutdown_diagnostics PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+target_sources(test_shutdown_diagnostics PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/ShutdownDiagnostics.cpp
+    ${CMAKE_SOURCE_DIR}/src/ShutdownDiagnostics.h
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.h
+)
+target_compile_definitions(test_shutdown_diagnostics PRIVATE APP_VERSION="test")
+add_test(NAME ShutdownDiagnostics COMMAND test_shutdown_diagnostics)

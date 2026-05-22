@@ -33,9 +33,12 @@
 #include "LuaState.h"
 #include "lua.hpp"
 #include "EditorConfigAppDecorator.h"
+#include "ShutdownDiagnostics.h"
 
 #include "ILexer.h"
 #include "Lexilla.h"
+
+#include <chrono>
 
 #include <QCommandLineParser>
 
@@ -182,6 +185,18 @@ bool NotepadNextApplication::init()
             aiAgentManager_->shutdown();
         }
     });
+
+#ifndef NDEBUG
+    // Apply current setting + slow-event threshold defaults.
+    ShutdownDiagnostics::setCollectionEnabled(settings->shutdownDiagnosticsEnabled());
+    connect(settings, &ApplicationSettings::shutdownDiagnosticsEnabledChanged,
+            this, [](bool enabled) {
+                ShutdownDiagnostics::setCollectionEnabled(enabled);
+            });
+    connect(this, &NotepadNextApplication::aboutToQuit, this, []() {
+        ShutdownDiagnostics::writeReport();
+    });
+#endif
 
     EditorConfigAppDecorator *ecad = new EditorConfigAppDecorator(this);
     ecad->setEnabled(true);
@@ -496,6 +511,25 @@ bool NotepadNextApplication::event(QEvent *event)
 
     return SingleApplication::event(event);
 }
+
+#ifndef NDEBUG
+bool NotepadNextApplication::notify(QObject *receiver, QEvent *event)
+{
+    // Fast-path: skip overhead entirely when collection is off.
+    if (!ShutdownDiagnostics::isCollectionEnabled()) {
+        return SingleApplication::notify(receiver, event);
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const bool result = SingleApplication::notify(receiver, event);
+    const auto end = std::chrono::steady_clock::now();
+    const qint64 ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        end - start).count();
+
+    ShutdownDiagnostics::Detail::recordEvent(receiver, event, ns);
+    return result;
+}
+#endif
 
 void NotepadNextApplication::openFiles(const QStringList &files)
 {
