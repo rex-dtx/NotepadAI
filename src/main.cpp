@@ -23,10 +23,26 @@
 #include <QApplication>
 #include <QDataStream>
 
+#include <cstring>
+
+#include "CrashHandler.h"
 #include "NotepadNextApplication.h"
 
 int main(int argc, char *argv[])
 {
+    // Install crash handlers before anything else so faults during early init
+    // (Qt plugin load, settings parse, ...) still produce a crash_report.txt.
+    CrashHandler::install();
+
+    // Test-only CLI flag wired up to scripts/test-crash-handler.sh. Parsed
+    // before QApplication so we don't depend on SingleApplication forwarding.
+    for (int i = 1; i < argc; ++i) {
+        const char *prefix = "--__trigger-crash=";
+        if (std::strncmp(argv[i], prefix, std::strlen(prefix)) == 0) {
+            CrashHandler::triggerCrashForTest(argv[i] + std::strlen(prefix));
+        }
+    }
+
     qSetMessagePattern("[%{time process}] %{if-debug}D%{endif}%{if-info}I%{endif}%{if-warning}W%{endif}%{if-critical}C%{endif}%{if-fatal}F%{endif}: %{message}");
 
     // Set these since other parts of the app references these

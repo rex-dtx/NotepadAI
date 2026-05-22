@@ -100,6 +100,81 @@
 
 #include "ActionUtils.h"
 
+#include "CrashContext.h"
+#include "CrashHandler.h"
+
+#include <QEvent>
+#include <QActionEvent>
+#include <QPointer>
+#include "DockWidget.h"
+
+namespace {
+
+// Walks up the parent chain looking for an ADS dock (or any QWidget with a
+// non-empty objectName) so the crash report can name *where* the user was
+// focused. Pure read-only; safe to call from focusChanged signals.
+QString resolveDockObjectName(QWidget *w)
+{
+    while (w) {
+        if (auto *dock = qobject_cast<ads::CDockWidget *>(w)) {
+            return dock->objectName();
+        }
+        const QString name = w->objectName();
+        if (!name.isEmpty() && w->isWindow() == false) {
+            // Heuristic: only return names of dock-ish widgets, not random children.
+            if (name.contains(QLatin1String("Dock"), Qt::CaseInsensitive)) {
+                return name;
+            }
+        }
+        w = w->parentWidget();
+    }
+    return {};
+}
+
+// Connects a QAction's triggered() to CrashContext::setLastAction so we know
+// what the user just clicked when a later crash happens. Deduplicates via a
+// property to survive being called multiple times (filter + findChildren sweep).
+void wireActionForCrashContext(QAction *action)
+{
+    if (!action || action->property("crashContextWired").toBool()) {
+        return;
+    }
+    action->setProperty("crashContextWired", true);
+
+    QPointer<QAction> guard(action);
+    QObject::connect(action, &QAction::triggered, action, [guard]() {
+        if (!guard) return;
+        // Prefer objectName ("actionOpen") over text (which is translated and
+        // may contain '&' mnemonics) so the report is stable across locales.
+        const QString name = guard->objectName().isEmpty()
+                                 ? guard->text()
+                                 : guard->objectName();
+        CrashContext::setLastAction(name);
+    });
+}
+
+// QApplication-wide event filter that catches QActionEvent::ActionAdded so
+// dynamically-created actions (recent files menu, language menu) also report
+// themselves to CrashContext. Static lifetime via Q_GLOBAL_STATIC would be
+// fine but we just leak one instance for the lifetime of the app.
+class ActionAddedFilter : public QObject
+{
+public:
+    explicit ActionAddedFilter(QObject *parent = nullptr) : QObject(parent) {}
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *ev) override
+    {
+        if (ev->type() == QEvent::ActionAdded) {
+            auto *ae = static_cast<QActionEvent *>(ev);
+            wireActionForCrashContext(ae->action());
+        }
+        return QObject::eventFilter(obj, ev);
+    }
+};
+
+} // namespace
+
 
 MainWindow::MainWindow(NotepadNextApplication *app) :
     ui(new Ui::MainWindow),
@@ -111,6 +186,24 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     setAttribute(Qt::WA_DeleteOnClose);
 
     ui->setupUi(this);
+
+    // CrashContext wiring: catch every QAction added to this app from now on
+    // (including dynamically-built recent-files / language entries) so the
+    // crash report knows what the user just clicked. The follow-up
+    // findChildren() sweep at the end of the constructor catches everything
+    // setupUi created before this filter was installed.
+    qApp->installEventFilter(new ActionAddedFilter(qApp));
+
+    // Track which dock has focus so the report points to the right surface
+    // (e.g. "AiAgentDock" vs "FolderAsWorkspaceDock") when a faulting action
+    // wasn't a QAction trigger.
+    connect(qApp, &QApplication::focusChanged, this,
+            [](QWidget * /*old*/, QWidget *now) {
+                const QString dockName = resolveDockObjectName(now);
+                if (!dockName.isEmpty()) {
+                    CrashContext::setActiveDockId(dockName);
+                }
+            });
 
     applyCustomShortcuts();
 
@@ -1103,6 +1196,38 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         }
     });
 
+    // Sweep every QAction that setupUi (and constructor-time code above) has
+    // already created. The ActionAddedFilter installed right after setupUi
+    // handles anything added from this point onward (recent files, languages).
+    for (QAction *a : findChildren<QAction *>()) {
+        wireActionForCrashContext(a);
+    }
+
+#ifndef NDEBUG
+    {
+        // Debug-only "Help → Debug → Trigger Crash" submenu. Mirrors the kinds
+        // documented in CrashHandler::triggerCrashForTest so testers can
+        // exercise each fault path interactively. Never compiled into Release.
+        QMenu *debugMenu = ui->menuHelp->addMenu(tr("Debug"));
+        QMenu *crashMenu = debugMenu->addMenu(tr("Trigger Crash"));
+        const struct { const char *kind; const char *label; } kinds[] = {
+            {"segv",      "Null pointer write (SEGV)"},
+            {"abrt",      "std::abort (SIGABRT)"},
+            {"sof",       "Stack overflow"},
+            {"terminate", "std::terminate (uncaught std::exception)"},
+            {"nonstd",    "std::terminate (non-std exception)"},
+            {"div0",      "Integer divide by zero"},
+        };
+        for (const auto &k : kinds) {
+            QAction *a = crashMenu->addAction(QString::fromLatin1(k.label));
+            const QByteArray kindBytes(k.kind);
+            connect(a, &QAction::triggered, this, [kindBytes]() {
+                CrashHandler::triggerCrashForTest(kindBytes.constData());
+            });
+        }
+    }
+#endif
+
     restoreSettings();
 
     initUpdateCheck();
@@ -1386,6 +1511,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir)
             d->setVisible(true);
             d->raise();
             m_activeWorkspace = d;
+            CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
             return;
         }
     }
@@ -1406,6 +1532,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir)
         vacant->setVisible(true);
         vacant->raise();
         m_activeWorkspace = vacant;
+        CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
         return;
     }
 
@@ -1427,6 +1554,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir)
     dock->setVisible(true);
     dock->raise();
     m_activeWorkspace = dock;
+    CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
 }
 
 void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
@@ -1436,6 +1564,7 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
     connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible) {
         if (visible && !dock->rootPath().isEmpty()) {
             m_activeWorkspace = dock;
+            CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
         }
     });
 }
@@ -1462,6 +1591,7 @@ void MainWindow::restoreOpenWorkspaces()
         for (FolderAsWorkspaceDock *d : findChildren<FolderAsWorkspaceDock *>()) {
             if (QDir::cleanPath(d->rootPath()) == cleanedActive) {
                 m_activeWorkspace = d;
+                CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
                 d->raise();
                 break;
             }
@@ -2067,6 +2197,11 @@ void MainWindow::activateEditor(ScintillaNext *editor)
 
     checkFileForModification(editor);
     updateGui(editor);
+
+    if (editor) {
+        CrashContext::setActiveEditorPath(
+            editor->isFile() ? editor->getFilePath() : editor->getName());
+    }
 
     emit editorActivated(editor);
 }

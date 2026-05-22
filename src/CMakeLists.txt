@@ -15,6 +15,8 @@ qt_add_executable(NotepadAI
 	ColorPickerDelegate.h
 	ComboBoxDelegate.h
 	Converter.h
+	CrashContext.h
+	CrashHandler.h
 	DebugManager.h
 	DefaultDirectoryManager.h
 	DockedEditor.h
@@ -74,6 +76,8 @@ qt_add_executable(NotepadAI
 	ColorPickerDelegate.cpp
 	ComboBoxDelegate.cpp
 	Converter.cpp
+	CrashContext.cpp
+	CrashHandler.cpp
 	DebugManager.cpp
 	DefaultDirectoryManager.cpp
 	DockedEditor.cpp
