@@ -264,6 +264,8 @@ target_sources(test_acp_agent_manager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/AcpProtocol.h
     ${CMAKE_SOURCE_DIR}/src/AcpSessionModel.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpSessionModel.h
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.h
     ${CMAKE_SOURCE_DIR}/src/docks/AiAgentDock.cpp
     ${CMAKE_SOURCE_DIR}/src/docks/AiAgentDock.h
     ${CMAKE_SOURCE_DIR}/src/widgets/AcpImageAttachmentList.cpp
@@ -309,6 +311,8 @@ target_sources(test_acp_agent_exit_restart PRIVATE
     ${CMAKE_SOURCE_DIR}/src/AcpProtocol.h
     ${CMAKE_SOURCE_DIR}/src/AcpSessionModel.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpSessionModel.h
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.h
     ${CMAKE_SOURCE_DIR}/src/docks/AiAgentDock.cpp
     ${CMAKE_SOURCE_DIR}/src/docks/AiAgentDock.h
     ${CMAKE_SOURCE_DIR}/src/widgets/AcpImageAttachmentList.cpp

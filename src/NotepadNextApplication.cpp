@@ -33,6 +33,7 @@
 #include "LuaState.h"
 #include "lua.hpp"
 #include "EditorConfigAppDecorator.h"
+#include "ProfileScope.h"
 #include "ShutdownDiagnostics.h"
 
 #include "ILexer.h"
@@ -109,6 +110,7 @@ NotepadNextApplication::NotepadNextApplication(int &argc, char **argv)
 
 bool NotepadNextApplication::init()
 {
+    PROFILE_SCOPE("NotepadNextApplication::init");
     qInfo(Q_FUNC_INFO);
 
 #ifndef Q_OS_MACOS
@@ -147,13 +149,19 @@ bool NotepadNextApplication::init()
     // This connection isn't needed since the application can not appropriately retranslate the UI at runtime
     //connect(settings, &ApplicationSettings::translationChanged, translationManager, &TranslationManager::loadTranslationByName);
 
-    luaState = new LuaState();
+    {
+        PROFILE_SCOPE("NotepadNextApplication::initLua");
+        luaState = new LuaState();
+    }
 
-    recentFilesListManager = new RecentFilesListManager(this);
-    recentWorkspacesListManager = new RecentFilesListManager(this);
-    editorManager = new EditorManager(settings, this);
-    aiAgentManager_ = new AcpAgentManager(settings, this);
-    sessionManager = new SessionManager(this);
+    {
+        PROFILE_SCOPE("NotepadNextApplication::initManagers");
+        recentFilesListManager = new RecentFilesListManager(this);
+        recentWorkspacesListManager = new RecentFilesListManager(this);
+        editorManager = new EditorManager(settings, this);
+        aiAgentManager_ = new AcpAgentManager(settings, this);
+        sessionManager = new SessionManager(this);
+    }
 
     connect(editorManager, &EditorManager::editorCreated, recentFilesListManager, [=](ScintillaNext *editor) {
         if (editor->isFile()) {
@@ -167,9 +175,15 @@ bool NotepadNextApplication::init()
         }
     });
 
-    loadSettings();
+    {
+        PROFILE_SCOPE("NotepadNextApplication::loadSettings");
+        loadSettings();
+    }
 
-    applyTheme();
+    {
+        PROFILE_SCOPE("NotepadNextApplication::applyTheme");
+        applyTheme();
+    }
     connect(settings, &ApplicationSettings::themeChanged, this, [this](ApplicationSettings::ThemeEnum) {
         applyTheme();
     });
@@ -181,6 +195,7 @@ bool NotepadNextApplication::init()
 
     connect(this, &NotepadNextApplication::aboutToQuit, this, &NotepadNextApplication::saveSettings);
     connect(this, &NotepadNextApplication::aboutToQuit, this, [this]() {
+        PROFILE_SCOPE("NotepadNextApplication::aboutToQuit::acpShutdown");
         if (aiAgentManager_) {
             aiAgentManager_->shutdown();
         }
@@ -203,10 +218,16 @@ bool NotepadNextApplication::init()
     MarkerAppDecorator *mad = new MarkerAppDecorator(this);
     mad->setEnabled(true);
 
-    luaState->executeFile(":/scripts/init.lua");
-    LuaExtension::Instance().Initialise(luaState->L, Q_NULLPTR);
+    {
+        PROFILE_SCOPE("NotepadNextApplication::initLuaScripts");
+        luaState->executeFile(":/scripts/init.lua");
+        LuaExtension::Instance().Initialise(luaState->L, Q_NULLPTR);
+    }
 
-    createNewWindow();
+    {
+        PROFILE_SCOPE("NotepadNextApplication::createNewWindow");
+        createNewWindow();
+    }
     connect(editorManager, &EditorManager::editorCreated, window, &MainWindow::addEditor);
 
     // If the application is activated (e.g. user switching to another program and them back) the focus
@@ -240,13 +261,17 @@ bool NotepadNextApplication::init()
     const bool isNewWindow = parser.isSet("new-window");
 
     if (!isNewWindow && settings->restorePreviousSession()) {
+        PROFILE_SCOPE("NotepadNextApplication::restoreSession");
         qInfo("Restoring previous session");
 
         sessionManager->loadSession(window);
         window->restoreOpenWorkspaces();
     }
 
-    openFiles(parser.positionalArguments());
+    {
+        PROFILE_SCOPE("NotepadNextApplication::openCliFiles");
+        openFiles(parser.positionalArguments());
+    }
 
     if (parser.isSet("n") && parser.positionalArguments().length() > 0) {
         QString firstFile = parser.positionalArguments()[0];
@@ -266,7 +291,10 @@ bool NotepadNextApplication::init()
 
     // Everything should be ready at this point
 
-    window->restoreWindowState();
+    {
+        PROFILE_SCOPE("NotepadNextApplication::restoreWindowState");
+        window->restoreWindowState();
+    }
 
     // Check this after restoring the state, as the state contains the previous visibility state of the FAW dock
     if (parser.isSet("workspace")) {
@@ -554,6 +582,7 @@ void NotepadNextApplication::saveSettings()
 
 void NotepadNextApplication::saveSession()
 {
+    PROFILE_SCOPE("NotepadNextApplication::saveSession");
     // Iterate all the opened editors and add them to the recent file list
     for (const auto &editor : window->editors()) {
         if (editor->isFile()) {

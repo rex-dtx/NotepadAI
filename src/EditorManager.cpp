@@ -38,6 +38,7 @@
 #include "BookMarkDecorator.h"
 #include "HTMLAutoCompleteDecorator.h"
 #include "JustfileRecipeHighlighter.h"
+#include "ProfileScope.h"
 
 
 const int MARK_HIDELINESBEGIN = 23;
@@ -149,6 +150,7 @@ ScintillaNext *EditorManager::createEditor(const QString &name)
 
 ScintillaNext *EditorManager::createEditorFromFile(const QString &filePath, bool tryToCreate)
 {
+    PROFILE_SCOPE("EditorManager::createEditorFromFile");
     ScintillaNext *editor = ScintillaNext::fromFile(filePath, tryToCreate);
 
     if (editor) {
@@ -185,6 +187,7 @@ void EditorManager::manageEditor(ScintillaNext *editor)
 
 void EditorManager::setupEditor(ScintillaNext *editor)
 {
+    PROFILE_SCOPE("EditorManager::setupEditor");
     qInfo(Q_FUNC_INFO);
 
     editor->clearCmdKey(SCK_INSERT);

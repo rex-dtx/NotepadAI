@@ -24,6 +24,7 @@
 #include "AcpHistoryStore.h"
 #include "AcpSessionModel.h"
 #include "AiAgentDock.h"
+#include "ProfileScope.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -246,6 +247,7 @@ void AcpAgentManager::restartSession(const QString &oldSessionId)
 
 void AcpAgentManager::shutdown()
 {
+    PROFILE_SCOPE("AcpAgentManager::shutdown");
     if (m_idleReaperTimer) {
         m_idleReaperTimer->stop();
     }

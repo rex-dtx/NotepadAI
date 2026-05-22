@@ -19,6 +19,7 @@
 
 #include "ScintillaNext.h"
 #include "Finder.h"
+#include "ProfileScope.h"
 #include "ScintillaCommenter.h"
 
 #include "ByteArrayUtils.h"
@@ -114,6 +115,7 @@ ScintillaNext::~ScintillaNext()
 
 ScintillaNext *ScintillaNext::fromFile(const QString &filePath, bool tryToCreate)
 {
+    PROFILE_SCOPE("ScintillaNext::fromFile");
     QFile file(filePath);
     ScintillaNext *editor = new ScintillaNext(file.fileName());
 
@@ -613,6 +615,7 @@ void ScintillaNext::dropEvent(QDropEvent *event)
 
 bool ScintillaNext::readFromDisk(QFile &file)
 {
+    PROFILE_SCOPE("ScintillaNext::readFromDisk");
     if (!file.exists()) {
         qWarning("Cannot read \"%s\": doesn't exist", qUtf8Printable(file.fileName()));
         return false;

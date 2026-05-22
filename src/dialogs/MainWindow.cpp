@@ -102,6 +102,7 @@
 
 #include "CrashContext.h"
 #include "CrashHandler.h"
+#include "ProfileScope.h"
 
 #include <QEvent>
 #include <QActionEvent>
@@ -181,11 +182,15 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     app(app),
     zoomEventWatcher(new ZoomEventWatcher(this))
 {
+    PROFILE_SCOPE("MainWindow::ctor");
     qInfo(Q_FUNC_INFO);
 
     setAttribute(Qt::WA_DeleteOnClose);
 
-    ui->setupUi(this);
+    {
+        PROFILE_SCOPE("MainWindow::ctor.setupUi");
+        ui->setupUi(this);
+    }
 
     // CrashContext wiring: catch every QAction added to this app from now on
     // (including dynamically-built recent-files / language entries) so the
@@ -1103,7 +1108,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     // It seems restoreState() does not affect the status bar so set it manually
     ui->statusBar->setVisible(app->getSettings()->showStatusBar());
 
-    setupLanguageMenu();
+    {
+        PROFILE_SCOPE("MainWindow::ctor.setupLanguageMenu");
+        setupLanguageMenu();
+    }
 
     applyStyleSheet();
     connect(app, &NotepadNextApplication::effectiveThemeChanged, this, &MainWindow::applyStyleSheet);
@@ -1199,8 +1207,11 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     // Sweep every QAction that setupUi (and constructor-time code above) has
     // already created. The ActionAddedFilter installed right after setupUi
     // handles anything added from this point onward (recent files, languages).
-    for (QAction *a : findChildren<QAction *>()) {
-        wireActionForCrashContext(a);
+    {
+        PROFILE_SCOPE("MainWindow::ctor.wireActionsSweep");
+        for (QAction *a : findChildren<QAction *>()) {
+            wireActionForCrashContext(a);
+        }
     }
 
 #ifndef NDEBUG
@@ -1244,9 +1255,15 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     }
 #endif
 
-    restoreSettings();
+    {
+        PROFILE_SCOPE("MainWindow::ctor.restoreSettings");
+        restoreSettings();
+    }
 
-    initUpdateCheck();
+    {
+        PROFILE_SCOPE("MainWindow::ctor.initUpdateCheck");
+        initUpdateCheck();
+    }
 }
 
 MainWindow::~MainWindow()
@@ -1414,6 +1431,7 @@ ScintillaNext *MainWindow::getInitialEditor()
 
 void MainWindow::openFileList(const QStringList &fileNames)
 {
+    PROFILE_SCOPE("MainWindow::openFileList");
     qInfo(Q_FUNC_INFO);
 
     if (fileNames.size() == 0)
@@ -1594,6 +1612,7 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
 
 void MainWindow::restoreOpenWorkspaces()
 {
+    PROFILE_SCOPE("MainWindow::restoreOpenWorkspaces");
     // Qt's saveState/restoreState only preserves layout for docks that already
     // exist at restore time. Extra workspace docks are spawned on-demand, so we
     // recreate them here from the persisted path list before restoreWindowState
@@ -2457,6 +2476,7 @@ ISearchResultsHandler *MainWindow::determineSearchResultsHandler()
 
 void MainWindow::restoreWindowState()
 {
+    PROFILE_SCOPE("MainWindow::restoreWindowState");
     ApplicationSettings *settings = app->getSettings();
 
     restoreGeometry(settings->value("MainWindow/geometry").toByteArray());
@@ -2487,6 +2507,7 @@ void MainWindow::focusIn()
 
 void MainWindow::addEditor(ScintillaNext *editor)
 {
+    PROFILE_SCOPE("MainWindow::addEditor");
     qInfo(Q_FUNC_INFO);
 
     detectLanguage(editor);
@@ -2621,6 +2642,7 @@ void MainWindow::initUpdateCheck()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    PROFILE_SCOPE("MainWindow::closeEvent");
     const SessionManager *sessionManager = app->getSessionManager();
     QVector<ScintillaNext *> e;
 

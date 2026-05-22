@@ -19,6 +19,7 @@
 
 #include "LuaState.h"
 #include "lua.hpp"
+#include "ProfileScope.h"
 
 #include <QFile>
 
@@ -76,6 +77,7 @@ static int require_resource(lua_State *L)
 
 LuaState::LuaState()
 {
+    PROFILE_SCOPE("LuaState::ctor");
     qInfo(Q_FUNC_INFO);
 
     L = luaL_newstate();
@@ -163,6 +165,7 @@ void LuaState::internal_execute(const char *statement, bool clear)
 
 void LuaState::executeFile(const QString &fileName)
 {
+    PROFILE_SCOPE("LuaState::executeFile");
     QFile ff(fileName);
 
     if (!ff.open(QFile::ReadOnly)) {

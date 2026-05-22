@@ -18,6 +18,7 @@
 
 
 #include "BookMarkDecorator.h"
+#include "ProfileScope.h"
 #include "ScintillaNext.h"
 #include "MainWindow.h"
 #include "SessionManager.h"
@@ -125,6 +126,7 @@ void SessionManager::clearDirectory() const
 
 void SessionManager::saveSession(MainWindow *window)
 {
+    PROFILE_SCOPE("SessionManager::saveSession");
     qInfo(Q_FUNC_INFO);
 
     clear();
@@ -179,6 +181,7 @@ void SessionManager::saveSession(MainWindow *window)
 
 void SessionManager::loadSession(MainWindow *window)
 {
+    PROFILE_SCOPE("SessionManager::loadSession");
     qInfo(Q_FUNC_INFO);
 
     ApplicationSettings settings;;
