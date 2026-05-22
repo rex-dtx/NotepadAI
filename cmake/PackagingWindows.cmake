@@ -13,26 +13,26 @@ else() # single-config generator (Ninja, Makefiles)
 endif()
 
 # Path to your executable
-set(TARGET_EXE "$<TARGET_FILE:NotepadNext>")
+set(TARGET_EXE "$<TARGET_FILE:NotepadAI>")
 
 # Build the list of arguments for windeployqt
 set(WINDEPLOYQT_ARGS --no-translations --no-system-d3d-compiler --no-compiler-runtime --no-opengl-sw)
 if(PACKAGE_CONFIG STREQUAL "Debug")
 	list(APPEND WINDEPLOYQT_ARGS --debug)
 endif()
-list(APPEND WINDEPLOYQT_ARGS "${PACKAGE_DIR}/NotepadNext.exe")
+list(APPEND WINDEPLOYQT_ARGS "${PACKAGE_DIR}/NotepadAI.exe")
 
 file(GLOB EXTRA_DLLS "${EXTRA_DLL_DIR}/*.dll")
 
 # Define the package target
 add_custom_target(package
-	COMMENT "Packaging NotepadNext for distribution"
+	COMMENT "Packaging NotepadAI for distribution"
 	VERBATIM
 
 	# Copy executable
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"${TARGET_EXE}"
-		"${PACKAGE_DIR}/NotepadNext.exe"
+		"${PACKAGE_DIR}/NotepadAI.exe"
 
 	# Copy LICENSE
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -52,10 +52,10 @@ add_custom_target(package
 	COMMAND windeployqt ${WINDEPLOYQT_ARGS}
 )
 
-set(ZIP_FILE "${CMAKE_BINARY_DIR}/NotepadNext-v${PROJECT_VERSION}.zip")
+set(ZIP_FILE "${CMAKE_BINARY_DIR}/NotepadAI-v${PROJECT_VERSION}.zip")
 add_custom_target(zip
 	DEPENDS package
-	COMMENT "Creating zip archive of NotepadNext package"
+	COMMENT "Creating zip archive of NotepadAI package"
 	VERBATIM
 	COMMAND 7z a -tzip
 		"${ZIP_FILE}"
@@ -67,7 +67,7 @@ add_custom_target(zip
 set(NSIS_SCRIPT "${CMAKE_SOURCE_DIR}/installer/installer.nsi")
 add_custom_target(installer
 	DEPENDS package
-	COMMENT "Building NSIS installer for NotepadNext"
+	COMMENT "Building NSIS installer for NotepadAI"
 	VERBATIM
 	COMMAND makensis /V4 "${NSIS_SCRIPT}"
 )

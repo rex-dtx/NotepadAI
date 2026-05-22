@@ -55,7 +55,7 @@ const SingleApplication::Options opts = SingleApplication::ExcludeAppPath | Sing
 
 void parseCommandLine(QCommandLineParser &parser, const QStringList &args)
 {
-    parser.setApplicationDescription("Notepad Next");
+    parser.setApplicationDescription("NotepadAI");
     parser.addHelpOption();
     parser.addVersionOption();
 

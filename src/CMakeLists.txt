@@ -1,4 +1,4 @@
-qt_add_executable(NotepadNext
+qt_add_executable(NotepadAI
 	WIN32
 	MACOSX_BUNDLE
 	AcpAgentDefinition.h
@@ -241,7 +241,7 @@ qt_add_executable(NotepadNext
 	docks/TerminalDock.cpp
 )
 
-set_target_properties(NotepadNext PROPERTIES
+set_target_properties(NotepadAI PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/deploy/macos/info.plist
 )
 
@@ -250,13 +250,13 @@ file(GLOB TS_FILES
 )
 
 find_package(Qt6 REQUIRED COMPONENTS LinguistTools)
-qt_add_translations(NotepadNext
+qt_add_translations(NotepadAI
     TS_FILES ${TS_FILES}
     RESOURCE_PREFIX "/i18n"
 )
 
 
-target_include_directories(NotepadNext
+target_include_directories(NotepadAI
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/decorators
         ${CMAKE_CURRENT_SOURCE_DIR}/dialogs
@@ -271,15 +271,15 @@ if(WIN32)
 		"${CMAKE_BINARY_DIR}/version.rc"
 		@ONLY
 	)
-	target_sources(NotepadNext PRIVATE "${CMAKE_BINARY_DIR}/version.rc")
+	target_sources(NotepadAI PRIVATE "${CMAKE_BINARY_DIR}/version.rc")
 	configure_file(
-		"${CMAKE_SOURCE_DIR}/icon/NotepadNext.ico"
-		"${CMAKE_BINARY_DIR}/NotepadNext.ico"
+		"${CMAKE_SOURCE_DIR}/icon/NotepadAI.ico"
+		"${CMAKE_BINARY_DIR}/NotepadAI.ico"
 		COPYONLY
 	)
 endif()
 
-target_link_libraries(NotepadNext
+target_link_libraries(NotepadAI
     PRIVATE
         Qt6::Core
         Qt6::Gui
@@ -298,7 +298,7 @@ target_link_libraries(NotepadNext
         libptyqt
 )
 
-target_compile_definitions(NotepadNext
+target_compile_definitions(NotepadAI
     PRIVATE
         ADS_STATIC
         QSIMPLEUPDATER_STATIC

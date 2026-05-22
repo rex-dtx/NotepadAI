@@ -1,0 +1,20 @@
+[Desktop Entry]
+Categories=Qt;TextEditor;Utility;
+Exec=NotepadAI %f
+Icon=NotepadAI
+MimeType=text/plain;
+StartupNotify=true
+Type=Application
+Terminal=false
+
+Name=NotepadAI
+Name[pt_BR]=Editor de Texto NotepadAI
+
+GenericName=Text Editor
+GenericName[pt_BR]=Editor de Texto
+
+Comment=A cross-platform, AI-augmented text editor (fork of Notepad Next)
+Comment[pt_BR]=Um editor de texto multiplataforma com IA integrada (fork do Notepad Next)
+
+Keywords=notepad;ai;text;editor;manager;IDE;programming tool;source code;tabs;
+Keywords[pt_BR]=notepad;ai;ia;bloco de notas;editor;texto;Ambiente de Desenvolvimento Integrado;IDE;ferramenta de programação;código-fonte;abas;guias;

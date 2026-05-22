@@ -3,7 +3,7 @@
 
 SetCompressor /SOLID lzma
 
-!getdllversion "..\build\package\NotepadNext.exe" nnver_
+!getdllversion "..\build\package\NotepadAI.exe" nnver_
 !define VERSION ${nnver_1}.${nnver_2}
 !define VERSION_MAJOR ${nnver_1}
 !define VERSION_MINOR ${nnver_2}
@@ -16,10 +16,10 @@ SetCompressor /SOLID lzma
 !endif
 
 # Configure NsisMultiUser: https://github.com/Drizin/NsisMultiUser/wiki
-!define PRODUCT_NAME "Notepad Next"
+!define PRODUCT_NAME "NotepadAI"
 !define COMPANY_NAME "${PRODUCT_NAME}"
-!define PROGEXE "notepadnext.exe"
-!define MULTIUSER_INSTALLMODE_UNINSTALL_REGISTRY_KEY "NotepadNext"
+!define PROGEXE "NotepadAI.exe"
+!define MULTIUSER_INSTALLMODE_UNINSTALL_REGISTRY_KEY "NotepadAI"
 !define MULTIUSER_INSTALLMODE_DISPLAYNAME "${PRODUCT_NAME}"
 !define MULTIUSER_INSTALLMODE_64_BIT 1
 !define MULTIUSER_INSTALLMODE_DEFAULT_ALLUSERS 1
@@ -30,8 +30,8 @@ SetCompressor /SOLID lzma
 
 # Configure MUI
 !define MUI_ABORTWARNING
-!define MUI_ICON "..\icon\NotepadNext.ico"
-!define MUI_UNICON "..\icon\NotepadNext.ico"
+!define MUI_ICON "..\icon\NotepadAI.ico"
+!define MUI_UNICON "..\icon\NotepadAI.ico"
 !define MUI_COMPONENTSPAGE_NODESC
 
 !include "NsisMultiUser.nsh"
@@ -41,13 +41,13 @@ SetCompressor /SOLID lzma
 !include "FileFunc.nsh"
 !include "utils.nsh"
 
-# Detect if the Notepad Next application is running
+# Detect if the NotepadAI application is running
 !insertmacro CheckIfRunning ""
 !insertmacro CheckIfRunning "un."
 
 # Configure Memento
 !define MEMENTO_REGISTRY_ROOT SHCTX
-!define MEMENTO_REGISTRY_KEY Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadNext
+!define MEMENTO_REGISTRY_KEY Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadAI
 
 
 # Install pages
@@ -61,8 +61,8 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW "CheckIfRunning"
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
-# After installation, run Notepad Next by default
-!define MUI_FINISHPAGE_RUN "$INSTDIR\NotepadNext.exe"
+# After installation, run NotepadAI by default
+!define MUI_FINISHPAGE_RUN "$INSTDIR\NotepadAI.exe"
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
 
@@ -81,17 +81,17 @@ SetCompressor /SOLID lzma
 
 
 
-Name "Notepad Next v${VERSION}"
-OutFile "NotepadNext-v${VERSION}-Installer.exe"
+Name "NotepadAI v${VERSION}"
+OutFile "NotepadAI-v${VERSION}-Installer.exe"
 ShowInstDetails show
 BrandingText " "
 
 # Installer Information
 VIProductVersion "${nnver_1}.${nnver_2}.${nnver_3}.${nnver_4}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "Notepad Next"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright 2019 Justin Dailey"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Notepad Next v${VERSION} Installer"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "NotepadAI"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright 2019 Justin Dailey; modifications 2026 nullmastermind"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "NotepadAI v${VERSION} Installer"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 
 
@@ -112,7 +112,7 @@ Function VerifyInstallDirEmpty
 
 		# The uninstaller will run prior to executing the installer (but has not been ran yet)
 		# so if it is getting installed to the same location as the prior version, it is fine.
-		ReadRegStr $R0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadNext" "InstallLocation"
+		ReadRegStr $R0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadAI" "InstallLocation"
 
 		# The directory is the same as the previous version, so no need to worry.
 		${If} $R0 == $INSTDIR
@@ -134,7 +134,7 @@ FunctionEnd
 
 Function .onInit
 	${ifnot} ${UAC_IsInnerInstance}
-		!insertmacro CheckSingleInstance "Setup" "Global" "NotepadNextSetupMutex"
+		!insertmacro CheckSingleInstance "Setup" "Global" "NotepadAISetupMutex"
 	${endif}
 
 	!insertmacro MULTIUSER_INIT
@@ -157,7 +157,7 @@ Section "-Run Uninstaller" SEC_UNINSTALL_PREVIOUS
 	SetRegView 64
 
 	; Check for uninstaller registry entry
-	ReadRegStr $R0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadNext" "QuietUninstallString"
+	ReadRegStr $R0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadAI" "QuietUninstallString"
 
 	${If} $R0 == ""
 		Goto Done
@@ -171,7 +171,7 @@ Section "-Run Uninstaller" SEC_UNINSTALL_PREVIOUS
 	Done:
 SectionEnd
 
-Section "Notepad Next"
+Section "NotepadAI"
 	SectionIn RO
 	SetOutPath $INSTDIR
 
@@ -183,14 +183,14 @@ Section "Notepad Next"
 	SetRegView 64
 
 	# Register the application. https://learn.microsoft.com/en-us/windows/win32/shell/app-registration#registering-applications
-	WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\App Paths\NotepadNext.exe" "" "$INSTDIR\NotepadNext.exe"
+	WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\App Paths\NotepadAI.exe" "" "$INSTDIR\NotepadAI.exe"
 
 	# Register verbs. https://learn.microsoft.com/en-us/windows/win32/shell/app-registration#registering-verbs-and-other-file-association-information
-	WriteRegStr SHCTX "Software\Classes\Applications\NotepadNext.exe\shell\open\command" "" "$\"$INSTDIR\NotepadNext.exe$\" $\"%1$\""
-	WriteRegStr SHCTX "Software\Classes\Applications\NotepadNext.exe\shell\edit\command" "" "$\"$INSTDIR\NotepadNext.exe$\" $\"%1$\""
+	WriteRegStr SHCTX "Software\Classes\Applications\NotepadAI.exe\shell\open\command" "" "$\"$INSTDIR\NotepadAI.exe$\" $\"%1$\""
+	WriteRegStr SHCTX "Software\Classes\Applications\NotepadAI.exe\shell\edit\command" "" "$\"$INSTDIR\NotepadAI.exe$\" $\"%1$\""
 
 	# Register it the perceived type so that Windows will suggest it as a possible application to use
-	WriteRegStr SHCTX "Software\Classes\SystemFileAssociations\text\OpenWithList\NotepadNext.exe" "" ""
+	WriteRegStr SHCTX "Software\Classes\SystemFileAssociations\text\OpenWithList\NotepadAI.exe" "" ""
 
 	WriteUninstaller "$INSTDIR\uninstall.exe"
 	!insertmacro MULTIUSER_RegistryAddInstallInfo
@@ -198,27 +198,27 @@ Section "Notepad Next"
 	${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
 	IfErrors +3 0
 	IntFmt $0 "0x%08X" $0
-	WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadNext" "EstimatedSize" "$0"
+	WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\NotepadAI" "EstimatedSize" "$0"
 SectionEnd
 
 # -----------------------------------------------
 
 ${MementoUnselectedSection} "Desktop Shortcut" SEC_DESKTOP_SHORTCUT
-	CreateShortCut "$DESKTOP\Notepad Next.lnk" "$INSTDIR\NotepadNext.exe"
+	CreateShortCut "$DESKTOP\NotepadAI.lnk" "$INSTDIR\NotepadAI.exe"
 ${MementoSectionEnd}
 
 Section "-Remove Desktop Shortcut" SEC_REMOVE_DESKTOP_SHORTCUT
-	Delete "$DESKTOP\Notepad Next.lnk"
+	Delete "$DESKTOP\NotepadAI.lnk"
 SectionEnd
 
 # -----------------------------------------------
 
 ${MementoSection} "Start Menu Shortcut" SEC_START_MENU_SHORTCUT
-	CreateShortCut "$SMPROGRAMS\Notepad Next.lnk" "$INSTDIR\NotepadNext.exe"
+	CreateShortCut "$SMPROGRAMS\NotepadAI.lnk" "$INSTDIR\NotepadAI.exe"
 ${MementoSectionEnd}
 
 Section "-Start Menu Shortcut" SEC_REMOVE_START_MENU_SHORTCUT
-	Delete "$SMPROGRAMS\Notepad Next.lnk"
+	Delete "$SMPROGRAMS\NotepadAI.lnk"
 SectionEnd
 
 # -----------------------------------------------
@@ -226,15 +226,15 @@ SectionEnd
 ${MementoSection} "Context Menu" SEC_CONTEXT_MENU
 	SetRegView 64
 
-	WriteRegStr SHCTX "Software\Classes\*\shell\NotepadNext" "" "Edit with Notepad Next"
-	WriteRegStr SHCTX "Software\Classes\*\shell\NotepadNext" "icon" "$INSTDIR\NotepadNext.exe"
-	WriteRegStr SHCTX "Software\Classes\*\shell\NotepadNext\command" "" "$\"$INSTDIR\NotepadNext.exe$\" $\"%1$\""
+	WriteRegStr SHCTX "Software\Classes\*\shell\NotepadAI" "" "Edit with NotepadAI"
+	WriteRegStr SHCTX "Software\Classes\*\shell\NotepadAI" "icon" "$INSTDIR\NotepadAI.exe"
+	WriteRegStr SHCTX "Software\Classes\*\shell\NotepadAI\command" "" "$\"$INSTDIR\NotepadAI.exe$\" $\"%1$\""
 ${MementoSectionEnd}
 
 Section "-Context Menu" SEC_REMOVE_CONTEXT_MENU
 	SetRegView 64
 
-	DeleteRegKey SHCTX "Software\Classes\*\shell\NotepadNext"
+	DeleteRegKey SHCTX "Software\Classes\*\shell\NotepadAI"
 SectionEnd
 
 # -----------------------------------------------
@@ -245,14 +245,14 @@ ${MementoSection} "Auto Updater" SEC_AUTO_UPDATER
 
 	File ..\build\package\libcrypto-1_1-x64.dll ..\build\package\libssl-1_1-x64.dll
 
-	WriteRegDWORD SHCTX "Software\NotepadNext\NotepadNext\" "AutoUpdate" 1
+	WriteRegDWORD SHCTX "Software\NotepadAI\NotepadAI\" "AutoUpdate" 1
 ${MementoSectionEnd}
 
 Section "-Auto Updater" SEC_REMOVE_AUTO_UPDATER
 	SetRegView 64
 
 	# Disable the auto update, if there was an existing install the DLLs may hang around but that's fine for now
-	WriteRegDWORD SHCTX "Software\NotepadNext\NotepadNext\" "AutoUpdate" 0
+	WriteRegDWORD SHCTX "Software\NotepadAI\NotepadAI\" "AutoUpdate" 0
 SectionEnd
 
 # -----------------------------------------------
@@ -294,22 +294,22 @@ Section "Uninstall"
 	RMDir /r $INSTDIR
 
 	# Desktop shortcut
-	Delete "$DESKTOP\Notepad Next.lnk"
+	Delete "$DESKTOP\NotepadAI.lnk"
 
 	# Start Menu shortcut
-	Delete "$SMPROGRAMS\Notepad Next.lnk"
+	Delete "$SMPROGRAMS\NotepadAI.lnk"
 
 	# Context menu registry
-	DeleteRegKey SHCTX "Software\Classes\*\shell\NotepadNext"
+	DeleteRegKey SHCTX "Software\Classes\*\shell\NotepadAI"
 
 	# Remove application registration
-	DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\App Paths\NotepadNext.exe"
+	DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\App Paths\NotepadAI.exe"
 
 	# Remove registered verbs
-	DeleteRegKey SHCTX "Software\Classes\Applications\NotepadNext.exe"
+	DeleteRegKey SHCTX "Software\Classes\Applications\NotepadAI.exe"
 
 	# Remove type registration
-	DeleteRegKey SHCTX "Software\Classes\SystemFileAssociations\text\OpenWithList\NotepadNext.exe"
+	DeleteRegKey SHCTX "Software\Classes\SystemFileAssociations\text\OpenWithList\NotepadAI.exe"
 
 	!insertmacro MULTIUSER_RegistryRemoveInstallInfo 
 SectionEnd

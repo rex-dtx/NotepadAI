@@ -1,5 +1,5 @@
-# Notepad Next unit tests.
-# Enabled via -DNOTEPADNEXT_BUILD_TESTS=ON
+# NotepadAI unit tests.
+# Enabled via -DNOTEPADAI_BUILD_TESTS=ON
 
 qt_standard_project_setup()
 

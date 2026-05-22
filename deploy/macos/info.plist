@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>NotepadNext</string>
+	<string>NotepadAI</string>
 	<key>CFBundleName</key>
-	<string>Notepad Next</string>
+	<string>NotepadAI</string>
 	<key>CFBundleIconFile</key>
-	<string>NotepadNext.icns</string>
+	<string>NotepadAI.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>io.github.dail8859.NotepadNext</string>
+	<string>io.github.nullmastermind.NotepadAI</string>
 	<key>CFBundleShortVersionString</key>
 	<string>${QMAKE_FULL_VERSION}</string>
 	<key>CFBundlePackageType</key>

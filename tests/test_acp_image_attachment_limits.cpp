@@ -1,6 +1,6 @@
 /*
  * This file is part of Notepad Next.
- * Copyright 2026 NotepadADE contributors
+ * Copyright 2026 NotepadAI contributors
  *
  * SPDX short: GPL-3.0-or-later
  */

@@ -1,4 +1,4 @@
-name: Build Notepad Next
+name: Build NotepadAI
 
 on:
   workflow_dispatch:
@@ -81,29 +81,29 @@ jobs:
         uses: actions/upload-artifact@v6
         if: runner.os == 'Windows'
         with:
-          name: NotepadNext-Windows-Qt${{ matrix.qt_version }}-Zip
+          name: NotepadAI-Windows-Qt${{ matrix.qt_version }}-Zip
           path: ${{ github.workspace }}/build/package/
 
       - name: Upload Windows Installer
         uses: actions/upload-artifact@v6
         if: runner.os == 'Windows'
         with:
-          name: NotepadNext-Windows-Qt${{ matrix.qt_version }}-Installer
-          path: ${{ github.workspace }}/installer/NotepadNext*.exe
+          name: NotepadAI-Windows-Qt${{ matrix.qt_version }}-Installer
+          path: ${{ github.workspace }}/installer/NotepadAI*.exe
 
       - name: Upload MacOS dmg
         uses: actions/upload-artifact@v6
         if: runner.os == 'macOS'
         with:
-          name: NotepadNext-macOS-Qt${{ matrix.qt_version }}
-          path: ${{ github.workspace }}/build/NotepadNext*.dmg
+          name: NotepadAI-macOS-Qt${{ matrix.qt_version }}
+          path: ${{ github.workspace }}/build/NotepadAI*.dmg
 
       - name: Upload Linux AppImage
         uses: actions/upload-artifact@v6
         if: runner.os == 'Linux'
         with:
-          name: NotepadNext-Linux-Qt${{ matrix.qt_version }}-AppImage
-          path: ${{ github.workspace }}/build/NotepadNext*.AppImage
+          name: NotepadAI-Linux-Qt${{ matrix.qt_version }}-AppImage
+          path: ${{ github.workspace }}/build/NotepadAI*.AppImage
 
   github:
     name: Draft GitHub Release
@@ -127,20 +127,20 @@ jobs:
 
       - name: Upload Windows Installer
         run: |
-          gh release upload ${{ github.ref_name }} NotepadNext-Windows-Qt$QT_RELEASE_VER-Installer/NotepadNext-${{ github.ref_name }}-Installer.exe
+          gh release upload ${{ github.ref_name }} NotepadAI-Windows-Qt$QT_RELEASE_VER-Installer/NotepadAI-${{ github.ref_name }}-Installer.exe
 
       # The artifact is unzipped, so need to zip it back up so it can be uploaded
       - name: Upload Windows Zip
         run: |
-          cd NotepadNext-Windows-Qt$QT_RELEASE_VER-Zip/
-          zip -r ../NotepadNext-${{ github.ref_name }}-win64.zip .
+          cd NotepadAI-Windows-Qt$QT_RELEASE_VER-Zip/
+          zip -r ../NotepadAI-${{ github.ref_name }}-win64.zip .
           cd ..
-          gh release upload ${{ github.ref_name }} NotepadNext-${{ github.ref_name }}-win64.zip
+          gh release upload ${{ github.ref_name }} NotepadAI-${{ github.ref_name }}-win64.zip
 
       - name: Upload Linux AppImage
         run: |
-          gh release upload ${{ github.ref_name }} NotepadNext-Linux-Qt$QT_RELEASE_VER-AppImage/NotepadNext-${{ github.ref_name }}-x86_64.AppImage
+          gh release upload ${{ github.ref_name }} NotepadAI-Linux-Qt$QT_RELEASE_VER-AppImage/NotepadAI-${{ github.ref_name }}-x86_64.AppImage
 
       - name: Upload macOS App
         run: |
-          gh release upload ${{ github.ref_name }} NotepadNext-macOS-Qt$QT_RELEASE_VER/NotepadNext-${{ github.ref_name }}.dmg
+          gh release upload ${{ github.ref_name }} NotepadAI-macOS-Qt$QT_RELEASE_VER/NotepadAI-${{ github.ref_name }}.dmg

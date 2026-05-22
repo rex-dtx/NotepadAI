@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 nullmastermind -->
+<!-- https://www.freedesktop.org/software/appstream/docs/chap-Metadata.html -->
+<component type="desktop-application">
+    <id>com.github.nullmastermind.NotepadAI</id>
+    <developer_name>nullmastermind</developer_name>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0</project_license>
+    <content_rating type="oars-1.1" />
+
+    <name>NotepadAI</name>
+
+    <summary>An AI-augmented text editor (fork of Notepad Next)</summary>
+    <description>
+        <p>NotepadAI is a cross-platform text and source code editor with embedded AI agent integration. It is a fork of Notepad Next (itself a reimplementation of Notepad++), adding ACP-protocol AI agents and an embedded terminal.</p>
+    </description>
+
+    <url type="homepage">https://github.com/nullmastermind/NotepadAI</url>
+    <url type="bugtracker">https://github.com/nullmastermind/NotepadAI/issues</url>
+
+    <launchable type="desktop-id">com.github.nullmastermind.NotepadAI.desktop</launchable>
+    <releases>
+    </releases>
+</component>

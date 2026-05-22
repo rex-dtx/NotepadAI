@@ -116,7 +116,7 @@ void HtmlConverter::convertRange(QTextStream &stream, int start, int end)
     stream << "<html>" << Qt::endl;
     stream << "<head>" << Qt::endl;
     stream << "<meta http-equiv=Content-Type content=\"text/html; charset=UTF-8\">" << Qt::endl;
-    stream << "<title>Exported from Notepad Next</title>" << Qt::endl;
+    stream << "<title>Exported from NotepadAI</title>" << Qt::endl;
     stream << "<!--StartFragment-->" << Qt::endl;
     stream << "<style type=\"text/css\">" << Qt::endl;
     stream << "div.main {" << Qt::endl;

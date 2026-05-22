@@ -1,6 +1,6 @@
 /*
  * This file is part of Notepad Next.
- * Copyright 2026 NotepadADE contributors
+ * Copyright 2026 NotepadAI contributors
  *
  * Notepad Next is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -292,6 +292,21 @@ void AcpMessageWidget::rerender()
         html.replace(QRegularExpression(QStringLiteral("<table([^>]*)>")),
                      QStringLiteral("<table\\1 cellspacing=\"0\" cellpadding=\"8\">"));
         m_browser->document()->setHtml(html);
+        normalizeBlockMargins(m_browser->document());
+    } else if (m_role == QLatin1String("thought")) {
+        // Thoughts are model reasoning streams that contain markdown
+        // (headings, lists, code spans). setPlainText leaves "##", "###",
+        // "- " as raw characters; render through setMarkdown so the bubble
+        // reads as formatted text. The italic stylesheet on the QTextBrowser
+        // still cascades to all rendered blocks.
+        QString text = m_text;
+        while (!text.isEmpty() && (text.endsWith(QLatin1Char('\n'))
+                                   || text.endsWith(QLatin1Char('\r'))
+                                   || text.endsWith(QLatin1Char(' '))
+                                   || text.endsWith(QLatin1Char('\t')))) {
+            text.chop(1);
+        }
+        m_browser->document()->setMarkdown(text);
         normalizeBlockMargins(m_browser->document());
     } else {
         // Streamed chunks often end with "\n", which QTextDocument turns into

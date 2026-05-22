@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(NotepadNext
+project(NotepadAI
     VERSION 0.14
     DESCRIPTION "Cross-platform text editor"
     LANGUAGES C CXX
@@ -8,7 +8,7 @@ project(NotepadNext
 
 set(APP_DISTRIBUTION "" CACHE STRING "Distribution type")
 string(TIMESTAMP CURRENT_YEAR "%Y")
-set(APP_COPYRIGHT "Copyright 2019-${CURRENT_YEAR} Justin Dailey")
+set(APP_COPYRIGHT "Copyright 2019-${CURRENT_YEAR} Justin Dailey, modifications ${CURRENT_YEAR} nullmastermind")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,8 +39,8 @@ find_package(Qt6 6.5
             Core5Compat
 )
 
-option(NOTEPADNEXT_BUILD_TESTS "Build unit tests" OFF)
-if(NOTEPADNEXT_BUILD_TESTS)
+option(NOTEPADAI_BUILD_TESTS "Build unit tests" OFF)
+if(NOTEPADAI_BUILD_TESTS)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
     enable_testing()
 endif()
@@ -53,7 +53,7 @@ set(CPM_SOURCE_CACHE "${CMAKE_SOURCE_DIR}/.cpm-cache" CACHE PATH "CPM source cac
 add_subdirectory(thirdparty)
 add_subdirectory(src)
 
-if(NOTEPADNEXT_BUILD_TESTS)
+if(NOTEPADAI_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 

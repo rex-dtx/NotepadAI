@@ -7,7 +7,7 @@ set(LINUXDEPLOY ${CMAKE_BINARY_DIR}/linuxdeploy-x86_64.AppImage)
 set(LINUXDEPLOY_QT ${CMAKE_BINARY_DIR}/linuxdeploy-plugin-qt-x86_64.AppImage)
 
 set(APPIMAGE_ENV_VARS
-    LDAI_OUTPUT=NotepadNext-v${PROJECT_VERSION}-x86_64.AppImage
+    LDAI_OUTPUT=NotepadAI-v${PROJECT_VERSION}-x86_64.AppImage
 )
 
 if(DEFINED ENV{QMAKE} AND NOT "$ENV{QMAKE}" STREQUAL "")
@@ -46,19 +46,19 @@ endif()
 message(STATUS "Using qmake for AppImage packaging: ${APPIMAGE_QMAKE}")
 list(APPEND APPIMAGE_ENV_VARS QMAKE=${APPIMAGE_QMAKE})
 
-install(TARGETS NotepadNext
+install(TARGETS NotepadAI
     RUNTIME DESTINATION bin
 )
 install(FILES
-    ${PROJECT_SOURCE_DIR}/deploy/linux/NotepadNext.desktop
+    ${PROJECT_SOURCE_DIR}/deploy/linux/NotepadAI.desktop
     DESTINATION share/applications
 )
 install(FILES
-    ${PROJECT_SOURCE_DIR}/icon/NotepadNext.svg
+    ${PROJECT_SOURCE_DIR}/icon/NotepadAI.svg
     DESTINATION share/icons/hicolor/scalable/apps
 )
 install(FILES
-    ${PROJECT_SOURCE_DIR}/icon/NotepadNext.svg
+    ${PROJECT_SOURCE_DIR}/icon/NotepadAI.svg
     DESTINATION share/icons/hicolor/scalable/mimetypes
 )
 
@@ -67,7 +67,7 @@ add_custom_target(appdir
         --install .
         --prefix ${APPDIR_USR}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    DEPENDS NotepadNext
+    DEPENDS NotepadAI
 )
 
 add_custom_target(download_linuxdeploy
@@ -83,9 +83,9 @@ add_custom_target(appimage
         ${APPIMAGE_ENV_VARS}
         ${LINUXDEPLOY}
         --appdir ${APPDIR}
-        --executable ${APPDIR_USR}/bin/NotepadNext
-        --desktop-file ${APPDIR_USR}/share/applications/NotepadNext.desktop
-        --icon-file ${APPDIR_USR}/share/icons/hicolor/scalable/apps/NotepadNext.svg
+        --executable ${APPDIR_USR}/bin/NotepadAI
+        --desktop-file ${APPDIR_USR}/share/applications/NotepadAI.desktop
+        --icon-file ${APPDIR_USR}/share/icons/hicolor/scalable/apps/NotepadAI.svg
         --plugin qt
         --output appimage
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}

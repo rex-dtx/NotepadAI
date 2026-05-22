@@ -24,13 +24,13 @@ jobs:
 
       - name: Update Flatpak Version
         run: |
-          sed -i "s@<releases>@<releases>\n        <release version=\"v${{ github.event.inputs.version }}\" date=\"$(date +'%Y-%m-%d')\" />@" deploy/linux/com.github.dail8859.NotepadNext.metainfo.xml
+          sed -i "s@<releases>@<releases>\n        <release version=\"v${{ github.event.inputs.version }}\" date=\"$(date +'%Y-%m-%d')\" />@" deploy/linux/com.github.nullmastermind.NotepadAI.metainfo.xml
 
       - name: Commit changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add CMakeLists.txt deploy/linux/com.github.dail8859.NotepadNext.metainfo.xml
+          git add CMakeLists.txt deploy/linux/com.github.nullmastermind.NotepadAI.metainfo.xml
           git commit -m "v${{ github.event.inputs.version }} release"
 
       - name: Tag commit
