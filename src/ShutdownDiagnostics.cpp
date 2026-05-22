@@ -115,6 +115,34 @@ QMutex &eventStatsMutex()
     return m;
 }
 
+// Per-receiver slow-paint aggregation. Key = className + '#' + objectName so
+// e.g. two ScintillaEdit instances with different objectName roll up separately.
+// Bounded by ~widget count of the running app, typically <200 entries.
+struct SlowPaintStat {
+    QString className;
+    QString objectName;
+    uint64_t count = 0;
+    uint64_t totalNs = 0;
+    uint64_t maxNs = 0;
+};
+
+QHash<QString, SlowPaintStat> &slowPaintStats()
+{
+    static QHash<QString, SlowPaintStat> s;
+    return s;
+}
+
+QMutex &slowPaintStatsMutex()
+{
+    static QMutex m;
+    return m;
+}
+
+// Threshold for "slow paint" capture in the per-widget table. Independent of
+// the event-row slowCount threshold so the paint table stays focused on
+// genuinely expensive paints regardless of how the user tunes the event one.
+constexpr uint64_t kSlowPaintThresholdNs = 50ULL * 1000ULL * 1000ULL; // 50 ms
+
 // Whitelist of event types we record. Anything else is fast-path skipped.
 const QSet<int> &whitelistedTypes()
 {
@@ -206,7 +234,6 @@ namespace Detail {
 
 void recordEvent(QObject *receiver, QEvent *event, qint64 ns)
 {
-    Q_UNUSED(receiver);
     if (!g_collectionEnabled.load(std::memory_order_relaxed)) {
         return;
     }
@@ -219,13 +246,36 @@ void recordEvent(QObject *receiver, QEvent *event, qint64 ns)
     const uint64_t threshold = g_slowEventThresholdNs.load(std::memory_order_relaxed);
     const uint64_t uns = static_cast<uint64_t>(ns < 0 ? 0 : ns);
 
-    QMutexLocker lock(&eventStatsMutex());
-    EventStat &s = eventStats()[type];
-    s.type = type;
-    s.totalCount++;
-    s.totalNs += uns;
-    if (uns > s.maxNs) s.maxNs = uns;
-    if (uns >= threshold) s.slowCount++;
+    {
+        QMutexLocker lock(&eventStatsMutex());
+        EventStat &s = eventStats()[type];
+        s.type = type;
+        s.totalCount++;
+        s.totalNs += uns;
+        if (uns > s.maxNs) s.maxNs = uns;
+        if (uns >= threshold) s.slowCount++;
+    }
+
+    // Per-receiver paint attribution. Only Paint events qualify here, and only
+    // when the call exceeded a hard 50 ms threshold — otherwise the table would
+    // grow huge for trivial paints. receiver is rarely null in practice, but we
+    // still guard since some Qt internals send events to deleted observers.
+    if (receiver && type == QEvent::Paint && uns >= kSlowPaintThresholdNs) {
+        const QMetaObject *mo = receiver->metaObject();
+        const QString cls = mo ? QString::fromLatin1(mo->className()) : QStringLiteral("(null)");
+        const QString name = receiver->objectName();
+        const QString key = cls + QLatin1Char('#') + name;
+
+        QMutexLocker lock(&slowPaintStatsMutex());
+        SlowPaintStat &p = slowPaintStats()[key];
+        if (p.count == 0) {
+            p.className = cls;
+            p.objectName = name;
+        }
+        p.count++;
+        p.totalNs += uns;
+        if (uns > p.maxNs) p.maxNs = uns;
+    }
 }
 
 } // namespace Detail
@@ -401,6 +451,26 @@ DiagnosticReportData collect()
         data.profileRows.push_back(std::move(row));
     }
 
+    // Slow paints -> sort desc by maxNs.
+    {
+        QMutexLocker lock(&slowPaintStatsMutex());
+        data.slowPaints.reserve(slowPaintStats().size());
+        for (auto it = slowPaintStats().constBegin(); it != slowPaintStats().constEnd(); ++it) {
+            const SlowPaintStat &p = it.value();
+            SlowPaintRow row;
+            row.className = p.className;
+            row.objectName = p.objectName;
+            row.count = p.count;
+            row.totalNs = p.totalNs;
+            row.maxNs = p.maxNs;
+            data.slowPaints.push_back(std::move(row));
+        }
+    }
+    std::sort(data.slowPaints.begin(), data.slowPaints.end(),
+              [](const SlowPaintRow &a, const SlowPaintRow &b) {
+                  return a.maxNs > b.maxNs;
+              });
+
     return data;
 }
 
@@ -467,6 +537,22 @@ QString formatReport(const DiagnosticReportData &d)
     }
     s << "\n";
 
+    s << "----- Slow paints (per-receiver, >=50 ms) -----\n";
+    s << QString::asprintf("%-38s %-28s %8s %14s %14s\n",
+                           "Class", "Object", "Count", "Total", "Max");
+    for (const auto &p : d.slowPaints) {
+        s << QString::asprintf("%-38s %-28s %8llu %14s %14s\n",
+                                p.className.left(38).toUtf8().constData(),
+                                p.objectName.left(28).toUtf8().constData(),
+                                static_cast<unsigned long long>(p.count),
+                                humanNs(p.totalNs).toUtf8().constData(),
+                                humanNs(p.maxNs).toUtf8().constData());
+    }
+    if (d.slowPaints.isEmpty()) {
+        s << "(no slow paints captured)\n";
+    }
+    s << "\n";
+
     s << "===== END =====\n";
 
     s.flush();
@@ -495,8 +581,14 @@ bool writeReport()
 
 void resetForTesting()
 {
-    QMutexLocker lock(&eventStatsMutex());
-    eventStats().clear();
+    {
+        QMutexLocker lock(&eventStatsMutex());
+        eventStats().clear();
+    }
+    {
+        QMutexLocker lock(&slowPaintStatsMutex());
+        slowPaintStats().clear();
+    }
 }
 
 } // namespace ShutdownDiagnostics

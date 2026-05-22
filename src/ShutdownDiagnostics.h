@@ -59,6 +59,14 @@ struct ProfileRow {
     uint64_t maxNs = 0;
 };
 
+struct SlowPaintRow {
+    QString className;
+    QString objectName;
+    uint64_t count = 0;
+    uint64_t totalNs = 0;
+    uint64_t maxNs = 0;
+};
+
 struct DiagnosticReportData {
     QDateTime timestamp;
     QString appVersion;
@@ -68,6 +76,7 @@ struct DiagnosticReportData {
     QVector<ObjectCount> objectCensus;
     QVector<EventRow> eventRows;
     QVector<ProfileRow> profileRows;
+    QVector<SlowPaintRow> slowPaints;
 };
 
 // Install: stamps startup time. Call from main() once.

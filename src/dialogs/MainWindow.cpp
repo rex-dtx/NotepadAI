@@ -2525,7 +2525,10 @@ void MainWindow::addEditor(ScintillaNext *editor)
     PROFILE_SCOPE("MainWindow::addEditor");
     qInfo(Q_FUNC_INFO);
 
-    detectLanguage(editor);
+    {
+        PROFILE_SCOPE("MainWindow::addEditor.detectLanguage");
+        detectLanguage(editor);
+    }
 
     // These should only ever occur for the focused editor??
     // TODO: look at editor inspector as an example to ensure updates are only coming from one editor.

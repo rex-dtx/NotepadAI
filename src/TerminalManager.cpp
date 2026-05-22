@@ -36,7 +36,6 @@
 #include <QMessageBox>
 #include <QScopedPointer>
 #include <QStandardPaths>
-#include <QThread>
 
 TerminalManager::TerminalManager(NotepadNextApplication *app, MainWindow *mainWindow)
     : QObject(mainWindow)
@@ -189,11 +188,14 @@ void TerminalManager::applyFont()
 
 void TerminalManager::shutdown()
 {
+    // killProcess() routes to TerminateProcess (Windows) / SIGKILL (POSIX)
+    // which mark the child for teardown synchronously at the kernel level.
+    // The app is exiting — no downstream operation needs the child actually
+    // reaped, and QPointer guards in m_docks survive a late destroyed signal.
     for (auto &d : m_docks) {
         if (d.isNull()) continue;
         if (auto *w = d->terminalWidget()) {
             w->killProcess();
         }
     }
-    QThread::msleep(250);
 }
