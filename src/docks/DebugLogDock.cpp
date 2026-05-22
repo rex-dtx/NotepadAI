@@ -27,7 +27,12 @@ static QPlainTextEdit *output = Q_NULLPTR;
 
 static void debugLogDockMessageHandler(const QString &msg)
 {
-    output->appendPlainText(msg);
+    // The handler stays installed for the process lifetime, but the dock can be
+    // destroyed first (qDebug calls during MainWindow teardown still hit this).
+    // Guard against the freed widget; the destructor clears `output`.
+    if (output != Q_NULLPTR) {
+        output->appendPlainText(msg);
+    }
 }
 
 DebugLogDock::DebugLogDock(QWidget *parent) :
@@ -48,5 +53,6 @@ DebugLogDock::DebugLogDock(QWidget *parent) :
 
 DebugLogDock::~DebugLogDock()
 {
+    output = Q_NULLPTR;
     delete ui;
 }

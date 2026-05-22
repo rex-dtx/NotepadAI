@@ -70,7 +70,15 @@ DockedEditor::DockedEditor(QWidget *parent) : QObject(parent)
     connect(dockManager, &ads::CDockManager::focusedDockWidgetChanged, this, [=](ads::CDockWidget* old, ads::CDockWidget* now) {
         Q_UNUSED(old)
 
+        if (now == Q_NULLPTR) {
+            currentEditor = Q_NULLPTR;
+            return;
+        }
+
         ScintillaNext *editor = qobject_cast<ScintillaNext *>(now->widget());
+        if (editor == Q_NULLPTR) {
+            return;
+        }
 
         currentEditor = editor;
         editor->grabFocus();
@@ -98,7 +106,7 @@ DockedEditor::DockedEditor(QWidget *parent) : QObject(parent)
 
 ScintillaNext *DockedEditor::getCurrentEditor() const
 {
-    return currentEditor;
+    return currentEditor.data();
 }
 
 int DockedEditor::count() const
@@ -147,7 +155,7 @@ void DockedEditor::dockWidgetCloseRequested()
 
 ads::CDockAreaWidget *DockedEditor::currentDockArea() const
 {
-    return dockManager->focusedDockWidget() ? dockManager->focusedDockWidget()->dockAreaWidget() : latestDockArea;
+    return dockManager->focusedDockWidget() ? dockManager->focusedDockWidget()->dockAreaWidget() : latestDockArea.data();
 }
 
 void DockedEditor::addEditor(ScintillaNext *editor)

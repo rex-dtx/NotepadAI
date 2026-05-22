@@ -21,6 +21,7 @@
 #define DOCKEDEDITOR_H
 
 #include <QObject>
+#include <QPointer>
 
 #include "DockManager.h"
 #include "ScintillaNext.h"
@@ -31,8 +32,14 @@ class DockedEditor : public QObject
 
 private:
     ads::CDockManager* dockManager = Q_NULLPTR;
-    ads::CDockAreaWidget* latestDockArea = Q_NULLPTR;
-    ScintillaNext *currentEditor = Q_NULLPTR;
+    // QPointer so we read nullptr instead of a dangling pointer if ADS destroys
+    // the area (e.g. last editor closed). currentDockArea() then falls back to
+    // "no current area" and addDockWidget creates a fresh CenterDockWidgetArea.
+    QPointer<ads::CDockAreaWidget> latestDockArea;
+    // Same reasoning for the cached editor: it can outlive its ScintillaNext
+    // when the tab is closed and the widget is deleteLater()'d. getCurrentEditor()
+    // returns nullptr in that case; callers must null-check.
+    QPointer<ScintillaNext> currentEditor;
 
 public:
     explicit DockedEditor(QWidget *parent);

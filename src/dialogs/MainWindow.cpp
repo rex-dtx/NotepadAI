@@ -1373,6 +1373,13 @@ ScintillaNext *MainWindow::getInitialEditor()
     if (editorCount() == 1) {
         ScintillaNext *editor = currentEditor();
 
+        // currentEditor() can be null mid-close: the cached pointer in
+        // DockedEditor was just auto-nulled by QPointer because its target
+        // editor was destroyed. Treat as "no reusable initial editor".
+        if (editor == Q_NULLPTR) {
+            return Q_NULLPTR;
+        }
+
         // If the editor:
         //   is a temporary file
         //   is a 'real' file (or a 'missing' file)
@@ -1659,7 +1666,10 @@ void MainWindow::closeFile(ScintillaNext *editor)
             close();
         }
         else {
-            newFile();
+            // Defer newFile() so the ADS close cascade fully unwinds before we
+            // call addDockWidget — otherwise we crash in topLevelDockArea on a
+            // container that's still mid-tear-down.
+            QMetaObject::invokeMethod(this, &MainWindow::newFile, Qt::QueuedConnection);
         }
     }
 }
@@ -1675,7 +1685,7 @@ void MainWindow::closeAllFiles()
         editor->close();
     }
 
-    newFile();
+    QMetaObject::invokeMethod(this, &MainWindow::newFile, Qt::QueuedConnection);
 }
 
 void MainWindow::closeAllExceptActive()
