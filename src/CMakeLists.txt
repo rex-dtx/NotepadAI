@@ -266,6 +266,13 @@ target_include_directories(NotepadAI
 )
 
 if(WIN32)
+	# project() leaves PROJECT_VERSION_PATCH empty when VERSION has only major.minor;
+	# the Windows RC FILEVERSION field requires a numeric value, and NSIS reads this
+	# back via !getdllversion to derive the installer filename, so default to 0.
+	set(PROJECT_VERSION_PATCH_OR_ZERO "${PROJECT_VERSION_PATCH}")
+	if(NOT PROJECT_VERSION_PATCH_OR_ZERO)
+		set(PROJECT_VERSION_PATCH_OR_ZERO 0)
+	endif()
 	configure_file(
 		"${CMAKE_SOURCE_DIR}/deploy/windows/version.rc.in"
 		"${CMAKE_BINARY_DIR}/version.rc"
