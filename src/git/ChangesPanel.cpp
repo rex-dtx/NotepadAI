@@ -29,6 +29,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QPushButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -127,20 +128,56 @@ void ChangesPanel::setStatusModel(GitStatusModel *model)
 {
     m_statusModel = model;
     m_tree->setModel(model);
+    // QTreeView::setModel rebuilds the selection model, so we have to (re)wire
+    // selectionChanged → refresh here rather than once in buildUi.
+    if (auto *sel = m_tree->selectionModel()) {
+        connect(sel, &QItemSelectionModel::selectionChanged,
+                this, &ChangesPanel::onSelectionChanged, Qt::UniqueConnection);
+    }
+    refreshActionEnabled();
 }
 
 void ChangesPanel::updateActionsEnabled(bool hasRepo, bool hasConflicts,
                                         bool anyStaged, bool anyEntries)
 {
-    m_stageBtn->setEnabled(hasRepo);
-    m_unstageBtn->setEnabled(hasRepo && anyStaged);
-    m_stageAllBtn->setEnabled(hasRepo && anyEntries);
-    m_unstageAllBtn->setEnabled(hasRepo && anyStaged);
+    m_hasRepo = hasRepo;
+    m_hasConflicts = hasConflicts;
+    m_anyStaged = anyStaged;
+    m_anyEntries = anyEntries;
+    refreshActionEnabled();
+}
+
+void ChangesPanel::onSelectionChanged()
+{
+    // Only Stage / Unstage depend on selection — refreshActionEnabled handles
+    // both that branch and re-applies cached controller flags to the rest.
+    refreshActionEnabled();
+}
+
+void ChangesPanel::refreshActionEnabled()
+{
+    // Stage / Unstage are selection-driven: enabled iff the current selection
+    // resolves to at least one path on that side. Prevents the dead-click case
+    // where the button is enabled but a click does nothing.
+    bool hasUnstagedSel = false;
+    bool hasStagedSel = false;
+    if (m_statusModel && m_tree->selectionModel()) {
+        const QModelIndexList idxs = m_tree->selectionModel()->selectedIndexes();
+        if (!idxs.isEmpty()) {
+            hasUnstagedSel = !m_statusModel->unstagedSelectionPaths(idxs).isEmpty();
+            hasStagedSel   = !m_statusModel->stagedSelectionPaths(idxs).isEmpty();
+        }
+    }
+
+    m_stageBtn->setEnabled(m_hasRepo && hasUnstagedSel);
+    m_unstageBtn->setEnabled(m_hasRepo && hasStagedSel);
+    m_stageAllBtn->setEnabled(m_hasRepo && m_anyEntries);
+    m_unstageAllBtn->setEnabled(m_hasRepo && m_anyStaged);
 
     const QString msg = m_composer ? m_composer->message().trimmed() : QString();
     const bool amend = m_composer && m_composer->amendChecked();
-    const bool somethingToCommit = anyStaged || amend || anyEntries;
-    const bool canCommit = hasRepo && !hasConflicts
+    const bool somethingToCommit = m_anyStaged || amend || m_anyEntries;
+    const bool canCommit = m_hasRepo && !m_hasConflicts
                            && (!msg.isEmpty() || amend)
                            && somethingToCommit;
     if (m_composer) m_composer->setSubmitEnabled(canCommit);

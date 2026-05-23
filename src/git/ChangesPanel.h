@@ -101,9 +101,16 @@ private slots:
     void onCommitButtonClicked();
     void onTreeClicked(const QModelIndex &index);
     void onTreeDoubleClicked(const QModelIndex &index);
+    // Recompute Stage / Unstage enabled state from the current tree selection.
+    void onSelectionChanged();
 
 private:
     void buildUi();
+    // Apply enable flags to the four stage buttons + composer submit. Combines
+    // the cached controller flags with the live selection state, so the call
+    // sites only have to push controller-side changes; selection-driven
+    // changes are handled internally via onSelectionChanged.
+    void refreshActionEnabled();
 
     QPointer<GitStatusModel> m_statusModel;
     QPushButton *m_stageBtn      = nullptr;
@@ -113,6 +120,13 @@ private:
     QTreeView   *m_tree     = nullptr;
     CommitComposer *m_composer = nullptr;
     GitStatusItemDelegate *m_delegate = nullptr;
+
+    // Cached controller-side flags (last value pushed by updateActionsEnabled).
+    // Selection state is read live from m_tree in refreshActionEnabled.
+    bool m_hasRepo = false;
+    bool m_hasConflicts = false;
+    bool m_anyStaged = false;
+    bool m_anyEntries = false;
 };
 
 #endif // CHANGES_PANEL_H
