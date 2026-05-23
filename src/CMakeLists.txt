@@ -294,7 +294,35 @@ qt_add_executable(NotepadAI
 	widgets/TerminalWidget.cpp
 	docks/TerminalDock.h
 	docks/TerminalDock.cpp
+
+	ai/DiffCompressor.h
+	ai/DiffCompressor.cpp
+	ai/PromptAssembler.h
+	ai/PromptAssembler.cpp
+	ai/RulesLocator.h
+	ai/RulesLocator.cpp
+	ai/SsePartialParser.h
+	ai/SsePartialParser.cpp
+	ai/CredentialStore.h
+	ai/CredentialStore_Common.cpp
+	ai/ILlmHttpClient.h
+	ai/LlmHttpClient.h
+	ai/LlmHttpClient.cpp
+	ai/CommitMessageGenerator.h
+	ai/CommitMessageGenerator.cpp
 )
+
+# Platform-conditional CredentialStore backend + native API link.
+if(WIN32)
+    target_sources(NotepadAI PRIVATE ai/CredentialStore_Windows.cpp)
+    target_link_libraries(NotepadAI PRIVATE crypt32)
+elseif(APPLE)
+    target_sources(NotepadAI PRIVATE ai/CredentialStore_Mac.mm)
+    target_link_libraries(NotepadAI PRIVATE "-framework Security" "-framework CoreFoundation")
+else()
+    target_sources(NotepadAI PRIVATE ai/CredentialStore_Linux.cpp)
+    # libsecret resolved at runtime via QLibrary("secret-1"); no build dep.
+endif()
 
 set_target_properties(NotepadAI PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/deploy/macos/info.plist

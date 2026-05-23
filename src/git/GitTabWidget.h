@@ -81,6 +81,14 @@ private slots:
     void onDirtyTreePrompt(const QString &target);
     void onRemoteOpProgress(const QString &line);
 
+    // AI commit-message generation.
+    void onAiTriggerRequested();
+    void onAiCancelRequested();
+    void onFullDiffReady(const QByteArray &diff);
+    void onFullDiffFailed(const QString &message);
+    void onGeneratorStateChanged(int state);
+    void onGeneratorError(const QString &message);
+
 private:
     void buildUi();
     void rebuildController();
@@ -119,6 +127,11 @@ private:
     QLabel *m_errorLabel = nullptr;
     QToolButton *m_errorCloseBtn = nullptr;
     QLabel *m_emptyHint = nullptr;
+
+    // AI generation: cache subject hint so the asynchronous fullDiffReady
+    // handler can pair the diff with the user-typed first line at trigger time.
+    QString m_pendingAiSubjectHint;
+    bool m_aiAwaitingDiff = false;
 };
 
 #endif // GIT_TAB_WIDGET_H

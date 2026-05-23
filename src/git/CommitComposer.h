@@ -25,17 +25,29 @@
 class QCheckBox;
 class QLabel;
 class QPushButton;
+class QToolButton;
 
 class CommitMessageEdit : public QPlainTextEdit
 {
     Q_OBJECT
 public:
     explicit CommitMessageEdit(QWidget *parent = nullptr);
+
+    // Allow the composer (or another sibling widget) to advertise whether a
+    // generation is currently in flight. When true, the Esc key is intercepted
+    // and emits cancelRequested() instead of being passed to the base class —
+    // matching the trigger control's cancel affordance.
+    void setGenerationActive(bool active) { m_generationActive = active; }
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 signals:
     void submitRequested();
+    void cancelRequested();
+
+private:
+    bool m_generationActive = false;
 };
 
 class CommitComposer : public QWidget
@@ -45,6 +57,11 @@ public:
     explicit CommitComposer(QWidget *parent = nullptr);
 
     QString message() const;
+
+    // First line of the message after trim(); empty when blank or whitespace-
+    // only. Used as the AI subject hint.
+    QString subjectLine() const;
+
     void setMessage(const QString &);
     bool amendChecked() const;
     bool signoffChecked() const;
@@ -56,9 +73,23 @@ public:
     void setPlaceholderText(const QString &);
     void clear();
 
+    // Exposed for the AI generator so it can append streamed tokens directly
+    // to the document end without disturbing the user's cursor / selection.
+    QPlainTextEdit *edit() const { return m_edit; }
+
+    // The "Generate commit message with AI" trigger control (toolbutton in the
+    // footer, next to the Commit button). nullptr until built.
+    QToolButton *aiButton() const { return m_aiBtn; }
+
+    // Forward generation-active state into the inner QPlainTextEdit so Esc
+    // gets intercepted only while a stream is in flight.
+    void setGenerationActive(bool active);
+
 signals:
     void messageChanged();
     void submitRequested();
+    void aiTriggerRequested();    // user clicked the AI button or hit shortcut
+    void aiCancelRequested();     // user pressed Esc while streaming
     void amendToggled(bool);
     void signoffToggled(bool);
     void trackedOnlyToggled(bool);
@@ -73,6 +104,7 @@ private:
     QCheckBox *m_signoff;
     QCheckBox *m_tracked;
     QPushButton *m_commitBtn;
+    QToolButton *m_aiBtn;
 };
 
 #endif // COMMIT_COMPOSER_H

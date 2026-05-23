@@ -307,6 +307,209 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="groupBoxAi">
+         <property name="title">
+          <string>AI Commit Message</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutAi">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelAiUrl">
+            <property name="text">
+             <string>OpenAI-compatible endpoint</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="lineEditAiUrl">
+            <property name="placeholderText">
+             <string>https://api.openai.com/v1</string>
+            </property>
+            <property name="toolTip">
+             <string>Base URL of any OpenAI-compatible Chat Completions API (e.g. https://api.openai.com/v1). The /chat/completions path is appended automatically.</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelAiModel">
+            <property name="text">
+             <string>Model</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="lineEditAiModel">
+            <property name="placeholderText">
+             <string>gpt-4o-mini</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelAiApiKey">
+            <property name="text">
+             <string>API key</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <layout class="QHBoxLayout" name="layoutAiApiKey">
+            <item>
+             <widget class="QLineEdit" name="lineEditAiApiKey">
+              <property name="echoMode">
+               <enum>QLineEdit::Password</enum>
+              </property>
+              <property name="placeholderText">
+               <string>sk-...</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnAiSaveApiKey">
+              <property name="text">
+               <string>Save</string>
+              </property>
+              <property name="autoDefault">
+               <bool>false</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnAiClearApiKey">
+              <property name="text">
+               <string>Clear</string>
+              </property>
+              <property name="autoDefault">
+               <bool>false</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLabel" name="labelAiApiKeyStatus">
+            <property name="text">
+             <string/>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="0">
+           <widget class="QLabel" name="labelAiPromptTemplate">
+            <property name="text">
+             <string>Prompt template</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTop|Qt::AlignTrailing</set>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="1">
+           <layout class="QVBoxLayout" name="layoutAiPromptTemplate">
+            <item>
+             <widget class="QPlainTextEdit" name="plainTextEditAiPromptTemplate">
+              <property name="minimumHeight">
+               <number>140</number>
+              </property>
+              <property name="placeholderText">
+               <string>Supported placeholders: {{rules}}, {{subject_hint}}, {{diff}}</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <layout class="QHBoxLayout" name="layoutAiPromptTemplateButtons">
+              <item>
+               <spacer name="spacerAiPromptTemplate">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+               </spacer>
+              </item>
+              <item>
+               <widget class="QPushButton" name="btnAiResetPromptTemplate">
+                <property name="text">
+                 <string>Reset to default</string>
+                </property>
+                <property name="autoDefault">
+                 <bool>false</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+           </layout>
+          </item>
+          <item row="5" column="0">
+           <widget class="QLabel" name="labelAiDiffBudget">
+            <property name="text">
+             <string>Diff budget (bytes)</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="QSpinBox" name="spinBoxAiDiffBudget">
+            <property name="minimum">
+             <number>1000</number>
+            </property>
+            <property name="maximum">
+             <number>200000</number>
+            </property>
+            <property name="singleStep">
+             <number>1000</number>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="0">
+           <widget class="QLabel" name="labelAiRulesBudget">
+            <property name="text">
+             <string>Rules budget (bytes)</string>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="1">
+           <widget class="QSpinBox" name="spinBoxAiRulesBudget">
+            <property name="minimum">
+             <number>0</number>
+            </property>
+            <property name="maximum">
+             <number>50000</number>
+            </property>
+            <property name="singleStep">
+             <number>500</number>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="0">
+           <widget class="QLabel" name="labelAiIdleTimeout">
+            <property name="text">
+             <string>Stream idle timeout (s)</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="1">
+           <widget class="QSpinBox" name="spinBoxAiIdleTimeout">
+            <property name="minimum">
+             <number>5</number>
+            </property>
+            <property name="maximum">
+             <number>600</number>
+            </property>
+           </widget>
+          </item>
+          <item row="8" column="0">
+           <widget class="QLabel" name="labelAiShortcut">
+            <property name="text">
+             <string>Generate shortcut</string>
+            </property>
+           </widget>
+          </item>
+          <item row="8" column="1">
+           <widget class="QKeySequenceEdit" name="keySequenceEditAiShortcut"/>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

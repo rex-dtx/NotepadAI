@@ -148,6 +148,7 @@ signals:
     void editorActivated(ScintillaNext *editor);
     void aboutToClose();
     void fileDialogAccepted(const QString &filePath);
+    void activeWorkspaceChanged(FolderAsWorkspaceDock *newDock, FolderAsWorkspaceDock *oldDock);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -182,6 +183,12 @@ private:
     void wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock);
     FolderAsWorkspaceDock *activeWorkspaceDock() const;
     QString currentWorkspaceRoot() const;
+
+    // Centralized active-workspace setter: assigns m_activeWorkspace, syncs
+    // CrashContext, and emits activeWorkspaceChanged(new, old). All five sites
+    // that previously assigned m_activeWorkspace directly route through this
+    // so generators / runners can cancel-on-switch.
+    void setActiveWorkspace(FolderAsWorkspaceDock *dock);
 
     // Workspace state on-disk memo, loaded once from QSettings at the start of
     // restoreOpenWorkspaces and consulted per-dock from openFolderAsWorkspacePath.

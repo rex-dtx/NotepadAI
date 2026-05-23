@@ -20,6 +20,10 @@
 
 #include "ApplicationSettings.h"
 #include "BranchPickerPopup.h"
+#include "../ai/CommitMessageGenerator.h"
+#include "../NotepadNextApplication.h"
+#include "../dialogs/MainWindow.h"
+#include "../docks/FolderAsWorkspaceDock.h"
 #include "CommitComposer.h"
 #include "GitError.h"
 #include "GitRepoModel.h"
@@ -47,6 +51,30 @@ GitTabWidget::GitTabWidget(const QString &workspaceRoot, QWidget *parent)
 {
     buildUi();
     updateActionsEnabled();
+
+    // AI generator wiring (singleton owned by NotepadNextApplication).
+    if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance())) {
+        if (auto *gen = app->getCommitMessageGenerator()) {
+            connect(gen, &ai::CommitMessageGenerator::stateChanged, this,
+                    [this](ai::CommitMessageGenerator::State s) {
+                        onGeneratorStateChanged(static_cast<int>(s));
+                    });
+            connect(gen, &ai::CommitMessageGenerator::errorOccurred,
+                    this, &GitTabWidget::onGeneratorError);
+        }
+        // Cancel in-flight generation if the user switches to a different
+        // workspace dock — the target composer becomes invisible / stale.
+        if (auto *mw = qobject_cast<MainWindow *>(app->activeWindow())) {
+            connect(mw, &MainWindow::activeWorkspaceChanged, this,
+                    [this](FolderAsWorkspaceDock *, FolderAsWorkspaceDock *) {
+                        if (auto *app2 = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance())) {
+                            if (auto *gen = app2->getCommitMessageGenerator()) {
+                                gen->cancelIfTarget(m_composer);
+                            }
+                        }
+                    });
+        }
+    }
 }
 
 GitTabWidget::~GitTabWidget()
@@ -173,6 +201,10 @@ void GitTabWidget::buildUi()
         persistCommitDraft();
         updateActionsEnabled();
     });
+    connect(m_composer, &CommitComposer::aiTriggerRequested,
+            this, &GitTabWidget::onAiTriggerRequested);
+    connect(m_composer, &CommitComposer::aiCancelRequested,
+            this, &GitTabWidget::onAiCancelRequested);
     connect(m_errorCloseBtn, &QToolButton::clicked, this, &GitTabWidget::clearError);
 }
 
@@ -240,6 +272,8 @@ void GitTabWidget::rebuildController()
             this, &GitTabWidget::onDirtyTreePrompt);
     connect(m_controller, &GitController::remoteOpProgress,
             this, &GitTabWidget::onRemoteOpProgress);
+    connect(m_controller, &GitController::fullDiffReady, this, &GitTabWidget::onFullDiffReady);
+    connect(m_controller, &GitController::fullDiffFailed, this, &GitTabWidget::onFullDiffFailed);
     connect(m_tree, &QTreeView::doubleClicked, this, &GitTabWidget::onTreeDoubleClicked);
     connect(m_tree, &QTreeView::clicked, this, &GitTabWidget::onTreeClicked);
 
@@ -297,6 +331,14 @@ void GitTabWidget::onRepoSelected(int index)
     if (index < 0) return;
     const auto *info = m_controller->repoModel()->infoAt(index);
     if (!info) return;
+
+    // Cancel any in-flight AI generation pinned to this composer when the user
+    // switches repos within the same dock — the diff context just changed.
+    if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance())) {
+        if (auto *gen = app->getCommitMessageGenerator()) {
+            gen->cancelIfTarget(m_composer);
+        }
+    }
 
     ApplicationSettings settings;
     settings.setValue(settingsKey(QStringLiteral("lastRepo")), info->toplevel);
@@ -557,7 +599,7 @@ void GitTabWidget::onControllerState(GitController::State s)
     updateActionsEnabled();
 
     switch (s) {
-    case GitController::State::Idle:      appendStatus(tr("Ready")); break;
+    case GitController::State::Idle:        m_statusLabel->clear(); break;
     case GitController::State::Discovering: appendStatus(tr("Discovering repositories…")); break;
     case GitController::State::Refreshing:  appendStatus(tr("Refreshing…")); break;
     case GitController::State::Running:     appendStatus(tr("Running…")); break;
@@ -671,3 +713,109 @@ void GitTabWidget::appendStatus(const QString &msg)
 {
     m_statusLabel->setText(msg);
 }
+
+// --- AI commit-message generation --------------------------------------------
+
+void GitTabWidget::onAiTriggerRequested()
+{
+    auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance());
+    if (!app) return;
+    auto *gen = app->getCommitMessageGenerator();
+    if (!gen) return;
+
+    // If a generation is already in flight for this composer, treat the click
+    // as a cancel.
+    using State = ai::CommitMessageGenerator::State;
+    if (gen->state() != State::Idle) {
+        gen->cancelIfTarget(m_composer);
+        return;
+    }
+
+    QString why;
+    if (!gen->canFireGenerate(m_workspaceRoot, m_composer, &why)) {
+        showError(why);
+        return;
+    }
+    if (!m_controller || m_controller->currentRepo().isEmpty()) {
+        showError(tr("No repository selected for AI generation."));
+        return;
+    }
+
+    m_pendingAiSubjectHint = m_composer->subjectLine();
+    m_aiAwaitingDiff = true;
+    clearError();
+    m_controller->requestFullDiff();
+}
+
+void GitTabWidget::onAiCancelRequested()
+{
+    if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance())) {
+        if (auto *gen = app->getCommitMessageGenerator()) {
+            gen->cancelIfTarget(m_composer);
+        }
+    }
+    m_aiAwaitingDiff = false;
+}
+
+void GitTabWidget::onFullDiffReady(const QByteArray &diff)
+{
+    if (!m_aiAwaitingDiff) return;
+    m_aiAwaitingDiff = false;
+
+    auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance());
+    if (!app) return;
+    auto *gen = app->getCommitMessageGenerator();
+    if (!gen) return;
+
+    const QString submoduleRoot = m_controller ? m_controller->currentRepo() : QString();
+    gen->trigger(m_workspaceRoot, submoduleRoot, m_composer, m_pendingAiSubjectHint, diff);
+}
+
+void GitTabWidget::onFullDiffFailed(const QString &message)
+{
+    if (!m_aiAwaitingDiff) return;
+    m_aiAwaitingDiff = false;
+    showError(tr("AI: %1").arg(message));
+}
+
+void GitTabWidget::onGeneratorStateChanged(int state)
+{
+    using State = ai::CommitMessageGenerator::State;
+    auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance());
+    if (!app) return;
+    auto *gen = app->getCommitMessageGenerator();
+    if (!gen) return;
+
+    // Only react when this composer is the target.
+    const bool isTarget = (gen->state() == State::Idle)
+                          ? false
+                          : (gen->currentRepoKey() == m_workspaceRoot);
+
+    QToolButton *btn = m_composer ? m_composer->aiButton() : nullptr;
+    if (!btn) return;
+
+    const auto s = static_cast<State>(state);
+    const bool busy = (s == State::Authenticating || s == State::Streaming
+                       || s == State::Cancelling);
+
+    if (isTarget && busy) {
+        btn->setText(QString::fromUtf8("\xE2\x97\xBC"));   // U+25FC ◼ stop
+        btn->setToolTip(tr("Cancel generation (Esc)"));
+        m_composer->setGenerationActive(true);
+        m_composer->setSubmitEnabled(false);
+    } else {
+        btn->setText(QString::fromUtf8("\xE2\x9C\xA8"));   // U+2728 ✨ sparkles
+        btn->setToolTip(tr("Generate commit message with AI"));
+        m_composer->setGenerationActive(false);
+        updateActionsEnabled();   // re-derives commit button enabled state
+    }
+}
+
+void GitTabWidget::onGeneratorError(const QString &message)
+{
+    // Only show if this composer is the one that triggered the request — but
+    // because the generator is a single global at most one error is active at
+    // a time, so display unconditionally.
+    showError(tr("AI: %1").arg(message));
+}
+

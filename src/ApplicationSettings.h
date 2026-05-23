@@ -139,6 +139,18 @@ public:
     DEFINE_SETTING(ShutdownDiagnosticsEnabled, shutdownDiagnosticsEnabled, bool)
 #endif
 
+    // Commit-message AI generation settings. All stored under the "Ai/" group.
+    // The API key value itself is NEVER stored here — only a boolean flag
+    // tracking whether the OS keychain holds one. See ai/CredentialStore.h.
+    DEFINE_SETTING(CommitMessageProviderUrl,        commitMessageProviderUrl,        QString)
+    DEFINE_SETTING(CommitMessageModel,              commitMessageModel,              QString)
+    DEFINE_SETTING(CommitMessageApiKeyConfigured,   commitMessageApiKeyConfigured,   bool)
+    DEFINE_SETTING(CommitMessagePromptTemplate,     commitMessagePromptTemplate,     QString)
+    DEFINE_SETTING(CommitMessageDiffByteBudget,     commitMessageDiffByteBudget,     int)
+    DEFINE_SETTING(CommitMessageRulesByteBudget,    commitMessageRulesByteBudget,    int)
+    DEFINE_SETTING(CommitMessageStreamIdleTimeoutSec, commitMessageStreamIdleTimeoutSec, int)
+    DEFINE_SETTING(CommitMessageGenerateShortcut,   commitMessageGenerateShortcut,   QString)
+
     // AI / ACP agent settings. Stored under the "Ai/" group.
 public:
     QString defaultAiAgentId() const;

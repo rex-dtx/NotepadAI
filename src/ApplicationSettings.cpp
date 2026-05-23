@@ -100,6 +100,49 @@ CREATE_SETTING(Git, SyntaxHighlightDiffEnabled, syntaxHighlightDiffEnabled, bool
 CREATE_SETTING(Debug, ShutdownDiagnosticsEnabled, shutdownDiagnosticsEnabled, bool, true)
 #endif
 
+// --- Commit-message AI generation settings ------------------------------------
+//
+// Reads/writes go through the standard CREATE_SETTING macro. The API key value
+// itself never lives in QSettings — only a flag tracking whether the OS
+// keychain holds one. See ai/CredentialStore.{h,cpp}.
+
+static QString defaultCommitMessagePromptTemplate()
+{
+    return QStringLiteral(
+        "You are an expert at writing git commit messages in the Conventional Commits format.\n"
+        "\n"
+        "Generate a commit message for the following changes. Follow these rules strictly:\n"
+        "- First line: <type>(<scope>): <subject>, no more than 50 characters, imperative mood, no trailing period.\n"
+        "- Blank line.\n"
+        "- Body: explain WHY, not WHAT. Wrap at 72 characters. Use bullet points if multiple concerns.\n"
+        "- No trailing whitespace.\n"
+        "- Output ONLY the commit message text — no markdown fences, no preamble, no explanation.\n"
+        "\n"
+        "{{rules}}\n"
+        "{{subject_hint}}\n"
+        "Diff:\n"
+        "```\n"
+        "{{diff}}\n"
+        "```\n");
+}
+
+// CREATE_SETTING expands to a by-value QString setter, matching the existing
+// project idiom used by every other QString setting above. Suppressed here so
+// we don't drift from the established macro pattern (changing the macro is
+// out of scope and would noisily diff every preexisting QString setting).
+// NOLINTBEGIN(performance-unnecessary-value-param)
+CREATE_SETTING(Ai, CommitMessageProviderUrl, commitMessageProviderUrl, QString, QStringLiteral(""))
+CREATE_SETTING(Ai, CommitMessageModel, commitMessageModel, QString, QStringLiteral(""))
+CREATE_SETTING(Ai, CommitMessageApiKeyConfigured, commitMessageApiKeyConfigured, bool, false)
+CREATE_SETTING(Ai, CommitMessagePromptTemplate, commitMessagePromptTemplate, QString, []() {
+    return defaultCommitMessagePromptTemplate();
+})
+CREATE_SETTING(Ai, CommitMessageDiffByteBudget, commitMessageDiffByteBudget, int, 20000)
+CREATE_SETTING(Ai, CommitMessageRulesByteBudget, commitMessageRulesByteBudget, int, 4000)
+CREATE_SETTING(Ai, CommitMessageStreamIdleTimeoutSec, commitMessageStreamIdleTimeoutSec, int, 60)
+CREATE_SETTING(Ai, CommitMessageGenerateShortcut, commitMessageGenerateShortcut, QString, QStringLiteral("Ctrl+Alt+G"))
+// NOLINTEND(performance-unnecessary-value-param)
+
 // --- AI / ACP agent settings ---------------------------------------------------
 //
 // Declared by hand (not via CREATE_SETTING) because the auto-approve setter

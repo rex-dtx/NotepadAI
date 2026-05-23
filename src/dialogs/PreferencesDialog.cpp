@@ -20,6 +20,7 @@
 #include "PreferencesDialog.h"
 #include "NotepadNextApplication.h"
 #include "TranslationManager.h"
+#include "ai/CredentialStore.h"
 #include "ui_PreferencesDialog.h"
 #include "ScintillaNext.h"
 
@@ -28,7 +29,10 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QFontDialog>
+#include <QKeySequenceEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QSpinBox>
 
 
 PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *parent) :
@@ -196,6 +200,142 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
         const QFont chosen = QFontDialog::getFont(&ok, current, this, tr("Terminal Font"));
         if (ok) {
             settings->setTerminalFont(chosen.toString());
+        }
+    });
+
+    // --- AI commit-message settings ------------------------------------------
+
+    ui->lineEditAiUrl->setText(settings->commitMessageProviderUrl());
+    connect(ui->lineEditAiUrl, &QLineEdit::editingFinished, this, [=]() {
+        settings->setCommitMessageProviderUrl(ui->lineEditAiUrl->text().trimmed());
+    });
+    connect(settings, &ApplicationSettings::commitMessageProviderUrlChanged, this, [=](const QString &s) {
+        if (ui->lineEditAiUrl->text() != s) ui->lineEditAiUrl->setText(s);
+    });
+
+    ui->lineEditAiModel->setText(settings->commitMessageModel());
+    connect(ui->lineEditAiModel, &QLineEdit::editingFinished, this, [=]() {
+        settings->setCommitMessageModel(ui->lineEditAiModel->text().trimmed());
+    });
+    connect(settings, &ApplicationSettings::commitMessageModelChanged, this, [=](const QString &s) {
+        if (ui->lineEditAiModel->text() != s) ui->lineEditAiModel->setText(s);
+    });
+
+    // API key — the value itself never round-trips through the UI. The line
+    // edit is write-only (Password mode + placeholder), and a status label
+    // reports whether a key is configured + by which mechanism.
+    NotepadNextApplication *npApp = qobject_cast<NotepadNextApplication *>(qApp);
+    ai::CredentialStore *credStore = npApp ? npApp->getCredentialStore() : nullptr;
+
+    auto refreshApiKeyStatus = [=]() {
+        QString text;
+        const bool envOverride = !qEnvironmentVariableIsEmpty("NOTEPADAI_COMMIT_API_KEY")
+                                 || !qEnvironmentVariableIsEmpty("NOTEPADAI_COMMIT_API_KEY_FILE");
+        const bool configured = settings->commitMessageApiKeyConfigured();
+        const bool backendOk = credStore ? credStore->isBackendAvailable() : false;
+        QString color = QStringLiteral("palette(mid)");
+        if (envOverride) {
+            text = tr("Using key from environment variable (NOTEPADAI_COMMIT_API_KEY[_FILE]).");
+        } else if (configured && backendOk) {
+            text = tr("Key stored in OS keychain.");
+        } else if (configured && !backendOk) {
+            text = tr("Key flagged as stored but OS keychain backend is unavailable.");
+            color = QStringLiteral("#c0392b");
+        } else if (!backendOk) {
+            text = tr("OS keychain backend unavailable — set NOTEPADAI_COMMIT_API_KEY to use AI generation.");
+            color = QStringLiteral("#c0392b");
+        } else {
+            text = tr("No key configured.");
+        }
+        ui->labelAiApiKeyStatus->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(color));
+        ui->labelAiApiKeyStatus->setText(text);
+        ui->btnAiClearApiKey->setEnabled(configured && backendOk);
+    };
+    refreshApiKeyStatus();
+    if (credStore) {
+        connect(credStore, &ai::CredentialStore::apiKeyConfiguredChanged,
+                this, [=](bool) { refreshApiKeyStatus(); });
+    }
+
+    connect(ui->btnAiSaveApiKey, &QPushButton::clicked, this, [=]() {
+        const QString value = ui->lineEditAiApiKey->text();
+        if (value.isEmpty()) {
+            QMessageBox::information(this, tr("API key"),
+                                     tr("Enter a key before saving."));
+            return;
+        }
+        if (!credStore) {
+            QMessageBox::warning(this, tr("API key"),
+                                 tr("Credential store is not available in this build."));
+            return;
+        }
+        QString err;
+        if (!credStore->storeApiKey(value, &err)) {
+            QMessageBox::warning(this, tr("API key"),
+                                 tr("Failed to store key: %1").arg(err));
+            return;
+        }
+        ui->lineEditAiApiKey->clear();
+        refreshApiKeyStatus();
+    });
+
+    connect(ui->btnAiClearApiKey, &QPushButton::clicked, this, [=]() {
+        if (!credStore) return;
+        if (QMessageBox::question(this, tr("Clear API key"),
+                tr("Remove the stored API key from the OS keychain?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+        QString err;
+        credStore->clearApiKey(&err);
+        refreshApiKeyStatus();
+    });
+
+    ui->plainTextEditAiPromptTemplate->setPlainText(settings->commitMessagePromptTemplate());
+    connect(ui->plainTextEditAiPromptTemplate, &QPlainTextEdit::textChanged, this, [=]() {
+        const QString cur = ui->plainTextEditAiPromptTemplate->toPlainText();
+        if (cur != settings->commitMessagePromptTemplate()) {
+            settings->setCommitMessagePromptTemplate(cur);
+        }
+    });
+    connect(settings, &ApplicationSettings::commitMessagePromptTemplateChanged, this, [=](const QString &s) {
+        if (ui->plainTextEditAiPromptTemplate->toPlainText() != s) {
+            ui->plainTextEditAiPromptTemplate->setPlainText(s);
+        }
+    });
+    connect(ui->btnAiResetPromptTemplate, &QPushButton::clicked, this, [=]() {
+        // setCommitMessagePromptTemplate("") then re-read the default —
+        // ApplicationSettings substitutes the built-in default for empty values.
+        settings->remove(QStringLiteral("Ai/CommitMessagePromptTemplate"));
+        ui->plainTextEditAiPromptTemplate->setPlainText(settings->commitMessagePromptTemplate());
+    });
+
+    ui->spinBoxAiDiffBudget->setValue(settings->commitMessageDiffByteBudget());
+    connect(ui->spinBoxAiDiffBudget, QOverload<int>::of(&QSpinBox::valueChanged),
+            settings, &ApplicationSettings::setCommitMessageDiffByteBudget);
+    connect(settings, &ApplicationSettings::commitMessageDiffByteBudgetChanged,
+            ui->spinBoxAiDiffBudget, &QSpinBox::setValue);
+
+    ui->spinBoxAiRulesBudget->setValue(settings->commitMessageRulesByteBudget());
+    connect(ui->spinBoxAiRulesBudget, QOverload<int>::of(&QSpinBox::valueChanged),
+            settings, &ApplicationSettings::setCommitMessageRulesByteBudget);
+    connect(settings, &ApplicationSettings::commitMessageRulesByteBudgetChanged,
+            ui->spinBoxAiRulesBudget, &QSpinBox::setValue);
+
+    ui->spinBoxAiIdleTimeout->setValue(settings->commitMessageStreamIdleTimeoutSec());
+    connect(ui->spinBoxAiIdleTimeout, QOverload<int>::of(&QSpinBox::valueChanged),
+            settings, &ApplicationSettings::setCommitMessageStreamIdleTimeoutSec);
+    connect(settings, &ApplicationSettings::commitMessageStreamIdleTimeoutSecChanged,
+            ui->spinBoxAiIdleTimeout, &QSpinBox::setValue);
+
+    ui->keySequenceEditAiShortcut->setKeySequence(QKeySequence(settings->commitMessageGenerateShortcut()));
+    connect(ui->keySequenceEditAiShortcut, &QKeySequenceEdit::keySequenceChanged, this, [=](const QKeySequence &ks) {
+        settings->setCommitMessageGenerateShortcut(ks.toString(QKeySequence::PortableText));
+    });
+    connect(settings, &ApplicationSettings::commitMessageGenerateShortcutChanged, this, [=](const QString &s) {
+        const QKeySequence ks(s);
+        if (ui->keySequenceEditAiShortcut->keySequence() != ks) {
+            ui->keySequenceEditAiShortcut->setKeySequence(ks);
         }
     });
 }

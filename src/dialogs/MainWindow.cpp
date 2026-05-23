@@ -1570,8 +1570,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
         if (QDir::cleanPath(d->rootPath()) == cleaned) {
             d->setVisible(true);
             d->raise();
-            m_activeWorkspace = d;
-            CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+            setActiveWorkspace(d);
             if (showGitTab) d->showGitTab();
             return;
         }
@@ -1604,8 +1603,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
         vacant->setRootPath(dir);
         vacant->setVisible(true);
         vacant->raise();
-        m_activeWorkspace = vacant;
-        CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+        setActiveWorkspace(vacant);
         if (showGitTab) vacant->showGitTab();
         return;
     }
@@ -1639,8 +1637,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
     dock->setRootPath(dir);
     dock->setVisible(true);
     dock->raise();
-    m_activeWorkspace = dock;
-    CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+    setActiveWorkspace(dock);
     if (showGitTab) dock->showGitTab();
 }
 
@@ -1650,8 +1647,7 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
     // looking at, so use visibilityChanged(true) as the active-workspace signal.
     connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible) {
         if (visible && !dock->rootPath().isEmpty()) {
-            m_activeWorkspace = dock;
-            CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+            setActiveWorkspace(dock);
         }
     });
 
@@ -1734,8 +1730,7 @@ void MainWindow::raiseSavedActiveWorkspace()
     const QString cleanedActive = QDir::cleanPath(activePath);
     for (FolderAsWorkspaceDock *d : findChildren<FolderAsWorkspaceDock *>()) {
         if (QDir::cleanPath(d->rootPath()) == cleanedActive) {
-            m_activeWorkspace = d;
-            CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+            setActiveWorkspace(d);
             d->setVisible(true);
             d->raise();
             break;
@@ -1755,6 +1750,15 @@ FolderAsWorkspaceDock *MainWindow::activeWorkspaceDock() const
         if (!d->rootPath().isEmpty()) return d;
     }
     return nullptr;
+}
+
+void MainWindow::setActiveWorkspace(FolderAsWorkspaceDock *dock)
+{
+    FolderAsWorkspaceDock *oldDock = m_activeWorkspace.data();
+    if (oldDock == dock) return;
+    m_activeWorkspace = dock;
+    CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+    emit activeWorkspaceChanged(dock, oldDock);
 }
 
 QString MainWindow::currentWorkspaceRoot() const

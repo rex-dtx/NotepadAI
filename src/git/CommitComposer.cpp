@@ -26,6 +26,7 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 CommitMessageEdit::CommitMessageEdit(QWidget *parent) : QPlainTextEdit(parent)
@@ -61,6 +62,11 @@ void CommitMessageEdit::keyPressEvent(QKeyEvent *event)
         emit submitRequested();
         return;
     }
+    if (event->key() == Qt::Key_Escape && m_generationActive) {
+        emit cancelRequested();
+        event->accept();
+        return;
+    }
     QPlainTextEdit::keyPressEvent(event);
 }
 
@@ -71,7 +77,7 @@ CommitComposer::CommitComposer(QWidget *parent) : QWidget(parent)
     m_edit->setAccessibleName(tr("Commit message"));
 
     m_charCount = new QLabel(QStringLiteral("0 / 50"), this);
-    m_charCount->setAlignment(Qt::AlignRight);
+    m_charCount->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_charCount->setStyleSheet(QStringLiteral("QLabel { color: palette(mid); font-size: 11px; }"));
 
     m_amend = new QCheckBox(tr("Amend"), this);
@@ -86,16 +92,25 @@ CommitComposer::CommitComposer(QWidget *parent) : QWidget(parent)
     m_commitBtn->setDefault(false);
     m_commitBtn->setAutoDefault(false);
 
+    m_aiBtn = new QToolButton(this);
+    m_aiBtn->setText(QString::fromUtf8("\xE2\x9C\xA8"));   // U+2728 ✨ sparkles
+    m_aiBtn->setAccessibleName(tr("Generate commit message with AI"));
+    m_aiBtn->setToolTip(tr("Generate commit message with AI"));
+    m_aiBtn->setAutoRaise(true);
+    m_aiBtn->setFocusPolicy(Qt::TabFocus);
+
     auto *checks = new QHBoxLayout();
     checks->setContentsMargins(0, 0, 0, 0);
     checks->addWidget(m_amend);
     checks->addWidget(m_signoff);
     checks->addWidget(m_tracked);
     checks->addStretch(1);
+    checks->addWidget(m_charCount);
 
     auto *footer = new QHBoxLayout();
     footer->setContentsMargins(0, 0, 0, 0);
-    footer->addWidget(m_charCount, 1);
+    footer->addStretch(1);
+    footer->addWidget(m_aiBtn);
     footer->addWidget(m_commitBtn);
 
     auto *lay = new QVBoxLayout(this);
@@ -111,7 +126,10 @@ CommitComposer::CommitComposer(QWidget *parent) : QWidget(parent)
     });
     connect(m_edit, &CommitMessageEdit::submitRequested,
             m_commitBtn, &QPushButton::click);
+    connect(m_edit, &CommitMessageEdit::cancelRequested,
+            this, &CommitComposer::aiCancelRequested);
     connect(m_commitBtn, &QPushButton::clicked, this, &CommitComposer::submitRequested);
+    connect(m_aiBtn, &QToolButton::clicked, this, &CommitComposer::aiTriggerRequested);
     connect(m_amend, &QCheckBox::toggled, this, &CommitComposer::amendToggled);
     connect(m_signoff, &QCheckBox::toggled, this, &CommitComposer::signoffToggled);
     connect(m_tracked, &QCheckBox::toggled, this, &CommitComposer::trackedOnlyToggled);
@@ -132,6 +150,15 @@ void CommitComposer::updateCharCount()
 }
 
 QString CommitComposer::message() const           { return m_edit->toPlainText(); }
+
+QString CommitComposer::subjectLine() const
+{
+    const QString txt = m_edit->toPlainText();
+    const int nl = txt.indexOf(QChar::LineFeed);
+    const QString first = (nl < 0) ? txt : txt.left(nl);
+    return first.trimmed();
+}
+
 void CommitComposer::setMessage(const QString &s) { m_edit->setPlainText(s); }
 bool CommitComposer::amendChecked() const         { return m_amend->isChecked(); }
 bool CommitComposer::signoffChecked() const       { return m_signoff->isChecked(); }
@@ -142,3 +169,8 @@ void CommitComposer::setTrackedOnly(bool v)       { m_tracked->setChecked(v); }
 void CommitComposer::setSubmitEnabled(bool v)     { m_commitBtn->setEnabled(v); }
 void CommitComposer::setPlaceholderText(const QString &t) { m_edit->setPlaceholderText(t); }
 void CommitComposer::clear() { m_edit->clear(); }
+
+void CommitComposer::setGenerationActive(bool active)
+{
+    m_edit->setGenerationActive(active);
+}

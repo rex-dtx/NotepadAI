@@ -586,6 +586,27 @@ void GitController::requestDiff(const QString &relPath, bool stagedSide)
     enqueue(op);
 }
 
+void GitController::requestFullDiff()
+{
+    if (m_currentRepo.isEmpty()) {
+        emit fullDiffFailed(tr_("No repository selected."));
+        return;
+    }
+    // Probe staged first; if empty, the success handler enqueues the worktree
+    // diff as a fallback (matches the reference scenarios 11 + 12: staged wins
+    // when present, worktree otherwise).
+    Op op;
+    op.kind = OpKind::DiffAllCached;
+    op.argv = { QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
+                QStringLiteral("-C"), m_currentRepo,
+                QStringLiteral("diff"), QStringLiteral("--cached"),
+                QStringLiteral("--no-color"), QStringLiteral("--no-ext-diff"),
+                QStringLiteral("--src-prefix=a/"), QStringLiteral("--dst-prefix=b/") };
+    op.timeoutMs = kTimeoutNormal;
+    op.humanName = tr_("Diff (staged)");
+    enqueue(op);
+}
+
 void GitController::onRunFinished(int exit, const QByteArray &out, const QByteArray &err)
 {
     const OpKind kind = m_current.kind;
@@ -654,6 +675,12 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
             popAndAdvance();
             return;
         }
+        // Full-diff failures: surface to AI generator only, do not block queue.
+        if (kind == OpKind::DiffAllCached || kind == OpKind::DiffAllWorktree) {
+            emit fullDiffFailed(QString::fromUtf8(err));
+            popAndAdvance();
+            return;
+        }
         setState(State::Error);
         m_queue.clear();
         emit errorOccurred(e);
@@ -673,6 +700,27 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
             emit diffReady(m_current.meta.value(QStringLiteral("relPath")).toString(),
                            m_current.meta.value(QStringLiteral("stagedSide")).toBool(),
                            out);
+            break;
+        case OpKind::DiffAllCached:
+            if (!out.isEmpty()) {
+                emit fullDiffReady(out);
+            } else {
+                // No staged diff — fall back to worktree diff.
+                Op op;
+                op.kind = OpKind::DiffAllWorktree;
+                op.argv = { QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
+                            QStringLiteral("-C"), m_currentRepo,
+                            QStringLiteral("diff"),
+                            QStringLiteral("--no-color"), QStringLiteral("--no-ext-diff"),
+                            QStringLiteral("--src-prefix=a/"), QStringLiteral("--dst-prefix=b/") };
+                op.timeoutMs = kTimeoutNormal;
+                op.humanName = tr_("Diff (worktree)");
+                enqueue(op);
+            }
+            break;
+        case OpKind::DiffAllWorktree:
+            if (!out.isEmpty()) emit fullDiffReady(out);
+            else emit fullDiffFailed(tr_("No changes to commit."));
             break;
         case OpKind::Stage:
         case OpKind::Unstage:

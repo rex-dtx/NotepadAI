@@ -37,6 +37,7 @@ class ScintillaNext;
 class SessionManager;
 class TranslationManager;
 class AcpAgentManager;
+namespace ai { class CommitMessageGenerator; class CredentialStore; }
 
 
 class NotepadNextApplication : public SingleApplication
@@ -54,6 +55,8 @@ public:
     SessionManager *getSessionManager() const;
     TranslationManager *getTranslationManager() const { return translationManager; };
     AcpAgentManager *getAiAgentManager() const { return aiAgentManager_; }
+    ai::CommitMessageGenerator *getCommitMessageGenerator() const { return commitMessageGenerator_; }
+    ai::CredentialStore *getCredentialStore() const { return credentialStore_; }
 
     LuaState *getLuaState() const { return luaState; }
     QString getFileDialogFilter() const;
@@ -111,6 +114,8 @@ private:
     SessionManager *sessionManager;
     TranslationManager *translationManager;
     AcpAgentManager *aiAgentManager_ = nullptr;
+    ai::CommitMessageGenerator *commitMessageGenerator_ = nullptr;
+    ai::CredentialStore *credentialStore_ = nullptr;
 
     LuaState *luaState = Q_NULLPTR;
 

@@ -89,6 +89,12 @@ public slots:
     // (unstaged), true = index (staged). Emits diffReady on completion.
     void requestDiff(const QString &relPath, bool stagedSide);
 
+    // Request the full repository diff. If the repo has any staged changes,
+    // the staged diff (index vs HEAD) is returned; otherwise the worktree
+    // diff (worktree vs HEAD). Emits fullDiffReady on success or
+    // fullDiffFailed on error / empty repo.
+    void requestFullDiff();
+
 signals:
     void stateChanged(GitController::State s);
     void statusUpdated();
@@ -102,6 +108,8 @@ signals:
     void dirtyTreePromptRequested(const QString &targetBranch);
     void diffReady(const QString &relPath, bool stagedSide, const QByteArray &diff);
     void diffFailed(const QString &relPath, bool stagedSide, const QString &message);
+    void fullDiffReady(const QByteArray &diff);
+    void fullDiffFailed(const QString &message);
 
 private:
     enum class OpKind : std::uint8_t {
@@ -109,6 +117,7 @@ private:
         HeadSym, HeadSha, Refs, Remotes, Status,
         NumstatStaged, NumstatUnstaged,
         DiffPath,
+        DiffAllCached, DiffAllWorktree,
         Stage, Unstage, StageAll, UnstageAll,
         Commit,
         SwitchBranch, CreateBranch, Stash,

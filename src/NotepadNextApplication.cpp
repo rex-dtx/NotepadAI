@@ -28,6 +28,8 @@
 #include "TranslationManager.h"
 #include "ApplicationSettings.h"
 #include "AcpAgentManager.h"
+#include "ai/CommitMessageGenerator.h"
+#include "ai/CredentialStore.h"
 #include "ThemeResolver.h"
 
 #include "LuaState.h"
@@ -165,6 +167,8 @@ bool NotepadNextApplication::init()
         recentWorkspacesListManager = new RecentFilesListManager(this);
         editorManager = new EditorManager(settings, this);
         aiAgentManager_ = new AcpAgentManager(settings, this);
+        credentialStore_ = new ai::CredentialStore(this);
+        commitMessageGenerator_ = new ai::CommitMessageGenerator(settings, credentialStore_, this);
         sessionManager = new SessionManager(this);
     }
 
@@ -722,6 +726,11 @@ void NotepadNextApplication::applyTheme()
         palette.setColor(QPalette::Link,            QColor(80, 160, 220));
         palette.setColor(QPalette::Highlight,       QColor(38, 110, 180));
         palette.setColor(QPalette::HighlightedText, Qt::white);
+        // Mid/Midlight are unset by default and Qt derives them from Window —
+        // for a dark Window that yields near-black, making any QSS rule using
+        // `palette(mid)` (subtle labels, char counts, rulers) invisible.
+        palette.setColor(QPalette::Mid,             QColor(140, 140, 140));
+        palette.setColor(QPalette::Midlight,        QColor(80, 80, 80));
         palette.setColor(QPalette::Disabled, QPalette::Text,            QColor(120, 120, 120));
         palette.setColor(QPalette::Disabled, QPalette::ButtonText,      QColor(120, 120, 120));
         palette.setColor(QPalette::Disabled, QPalette::WindowText,      QColor(120, 120, 120));
@@ -746,6 +755,8 @@ void NotepadNextApplication::applyTheme()
         palette.setColor(QPalette::Link,            QColor(0, 102, 204));
         palette.setColor(QPalette::Highlight,       QColor(48, 140, 198));
         palette.setColor(QPalette::HighlightedText, Qt::white);
+        palette.setColor(QPalette::Mid,             QColor(140, 140, 140));
+        palette.setColor(QPalette::Midlight,        QColor(220, 220, 220));
         palette.setColor(QPalette::Disabled, QPalette::Text,            QColor(160, 160, 160));
         palette.setColor(QPalette::Disabled, QPalette::ButtonText,      QColor(160, 160, 160));
         palette.setColor(QPalette::Disabled, QPalette::WindowText,      QColor(160, 160, 160));
