@@ -38,6 +38,12 @@
 #include <QToolTip>
 #include <QVBoxLayout>
 
+// Deprecated as of the multi-workspace refactor. The authoritative state now lives
+// in FolderAsWorkspace/Workspaces (list) and FolderAsWorkspace/ActiveWorkspace
+// (path), both managed by MainWindow. This key is read once at app startup by
+// NotepadNextApplication::init() as a one-shot migration source when the new
+// list is empty, and is no longer written to from anywhere. The value left on
+// disk from older versions is kept untouched for theoretical downgrade safety.
 ApplicationSetting<QString> rootPathSetting{"FolderAsWorkspace/RootPath"};
 
 namespace {
@@ -98,8 +104,8 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(QWidget *parent) :
 
     connect(ui->tabs, &QTabWidget::currentChanged, this, &FolderAsWorkspaceDock::onTabChanged);
 
-    ApplicationSettings settings;
-    setRootPath(settings.get(rootPathSetting));
+    // The initial dock starts empty; MainWindow::restoreOpenWorkspaces assigns
+    // Workspaces[0] into it via the vacant-reuse path in openFolderAsWorkspacePath.
 }
 
 FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget *parent) :
@@ -154,9 +160,6 @@ FolderAsWorkspaceDock::~FolderAsWorkspaceDock()
 
 void FolderAsWorkspaceDock::setRootPath(const QString dir)
 {
-    ApplicationSettings settings;
-    settings.set(rootPathSetting, dir);
-
     model->setRootPath(dir);
     ui->treeView->setRootIndex(model->index(dir));
 

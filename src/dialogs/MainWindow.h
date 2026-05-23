@@ -131,6 +131,7 @@ public slots:
 
     void restoreWindowState();
     void restoreOpenWorkspaces();
+    void raiseSavedActiveWorkspace();
 
     void switchToEditor(const ScintillaNext *editor);
 

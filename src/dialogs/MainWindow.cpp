@@ -1600,6 +1600,13 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
 
     auto *dock = new FolderAsWorkspaceDock(dir, this);
     static int extraIdx = 0;
+    // Counter-based name is stable across sessions for the steady-state spawn order
+    // (initial dock takes Workspaces[0], extras take Workspaces[1..N] in order). Known
+    // limitation: closing a non-last workspace mid-session then restarting shifts the
+    // counter relative to the saved layout, which causes the remaining workspaces' tab
+    // positions to drift. The active workspace is still raised correctly because
+    // raiseSavedActiveWorkspace() re-raises by path after restoreWindowState. If this
+    // drift ever becomes a real user complaint, switch to qHash(rootPath)-based names.
     dock->setObjectName(QStringLiteral("FolderAsWorkspaceDock_extra_%1").arg(++extraIdx));
     dock->setAttribute(Qt::WA_DeleteOnClose, true);
 
@@ -1661,7 +1668,6 @@ void MainWindow::restoreOpenWorkspaces()
     // runs — that way their tab positions get restored too.
     ApplicationSettings *settings = app->getSettings();
     const QStringList savedWorkspaces = settings->value("FolderAsWorkspace/Workspaces").toStringList();
-    const QString activePath = settings->value("FolderAsWorkspace/ActiveWorkspace").toString();
 
     for (const QString &path : savedWorkspaces) {
         if (path.isEmpty()) continue;
@@ -1669,16 +1675,27 @@ void MainWindow::restoreOpenWorkspaces()
         // the initial one, which loaded its path from the legacy singular setting).
         openFolderAsWorkspacePath(path);
     }
+}
 
-    if (!activePath.isEmpty()) {
-        const QString cleanedActive = QDir::cleanPath(activePath);
-        for (FolderAsWorkspaceDock *d : findChildren<FolderAsWorkspaceDock *>()) {
-            if (QDir::cleanPath(d->rootPath()) == cleanedActive) {
-                m_activeWorkspace = d;
-                CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
-                d->raise();
-                break;
-            }
+void MainWindow::raiseSavedActiveWorkspace()
+{
+    // Defense-in-depth on top of QMainWindow::restoreState: the saved windowState
+    // only carries "which tab was raised" if the user actually closed the app with
+    // it raised, and the lookup is keyed by objectName — which can drift if the
+    // user closed a non-last workspace mid-session (see the comment on the extra
+    // dock objectName). Re-raise by rootPath so the active workspace sticks.
+    ApplicationSettings *settings = app->getSettings();
+    const QString activePath = settings->value("FolderAsWorkspace/ActiveWorkspace").toString();
+    if (activePath.isEmpty()) return;
+
+    const QString cleanedActive = QDir::cleanPath(activePath);
+    for (FolderAsWorkspaceDock *d : findChildren<FolderAsWorkspaceDock *>()) {
+        if (QDir::cleanPath(d->rootPath()) == cleanedActive) {
+            m_activeWorkspace = d;
+            CrashContext::setActiveWorkspaceRoot(currentWorkspaceRoot());
+            d->setVisible(true);
+            d->raise();
+            break;
         }
     }
 }

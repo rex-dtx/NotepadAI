@@ -268,11 +268,31 @@ bool NotepadNextApplication::init()
 
     const bool isNewWindow = parser.isSet("new-window");
 
-    if (!isNewWindow && settings->restorePreviousSession()) {
-        PROFILE_SCOPE("NotepadNextApplication::restoreSession");
-        qInfo("Restoring previous session");
+    if (!isNewWindow) {
+        // One-shot migration from the pre-multi-workspace single-folder setting.
+        // Builds before the multi-workspace refactor only persisted
+        // FolderAsWorkspace/RootPath; seed the new Workspaces list from it so
+        // users upgrading don't lose their open folder. After the first save
+        // following migration, Workspaces becomes authoritative and the legacy
+        // key is no longer read or written.
+        if (settings->value("FolderAsWorkspace/Workspaces").toStringList().isEmpty()) {
+            const QString legacyRoot = settings->value("FolderAsWorkspace/RootPath").toString();
+            if (!legacyRoot.isEmpty()) {
+                settings->setValue("FolderAsWorkspace/Workspaces", QStringList{legacyRoot});
+            }
+        }
 
-        sessionManager->loadSession(window);
+        if (settings->restorePreviousSession()) {
+            PROFILE_SCOPE("NotepadNextApplication::restoreSession");
+            qInfo("Restoring previous session");
+
+            sessionManager->loadSession(window);
+        }
+
+        // Workspaces always restore (matching the pre-multi-workspace behavior
+        // where the single open folder was always reopened), independent of the
+        // editor-session setting. --new-window instances skip this entirely since
+        // they are ephemeral by design.
         window->restoreOpenWorkspaces();
     }
 
@@ -303,6 +323,10 @@ bool NotepadNextApplication::init()
     {
         PROFILE_SCOPE("NotepadNextApplication::restoreWindowState");
         window->restoreWindowState();
+    }
+
+    if (!isNewWindow) {
+        window->raiseSavedActiveWorkspace();
     }
 
     // Check this after restoring the state, as the state contains the previous visibility state of the FAW dock
