@@ -67,6 +67,14 @@ public:
     QString detectLanguageFromExtension(const QString &extension, const QString &fileName = QString()) const;
     QString detectLanguageFromContents(ScintillaNext *editor) const;
 
+    // Editor-free language detection from a (possibly relative) file path.
+    // Used by GitDiffSyntaxMapper which has no ScintillaNext to attach to.
+    QString detectLanguageFromPath(const QString &relPath) const;
+
+    // Returns the Lexilla lexer name for the given language (e.g. "cpp",
+    // "python"). Empty when language is unknown or has no lexer mapping.
+    QString resolveLexerName(const QString &languageName) const;
+
     void sendInfoToPrimaryInstance();
 
     bool isRunningAsAdmin() const;

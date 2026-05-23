@@ -39,7 +39,7 @@ GitDiffCache::Entry makeEntry(int rows = 1)
     r->kinds.fill(GitDiffParser::LineKind::Context, rows);
     r->oldLn.fill(-1, rows);
     r->newLn.fill(-1, rows);
-    return r;
+    return GitDiffCache::Entry{ std::move(r), nullptr };
 }
 
 } // namespace
@@ -83,7 +83,7 @@ void TestGitDiffCache::putAndGet_roundTrip()
 
     auto got = cache.get(42);
     QVERIFY(got);
-    QCOMPARE(got.get(), entry.get());
+    QCOMPARE(got.parsed.get(), entry.parsed.get());
 }
 
 void TestGitDiffCache::put_replacesExisting()
@@ -98,7 +98,7 @@ void TestGitDiffCache::put_replacesExisting()
 
     cache.put(7, second, 200);
     auto got = cache.get(7);
-    QCOMPARE(got.get(), second.get());
+    QCOMPARE(got.parsed.get(), second.parsed.get());
     // Replacement must account for the old footprint being removed first —
     // otherwise sizeBytes would double-count.
     QCOMPARE(cache.sizeBytes(), (qsizetype)((200 * 13) / 10));

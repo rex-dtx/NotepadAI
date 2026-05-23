@@ -21,6 +21,7 @@
 
 #include "GitDiffCache.h"
 #include "GitDiffParser.h"
+#include "GitDiffSyntaxMapper.h"
 #include "GitStatusEntry.h"
 
 #include <QHash>
@@ -35,9 +36,12 @@ class GitController;
 //   1) checks the LRU cache before issuing a process spawn
 //   2) for untracked files, generates a synthetic diff from disk content
 //   3) clears the cache when status changes
+//   4) computes the syntax overlay (lex + word-diff) sync on the UI thread
+//      once the diff bytes arrive, caching it alongside the parsed result.
 //
-// Emits parsedReady when a parsed Result is ready to render (either from cache,
-// from a completed git diff, or from on-disk synthesis).
+// Emits parsedReady when a parsed Result (with optional overlay) is ready
+// to render (from cache, from a completed git diff, or from on-disk
+// synthesis).
 class GitDiffFetcher : public QObject
 {
     Q_OBJECT
@@ -52,7 +56,8 @@ public:
 
 signals:
     void parsedReady(const QString &relPath, bool stagedSide,
-                     const std::shared_ptr<const GitDiffParser::Result> &parsed);
+                     const std::shared_ptr<const GitDiffParser::Result> &parsed,
+                     const std::shared_ptr<const GitDiffSyntaxMapper::Overlay> &overlay);
     void failed(const QString &relPath, bool stagedSide, const QString &message);
 
 private slots:
@@ -70,6 +75,12 @@ private:
         GitStatusEntry entry;
     };
     QHash<QString, Pending> m_inflight;   // keyed by relPath
+
+    // Reusable scratch for token-LCS / DP table / token intern map. Auto-
+    // shrinks when peak usage drops below 25% of the buffer. Lives here so
+    // its worst-case buffers are freed when the fetcher (and hence the Git
+    // dock) dies.
+    GitDiffSyntaxMapper::State m_mapperState;
 
     // Generates a synthetic "all added" diff for an untracked file.
     static QByteArray synthDiffForUntracked(const QString &repoRoot, const QString &relPath);

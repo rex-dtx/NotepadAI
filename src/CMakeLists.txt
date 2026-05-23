@@ -212,6 +212,8 @@ qt_add_executable(NotepadAI
 	git/GitDiffPalette.h
 	git/GitDiffParser.cpp
 	git/GitDiffParser.h
+	git/GitDiffSyntaxMapper.cpp
+	git/GitDiffSyntaxMapper.h
 	git/GitDiffViewController.cpp
 	git/GitDiffViewController.h
 	git/GitError.h

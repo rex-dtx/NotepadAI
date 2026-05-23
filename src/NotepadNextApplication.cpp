@@ -466,6 +466,28 @@ QString NotepadNextApplication::detectLanguageFromContents(ScintillaNext *editor
     )");
 }
 
+QString NotepadNextApplication::detectLanguageFromPath(const QString &relPath) const
+{
+    if (relPath.isEmpty()) return QStringLiteral("Text");
+    const int slashFwd = relPath.lastIndexOf('/');
+    const int slashBwd = relPath.lastIndexOf('\\');
+    const int slash = slashFwd > slashBwd ? slashFwd : slashBwd;
+    const QString fileName = (slash >= 0) ? relPath.mid(slash + 1) : relPath;
+    const int dot = fileName.lastIndexOf('.');
+    const QString ext = (dot >= 0 && dot < fileName.size() - 1)
+                            ? fileName.mid(dot + 1)
+                            : QString();
+    return detectLanguageFromExtension(ext, fileName);
+}
+
+QString NotepadNextApplication::resolveLexerName(const QString &languageName) const
+{
+    if (languageName.isEmpty()) return QString();
+    getLuaState()->setVariable("languageName", languageName);
+    return getLuaState()->executeAndReturn<QString>(
+        "local L = languages[languageName]; if L then return L.lexer or \"\" else return \"\" end");
+}
+
 void NotepadNextApplication::sendInfoToPrimaryInstance()
 {
     qInfo(Q_FUNC_INFO);

@@ -20,6 +20,7 @@
 #define GIT_DIFF_CACHE_H
 
 #include "GitDiffParser.h"
+#include "GitDiffSyntaxMapper.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -30,14 +31,20 @@
 #include <memory>
 
 // LRU cache for parsed diffs, keyed by (repo, relPath, stagedSide). Stores the
-// fully parsed Result to skip re-parsing on tab re-activation. Cleared en bloc
-// whenever statusUpdated fires — smart invalidation would require extra git
-// spawns to verify blob shas, and the win is negligible compared to the cost.
+// fully parsed Result + the optional syntax overlay to skip re-parsing and
+// re-lexing on tab re-activation. Cleared en bloc whenever statusUpdated
+// fires — smart invalidation would require extra git spawns to verify blob
+// shas, and the win is negligible compared to the cost.
 class GitDiffCache
 {
 public:
     using Key = quint64;   // xxHash64 of "repo\0relPath\0staged?"
-    using Entry = std::shared_ptr<const GitDiffParser::Result>;
+
+    struct Entry {
+        std::shared_ptr<const GitDiffParser::Result> parsed;
+        std::shared_ptr<const GitDiffSyntaxMapper::Overlay> overlay;  // may be null
+        explicit operator bool() const { return static_cast<bool>(parsed); }
+    };
 
     explicit GitDiffCache(qsizetype capacityBytes = 50 * 1024 * 1024);
 

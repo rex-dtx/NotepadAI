@@ -1502,8 +1502,10 @@ void MainWindow::openFileList(const QStringList &fileNames)
 
 bool MainWindow::checkEditorsBeforeClose(const QVector<ScintillaNext *> &editors)
 {
+    EditorManager *em = app->getEditorManager();
     QVector<ScintillaNext *> unsaved;
     for (auto *e : editors) {
+        if (em->isDiffView(e)) continue;
         if (!e->isSavedToDisk()) unsaved.append(e);
     }
 

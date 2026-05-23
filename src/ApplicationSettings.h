@@ -133,6 +133,8 @@ public:
     DEFINE_SETTING(ShellCommand, shellCommand, QString)
     DEFINE_SETTING(TerminalFont, terminalFont, QString)
 
+    DEFINE_SETTING(SyntaxHighlightDiffEnabled, syntaxHighlightDiffEnabled, bool)
+
 #ifndef NDEBUG
     DEFINE_SETTING(ShutdownDiagnosticsEnabled, shutdownDiagnosticsEnabled, bool)
 #endif

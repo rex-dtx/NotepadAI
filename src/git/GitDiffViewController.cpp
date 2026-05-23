@@ -94,11 +94,13 @@ void GitDiffViewController::updatePreviewTitle(const QString &relPath, bool stag
 }
 
 void GitDiffViewController::onParsedReady(const QString &relPath, bool stagedSide,
-                                          const std::shared_ptr<const GitDiffParser::Result> &parsed)
+                                          const std::shared_ptr<const GitDiffParser::Result> &parsed,
+                                          const std::shared_ptr<const GitDiffSyntaxMapper::Overlay> &overlay)
 {
     if (relPath != m_currentRelPath || stagedSide != m_currentStaged) return; // stale
     if (!m_previewEditor) return;
-    GitDiffPainter::render(m_previewEditor, *parsed);
+    GitDiffPainter::render(m_previewEditor, *parsed, overlay.get(),
+                           GitDiffPalette::current(m_isDark));
     emit diffRendered(m_previewEditor);
 }
 

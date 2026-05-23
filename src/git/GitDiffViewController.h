@@ -20,6 +20,7 @@
 #define GIT_DIFF_VIEW_CONTROLLER_H
 
 #include "GitDiffParser.h"
+#include "GitDiffSyntaxMapper.h"
 #include "GitStatusEntry.h"
 
 #include <QObject>
@@ -66,7 +67,8 @@ signals:
 
 private slots:
     void onParsedReady(const QString &relPath, bool stagedSide,
-                       const std::shared_ptr<const GitDiffParser::Result> &parsed);
+                       const std::shared_ptr<const GitDiffParser::Result> &parsed,
+                       const std::shared_ptr<const GitDiffSyntaxMapper::Overlay> &overlay);
     void onFetchFailed(const QString &relPath, bool stagedSide, const QString &message);
 
 private:

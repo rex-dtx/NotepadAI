@@ -59,11 +59,16 @@ const GitDiffPalette &GitDiffPalette::dark()
         x.fgPlus        = QColor(0x3F, 0xB9, 0x50);
         x.fgMinus       = QColor(0xF8, 0x51, 0x49);
 
-        // GitHub dark diff backgrounds (subtle, alpha-blended on #0d1117)
-        x.bgAddLine     = QColor(0x03, 0x3A, 0x16);   // #033a16
-        x.bgDelLine     = QColor(0x67, 0x06, 0x0C);   // #67060c
-        x.bgAddWord     = QColor(0x1F, 0x6F, 0x2C);   // #1f6f2c
-        x.bgDelWord     = QColor(0xAA, 0x09, 0x14);   // #aa0914
+        // GitHub dark diff backgrounds (subtle, alpha-blended on #0d1117).
+        // Line bg: rgba(46,160,67,0.15) / rgba(248,81,73,0.15) over canvas.
+        // Word bg: rgba(46,160,67,0.40) / rgba(248,81,73,0.40) composed over
+        //          the line bg (NOT over canvas) — that's how GitHub stacks
+        //          the layers in the browser. Pre-blend here because our
+        //          indicator paints opaque on top of the marker.
+        x.bgAddLine     = QColor(0x12, 0x26, 0x1E);   // #12261e
+        x.bgDelLine     = QColor(0x30, 0x1B, 0x1F);   // #301b1f
+        x.bgAddWord     = QColor(0x1D, 0x57, 0x2D);   // #1d572d
+        x.bgDelWord     = QColor(0x80, 0x31, 0x30);   // #803130
         x.fgHunkHeader  = QColor(0x8B, 0x94, 0x9E);
         x.bgHunkHeader  = QColor(0x38, 0x8B, 0xFD, 0x40); // accent.muted alpha
         x.fgGutter      = QColor(0x6E, 0x76, 0x81);

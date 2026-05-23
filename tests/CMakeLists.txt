@@ -475,3 +475,28 @@ target_sources(test_git_diff_cache PRIVATE
     ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.h
 )
 add_test(NAME GitDiffCache COMMAND test_git_diff_cache)
+
+# --- GitDiffSyntaxMapper word-span alignment: positional contract between the
+#     mapper's WordSpans and the painter's indicator placement, plus a UTF-8
+#     boundary invariant. The previous N:M code concatenated paired blocks and
+#     ran a single outer LCS — repeating per-line patterns mis-projected the
+#     spans ~4 chars LEFT. The shift-best heuristic in pairAndEmit closes that.
+qt_add_executable(test_git_diff_word_span_alignment test_git_diff_word_span_alignment.cpp)
+target_include_directories(test_git_diff_word_span_alignment PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/git
+    ${CMAKE_SOURCE_DIR}/thirdparty/scintilla/include
+    ${CMAKE_SOURCE_DIR}/thirdparty/lexilla/include
+)
+target_link_libraries(test_git_diff_word_span_alignment PRIVATE
+    Qt6::Core Qt6::Test lexilla
+)
+target_sources(test_git_diff_word_span_alignment PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffParser.h
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffSyntaxMapper.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitDiffSyntaxMapper.h
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.h
+)
+add_test(NAME GitDiffWordSpanAlignment COMMAND test_git_diff_word_span_alignment)

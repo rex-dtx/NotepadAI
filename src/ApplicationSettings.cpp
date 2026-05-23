@@ -89,6 +89,8 @@ CREATE_SETTING(Terminal, TerminalFont, terminalFont, QString, []() {
     return QFontDatabase::systemFont(QFontDatabase::FixedFont).toString();
 })
 
+CREATE_SETTING(Git, SyntaxHighlightDiffEnabled, syntaxHighlightDiffEnabled, bool, true)
+
 #ifndef NDEBUG
 // Debug-only diagnostics: emit shutdown_report.txt on clean exit. See
 // ShutdownDiagnostics.{h,cpp} and "Help -> Debug -> Shutdown Diagnostics" toggle.

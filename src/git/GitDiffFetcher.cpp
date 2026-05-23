@@ -18,9 +18,13 @@
 
 #include "GitDiffFetcher.h"
 
+#include "ApplicationSettings.h"
 #include "FileEncodingDetector.h"
 #include "GitController.h"
+#include "GitDiffSyntaxMapper.h"
+#include "NotepadNextApplication.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -97,7 +101,7 @@ void GitDiffFetcher::request(const GitStatusEntry &entry)
     const QString repo = m_controller->currentRepo();
     const GitDiffCache::Key key = GitDiffCache::keyFor(repo, entry.relPath, entry.stagedSide);
     if (auto cached = m_cache.get(key)) {
-        emit parsedReady(entry.relPath, entry.stagedSide, cached);
+        emit parsedReady(entry.relPath, entry.stagedSide, cached.parsed, cached.overlay);
         return;
     }
 
@@ -132,10 +136,43 @@ void GitDiffFetcher::onDiffReady(const QString &relPath, bool stagedSide, const 
     if (it->stagedSide != stagedSide) return;
 
     auto parsed = std::make_shared<const GitDiffParser::Result>(GitDiffParser::parse(diff));
+
+    // Compute the syntax overlay sync on the UI thread. Empty/null overlay
+    // means the painter falls back to fixed-style rendering (solid line
+    // backgrounds, no token colors). Honor the user opt-out setting.
+    std::shared_ptr<const GitDiffSyntaxMapper::Overlay> overlay;
+    if (!parsed->isBinary && !parsed->kinds.isEmpty()) {
+        auto *app = qobject_cast<NotepadNextApplication*>(QCoreApplication::instance());
+        bool enabled = true;
+        if (app && app->getSettings()) {
+            enabled = app->getSettings()->syntaxHighlightDiffEnabled();
+        }
+        if (enabled && app) {
+            // Resolve lexers from the entry paths. For renames the OLD side
+            // uses origRelPath if present; otherwise both sides use relPath.
+            const GitStatusEntry &entry = it->entry;
+            const QString oldPath = entry.origRelPath.isEmpty() ? relPath : entry.origRelPath;
+            const QString newPath = relPath;
+            const QString oldLang = app->detectLanguageFromPath(oldPath);
+            const QString newLang = app->detectLanguageFromPath(newPath);
+            const QString oldLex  = app->resolveLexerName(oldLang);
+            const QString newLex  = app->resolveLexerName(newLang);
+
+            GitDiffSyntaxMapper::Input in;
+            in.parsed = parsed.get();
+            in.oldLexerName = oldLex;
+            in.newLexerName = newLex;
+            auto computed = GitDiffSyntaxMapper::map(in, m_mapperState);
+            if (computed.ok) {
+                overlay = std::make_shared<const GitDiffSyntaxMapper::Overlay>(std::move(computed));
+            }
+        }
+    }
+
     const auto key = GitDiffCache::keyFor(m_controller->currentRepo(), relPath, stagedSide);
-    m_cache.put(key, parsed, diff.size());
+    m_cache.put(key, GitDiffCache::Entry{ parsed, overlay }, diff.size());
     m_inflight.erase(it);
-    emit parsedReady(relPath, stagedSide, parsed);
+    emit parsedReady(relPath, stagedSide, parsed, overlay);
 }
 
 void GitDiffFetcher::onDiffFailed(const QString &relPath, bool stagedSide, const QString &message)
