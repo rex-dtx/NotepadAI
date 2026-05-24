@@ -40,6 +40,7 @@ public:
     struct Record {
         QByteArray sha;        // 40 hex chars
         QString    author;
+        QString    authorMail;
         qint64     authorTime = 0;
         QString    summary;
         bool       boundary   = false; // root commit (no parent)

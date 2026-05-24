@@ -56,6 +56,7 @@ public:
 signals:
     void editorCreated(ScintillaNext *editor);
     void editorClosed(ScintillaNext *editor);
+    void blameCommitClicked(const QByteArray &sha);
 
 private:
     void setupEditor(ScintillaNext *editor);

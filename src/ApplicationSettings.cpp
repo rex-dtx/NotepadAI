@@ -99,7 +99,7 @@ CREATE_SETTING(Git, SyntaxHighlightDiffEnabled, syntaxHighlightDiffEnabled, bool
 // UI in this proposal; users who want it off edit the INI directly.
 CREATE_SETTING(Editor, FileTreeGitColors, fileTreeGitColors, bool, true)
 CREATE_SETTING(Editor, GitGutterEnabled, gitGutterEnabled, bool, true)
-CREATE_SETTING(Editor, InlineBlameEnabled, inlineBlameEnabled, bool, false)
+CREATE_SETTING(Editor, InlineBlameEnabled, inlineBlameEnabled, bool, true)
 CREATE_SETTING(Editor, MinimapEnabled, minimapEnabled, bool, false)
 
 #ifndef NDEBUG

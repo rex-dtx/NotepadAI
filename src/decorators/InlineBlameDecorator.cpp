@@ -27,10 +27,13 @@
 #include <QColor>
 #include <QDateTime>
 #include <QDir>
+#include <QEvent>
 #include <QFileInfo>
+#include <QMouseEvent>
 #include <QProcess>
 #include <QString>
 #include <QTimer>
+#include <QToolTip>
 
 namespace {
 
@@ -90,6 +93,8 @@ InlineBlameDecorator::InlineBlameDecorator(ScintillaNext *editor)
     connect(m_caretDebounce, &QTimer::timeout,
             this, &InlineBlameDecorator::onCaretDebounced);
 
+    editor->installEventFilter(this);
+
     if (auto *app = qobject_cast<NotepadNextApplication *>(qApp)) {
         connect(app, &NotepadNextApplication::effectiveThemeChanged,
                 this, &InlineBlameDecorator::onThemeChanged);
@@ -110,6 +115,7 @@ void InlineBlameDecorator::setupEolAnnotationOnce()
     if (m_annotStyleReady || editor == nullptr) return;
     editor->eOLAnnotationSetVisible(1); // EOLANNOTATION_STANDARD
     editor->eOLAnnotationSetStyleOffset(kEolStyleOffset);
+    editor->setMouseDwellTime(500);
     applyEolPalette();
     m_annotStyleReady = true;
 }
@@ -160,6 +166,17 @@ void InlineBlameDecorator::notify(const Scintilla::NotificationData *pscn)
         // Disk now matches buffer (saved). Blame can be re-fetched.
         startBlameFetch();
         break;
+    case Notification::DwellStart: {
+        const QPoint local(static_cast<int>(pscn->x), static_cast<int>(pscn->y));
+        if (isPointOnAnnotation(local)) {
+            const QPoint global = editor->mapToGlobal(local);
+            showBlameTooltip(global);
+        }
+        break;
+    }
+    case Notification::DwellEnd:
+        QToolTip::hideText();
+        break;
     default:
         break;
     }
@@ -178,6 +195,81 @@ void InlineBlameDecorator::onCaretDebounced()
 void InlineBlameDecorator::onThemeChanged()
 {
     if (m_annotStyleReady) applyEolPalette();
+}
+
+bool InlineBlameDecorator::isPointOnAnnotation(const QPoint &localPos) const
+{
+    if (m_annotatedLine < 0 || !m_blameValid || editor == nullptr) return false;
+
+    const auto pos = editor->positionFromPointClose(localPos.x(), localPos.y());
+    if (pos != -1) return false;
+
+    const int clickLine = static_cast<int>(editor->lineFromPosition(
+        editor->positionFromPoint(localPos.x(), localPos.y())));
+    if (clickLine != m_annotatedLine) return false;
+
+    const int lineEndPos = static_cast<int>(editor->lineEndPosition(clickLine));
+    const int lineEndX = static_cast<int>(editor->pointXFromPosition(lineEndPos));
+    return localPos.x() > lineEndX;
+}
+
+bool InlineBlameDecorator::eventFilter(QObject *obj, QEvent *event)
+{
+    Q_UNUSED(obj)
+    if (!isEnabled() || editor == nullptr) return false;
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton && isPointOnAnnotation(me->pos())) {
+            handleAnnotationClick();
+            return true;
+        }
+    }
+    return false;
+}
+
+void InlineBlameDecorator::handleAnnotationClick()
+{
+    if (m_annotatedLine < 0 || !m_blameValid) return;
+
+    const GitBlameParser::Line *match = nullptr;
+    for (const auto &ln : m_blame.lines) {
+        if (ln.lineIdx == m_annotatedLine) { match = &ln; break; }
+    }
+    if (!match) return;
+    const auto &rec = m_blame.records.at(match->recordIdx);
+    if (rec.sha.isEmpty()) return;
+
+    emit commitClicked(rec.sha);
+}
+
+void InlineBlameDecorator::showBlameTooltip(const QPoint &globalPos)
+{
+    if (m_annotatedLine < 0 || !m_blameValid) return;
+
+    const GitBlameParser::Line *match = nullptr;
+    for (const auto &ln : m_blame.lines) {
+        if (ln.lineIdx == m_annotatedLine) { match = &ln; break; }
+    }
+    if (!match) return;
+    const auto &rec = m_blame.records.at(match->recordIdx);
+    if (rec.sha.isEmpty()) return;
+
+    const QString dateStr = QDateTime::fromSecsSinceEpoch(rec.authorTime)
+                                .toString(QStringLiteral("yyyy-MM-dd HH:mm"));
+    const QString shortSha = QString::fromLatin1(rec.sha.left(8));
+    const QString authorDisplay = rec.author.isEmpty()
+        ? QStringLiteral("?") : rec.author.toHtmlEscaped();
+    const QString emailDisplay = rec.authorMail.toHtmlEscaped();
+    const QString summaryDisplay = rec.summary.toHtmlEscaped();
+
+    QString html = QStringLiteral(
+        "<p style=\"margin:0;font-weight:bold;\">%1 %2</p>"
+        "<p style=\"margin:4px 0 0 0;\">%3</p>"
+        "<p style=\"margin:8px 0 0 0;color:#888;font-size:small;\">%4 · %5</p>")
+        .arg(authorDisplay, emailDisplay, summaryDisplay, dateStr, shortSha);
+
+    QToolTip::showText(globalPos, html, editor);
 }
 
 void InlineBlameDecorator::refresh()
@@ -349,10 +441,11 @@ void InlineBlameDecorator::renderAtCaretLine()
     }
     const auto &rec = m_blame.records.at(match->recordIdx);
 
-    QString label = QStringLiteral("    %1, %2 • %3")
+    QString label = QStringLiteral("    %1, %2 • %3  ↗ %4")
         .arg(rec.author.isEmpty() ? QStringLiteral("?") : rec.author,
              humanizeRelative(rec.authorTime),
-             truncate(rec.summary, kMaxSummaryChars));
+             truncate(rec.summary, kMaxSummaryChars),
+             QString::fromLatin1(rec.sha.left(8)));
 
     setupEolAnnotationOnce();
 

@@ -145,8 +145,8 @@ public:
     DEFINE_SETTING(GitGutterEnabled, gitGutterEnabled, bool)
 
     // Inline git-blame annotation at the caret's line (EOL annotation
-    // "Author, when • summary"). Off by default — many users find it
-    // distracting; opt-in via INI to start. Storage key Editor/InlineBlameEnabled.
+    // "Author, when • summary ↗ sha"). On by default. Toggle via
+    // Ctrl+Alt+B or INI. Storage key Editor/InlineBlameEnabled.
     DEFINE_SETTING(InlineBlameEnabled, inlineBlameEnabled, bool)
 
     // Editor minimap (VS Code / Sublime-style thumbnail strip on the right).

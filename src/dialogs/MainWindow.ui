@@ -311,6 +311,7 @@
     <addaction name="menuShowSymbol"/>
     <addaction name="menuZoom"/>
     <addaction name="actionWordWrap"/>
+    <addaction name="actionToggleInlineBlame"/>
     <addaction name="separator"/>
     <addaction name="actionFoldAll"/>
     <addaction name="actionUnfoldAll"/>
@@ -886,6 +887,17 @@
    </property>
    <property name="text">
     <string>Word Wrap</string>
+   </property>
+  </action>
+  <action name="actionToggleInlineBlame">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Inline Git Blame</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Alt+B</string>
    </property>
   </action>
   <action name="actionRestoreRecentlyClosedFile">

@@ -56,8 +56,14 @@ public:
     // settings toggle flips back on.
     void refresh();
 
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
 public slots:
     void notify(const Scintilla::NotificationData *pscn) override;
+
+signals:
+    void commitClicked(const QByteArray &sha);
 
 private slots:
     void onTopLevelFinished();
@@ -76,6 +82,9 @@ private:
     void scheduleCaretRepaint();
     void startTopLevelDiscovery();
     void startBlameFetch();
+    void handleAnnotationClick();
+    void showBlameTooltip(const QPoint &globalPos);
+    bool isPointOnAnnotation(const QPoint &localPos) const;
 
     QTimer *m_caretDebounce = nullptr;
     QProcess *m_topProc = nullptr;

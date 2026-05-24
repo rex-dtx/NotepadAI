@@ -805,6 +805,19 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connect(app->getSettings(), &ApplicationSettings::wordWrapChanged, ui->actionWordWrap, &QAction::setChecked);
     connect(ui->actionWordWrap, &QAction::toggled, app->getSettings(), &ApplicationSettings::setWordWrap);
 
+    // Inline Git Blame
+    ui->actionToggleInlineBlame->setChecked(app->getSettings()->inlineBlameEnabled());
+    connect(app->getSettings(), &ApplicationSettings::inlineBlameEnabledChanged, ui->actionToggleInlineBlame, &QAction::setChecked);
+    connect(ui->actionToggleInlineBlame, &QAction::toggled, app->getSettings(), &ApplicationSettings::setInlineBlameEnabled);
+
+    connect(app->getEditorManager(), &EditorManager::blameCommitClicked, this, [this](const QByteArray &sha) {
+        if (auto *dock = m_activeWorkspace.data()) {
+            dock->showGitCommitDetail(sha);
+        } else {
+            QApplication::clipboard()->setText(QString::fromLatin1(sha.left(8)));
+        }
+    });
+
     // Zooming controls all editors simulaneously
     connect(ui->actionZoomIn, &QAction::triggered, this, [=]() {
         for (ScintillaNext *editor : editors()) {

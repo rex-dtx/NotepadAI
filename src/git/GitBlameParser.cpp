@@ -134,6 +134,9 @@ GitBlameParser::Result GitBlameParser::parse(QByteArrayView porcelain)
             if (line.startsWith("author ")) {
                 rec.author = QString::fromUtf8(line.constData() + 7,
                                                line.size() - 7);
+            } else if (line.startsWith("author-mail ")) {
+                rec.authorMail = QString::fromUtf8(line.constData() + 12,
+                                                    line.size() - 12);
             } else if (line.startsWith("author-time ")) {
                 qsizetype pos = 12;
                 rec.authorTime = parseLong(line, pos);

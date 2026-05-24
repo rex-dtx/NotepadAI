@@ -45,9 +45,13 @@ constexpr int kMarkDeleted  = GitGutterMarkerIds::Deleted;
 constexpr int kMargin = 1;
 constexpr int kDebounceMs = 120;
 
-constexpr int kAnnotStyleOffset    = 512;
-constexpr int kAnnotStyleDelRelIdx = 0;
-constexpr int kAnnotStyleDelAbs    = kAnnotStyleOffset + kAnnotStyleDelRelIdx;
+constexpr int kAnnotStyleOffset       = 512;
+constexpr int kAnnotStyleDelRelIdx    = 0;
+constexpr int kAnnotStyleDelWordRelIdx = 1;
+constexpr int kAnnotStyleDelAbs       = kAnnotStyleOffset + kAnnotStyleDelRelIdx;
+constexpr int kAnnotStyleDelWordAbs   = kAnnotStyleOffset + kAnnotStyleDelWordRelIdx;
+
+constexpr int kMaxCharDiffLineLen = 512;
 
 inline int sciColor(const QColor &c)
 {
@@ -73,6 +77,69 @@ QVector<QByteArray> sliceLines(const QByteArray &blob, qint32 startLine, qint32 
         out.append(blob.mid(lineStart, p - lineStart));
         if (p < n) ++p;
         --count;
+    }
+    return out;
+}
+
+// Compute per-character style bytes for an old line paired with a new line.
+// Characters unique to the old line get kAnnotStyleDelWordRelIdx (highlighted);
+// characters shared with the new line keep kAnnotStyleDelRelIdx (base deleted bg).
+// Uses a simple forward/reverse common-prefix/suffix + middle Myers O(ND) for
+// short lines, falling back to full-highlight when lines exceed kMaxCharDiffLineLen.
+QByteArray charDiffStyles(const QByteArray &oldLine, const QByteArray &newLine)
+{
+    const int oLen = oldLine.size();
+    QByteArray styles(oLen, static_cast<char>(kAnnotStyleDelRelIdx));
+    if (oLen == 0) return styles;
+    if (newLine.isEmpty()) {
+        styles.fill(static_cast<char>(kAnnotStyleDelWordRelIdx));
+        return styles;
+    }
+    if (oLen > kMaxCharDiffLineLen || newLine.size() > kMaxCharDiffLineLen) {
+        styles.fill(static_cast<char>(kAnnotStyleDelWordRelIdx));
+        return styles;
+    }
+
+    const char *o = oldLine.constData();
+    const char *n = newLine.constData();
+    const int nLen = newLine.size();
+
+    // Common prefix
+    int prefix = 0;
+    while (prefix < oLen && prefix < nLen && o[prefix] == n[prefix]) ++prefix;
+    // Common suffix (not overlapping prefix)
+    int suffix = 0;
+    while (suffix < (oLen - prefix) && suffix < (nLen - prefix)
+           && o[oLen - 1 - suffix] == n[nLen - 1 - suffix]) ++suffix;
+
+    // Middle section of old line that has no trivial match
+    const int midStart = prefix;
+    const int midEnd   = oLen - suffix;
+
+    if (midStart >= midEnd) return styles; // lines are identical modulo length
+
+    // Mark the middle as changed
+    for (int i = midStart; i < midEnd; ++i)
+        styles[i] = static_cast<char>(kAnnotStyleDelWordRelIdx);
+
+    return styles;
+}
+
+// Extract lines from the live editor buffer at given 0-based line indices.
+QVector<QByteArray> extractBufferLines(ScintillaNext *ed, qint32 startLine, qint32 count)
+{
+    QVector<QByteArray> out;
+    if (!ed || count <= 0) return out;
+    out.reserve(count);
+    const int totalLines = static_cast<int>(ed->lineCount());
+    for (qint32 i = 0; i < count; ++i) {
+        const int ln = startLine + i;
+        if (ln >= totalLines) { out.append(QByteArray()); continue; }
+        QByteArray line = ed->getLine(ln);
+        // Strip trailing EOL
+        while (!line.isEmpty() && (line.back() == '\n' || line.back() == '\r'))
+            line.chop(1);
+        out.append(line);
     }
     return out;
 }
@@ -160,6 +227,9 @@ void GitGutterDecorator::applyAnnotationPalette()
 
     editor->styleSetFore(kAnnotStyleDelAbs, sciColor(p.fgDeleted));
     editor->styleSetBack(kAnnotStyleDelAbs, sciColor(p.bgDelLine));
+
+    editor->styleSetFore(kAnnotStyleDelWordAbs, sciColor(p.fgDeleted));
+    editor->styleSetBack(kAnnotStyleDelWordAbs, sciColor(p.bgDelWord));
 }
 
 void GitGutterDecorator::setupAnnotationStylesIfNeeded()
@@ -241,10 +311,6 @@ void GitGutterDecorator::showHunkInline(int hunkIdx, int clickedLine)
     if (h.oldCount == 0) return;
     if (m_baseBlob.isEmpty()) return;
 
-    // Annotation placement: line BEFORE the hunk's first new-side line.
-    // This puts the deleted content directly above the changed/new lines,
-    // matching Zed's inline diff placement where the old content appears
-    // above the current content.
     const qint32 annotLine = h.newStart > 0 ? h.newStart - 1 : 0;
 
     if (m_annotatedHunkStart == h.newStart) {
@@ -254,6 +320,11 @@ void GitGutterDecorator::showHunkInline(int hunkIdx, int clickedLine)
 
     const QVector<QByteArray> deleted = sliceLines(m_baseBlob, h.oldStart, h.oldCount);
     if (deleted.isEmpty()) return;
+
+    // Extract new-side lines from the live buffer for character-level diff.
+    const QVector<QByteArray> newLines = (h.newCount > 0)
+        ? extractBufferLines(editor, h.newStart, h.newCount)
+        : QVector<QByteArray>();
 
     QByteArray text;
     QByteArray styles;
@@ -267,7 +338,13 @@ void GitGutterDecorator::showHunkInline(int hunkIdx, int clickedLine)
         }
         const QByteArray &ln = deleted.at(i);
         text.append(ln);
-        styles.append(QByteArray(ln.size(), static_cast<char>(kAnnotStyleDelRelIdx)));
+
+        // Pair old line i with new line i (if available) for char diff.
+        if (i < newLines.size() && !newLines.at(i).isEmpty()) {
+            styles.append(charDiffStyles(ln, newLines.at(i)));
+        } else {
+            styles.append(QByteArray(ln.size(), static_cast<char>(kAnnotStyleDelRelIdx)));
+        }
     }
 
     setupAnnotationStylesIfNeeded();

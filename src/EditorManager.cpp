@@ -361,6 +361,8 @@ void EditorManager::setupEditor(ScintillaNext *editor)
 
     InlineBlameDecorator *blame = new InlineBlameDecorator(editor);
     blame->setEnabled(settings->inlineBlameEnabled());
+    connect(blame, &InlineBlameDecorator::commitClicked,
+            this, &EditorManager::blameCommitClicked);
     if (settings->inlineBlameEnabled() && editor->isFile()) {
         blame->refresh();
     }
