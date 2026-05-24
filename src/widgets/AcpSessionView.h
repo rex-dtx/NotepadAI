@@ -163,6 +163,7 @@ private:
     // Slash-command completion popup.
     void showCommandPopup();
     void hideCommandPopup();
+    void resizeCommandPopup();
     void filterCommandPopup();
     void acceptCommandCompletion();
 

@@ -112,6 +112,16 @@ public:
     std::function<bool(QKeyEvent *)> onKeyFilter;
 
 protected:
+    bool event(QEvent *e) override
+    {
+        if (e->type() == QEvent::KeyPress) {
+            auto *ke = static_cast<QKeyEvent *>(e);
+            if (ke->key() == Qt::Key_Tab && onKeyFilter && onKeyFilter(ke))
+                return true;
+        }
+        return QPlainTextEdit::event(e);
+    }
+
     void keyPressEvent(QKeyEvent *event) override
     {
         if (onKeyFilter && onKeyFilter(event))
@@ -404,14 +414,34 @@ void AcpSessionView::buildUi()
         if (!m_commandPopup || !m_commandPopup->isVisible())
             return false;
         switch (ke->key()) {
-        case Qt::Key_Up:
-            if (m_commandPopup->currentRow() > 0)
-                m_commandPopup->setCurrentRow(m_commandPopup->currentRow() - 1);
+        case Qt::Key_Up: {
+            int cur = m_commandPopup->currentRow();
+            int found = -1;
+            for (int i = cur - 1; i >= 0; --i) {
+                if (!m_commandPopup->item(i)->isHidden()) { found = i; break; }
+            }
+            if (found < 0) {
+                for (int i = m_commandPopup->count() - 1; i > cur; --i) {
+                    if (!m_commandPopup->item(i)->isHidden()) { found = i; break; }
+                }
+            }
+            if (found >= 0) m_commandPopup->setCurrentRow(found);
             return true;
-        case Qt::Key_Down:
-            if (m_commandPopup->currentRow() < m_commandPopup->count() - 1)
-                m_commandPopup->setCurrentRow(m_commandPopup->currentRow() + 1);
+        }
+        case Qt::Key_Down: {
+            int cur = m_commandPopup->currentRow();
+            int found = -1;
+            for (int i = cur + 1; i < m_commandPopup->count(); ++i) {
+                if (!m_commandPopup->item(i)->isHidden()) { found = i; break; }
+            }
+            if (found < 0) {
+                for (int i = 0; i < cur; ++i) {
+                    if (!m_commandPopup->item(i)->isHidden()) { found = i; break; }
+                }
+            }
+            if (found >= 0) m_commandPopup->setCurrentRow(found);
             return true;
+        }
         case Qt::Key_Return:
         case Qt::Key_Enter:
         case Qt::Key_Tab:
@@ -1600,19 +1630,30 @@ void AcpSessionView::showCommandPopup()
         item->setData(Qt::UserRole, cmd.name);
     }
     m_commandPopup->setCurrentRow(0);
-
-    const int rowH = m_commandPopup->sizeHintForRow(0);
-    const int visibleRows = qMin(cmds.size(), 8);
-    const int popupH = rowH * visibleRows + 4;
-    const QPoint inputTopLeft = m_input->mapToGlobal(QPoint(0, 0));
-    m_commandPopup->setGeometry(inputTopLeft.x(), inputTopLeft.y() - popupH,
-                                m_input->width(), popupH);
     m_commandPopup->show();
+    resizeCommandPopup();
 }
 
 void AcpSessionView::hideCommandPopup()
 {
     if (m_commandPopup) m_commandPopup->hide();
+}
+
+void AcpSessionView::resizeCommandPopup()
+{
+    if (!m_commandPopup || !m_commandPopup->isVisible() || !m_input) return;
+    int visibleCount = 0;
+    for (int i = 0; i < m_commandPopup->count(); ++i) {
+        if (!m_commandPopup->item(i)->isHidden()) ++visibleCount;
+    }
+    if (visibleCount == 0) { hideCommandPopup(); return; }
+
+    const int rowH = m_commandPopup->sizeHintForRow(0);
+    const int rows = qMin(visibleCount, 8);
+    const int popupH = rowH * rows + 4;
+    const QPoint inputTopLeft = m_input->mapToGlobal(QPoint(0, 0));
+    m_commandPopup->setGeometry(inputTopLeft.x(), inputTopLeft.y() - popupH,
+                                m_input->width(), popupH);
 }
 
 void AcpSessionView::filterCommandPopup()
@@ -1648,6 +1689,7 @@ void AcpSessionView::filterCommandPopup()
     } else {
         if (m_commandPopup->currentItem() && m_commandPopup->currentItem()->isHidden())
             m_commandPopup->setCurrentRow(firstVisible);
+        resizeCommandPopup();
     }
 }
 
