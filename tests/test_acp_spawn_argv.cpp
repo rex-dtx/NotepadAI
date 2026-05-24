@@ -22,6 +22,7 @@ private slots:
     void posixUsesShellEnv();
     void posixFallsBackToBinSh();
     void windowsCmd();
+    void windowsCmdSpacedPath();
     void windowsPs1();
     void windowsExe();
 };
@@ -33,13 +34,14 @@ void TestAcpSpawnArgv::posixBasic()
                                          true);
     // CI hosts may have arbitrary $SHELL — the only guarantee is non-empty
     // program plus the -lc flag plus the quoted command line.
-    QVERIFY(!p.first.isEmpty());
-    QCOMPARE(p.second.size(), 2);
-    QCOMPARE(p.second.at(0), QStringLiteral("-lc"));
+    QVERIFY(!p.program.isEmpty());
+    QVERIFY(p.nativeArgumentsLine.isEmpty());
+    QCOMPARE(p.arguments.size(), 2);
+    QCOMPARE(p.arguments.at(0), QStringLiteral("-lc"));
     // npx '-y' 'x'
-    QVERIFY(p.second.at(1).contains(QStringLiteral("npx")));
-    QVERIFY(p.second.at(1).contains(QStringLiteral("'-y'")));
-    QVERIFY(p.second.at(1).contains(QStringLiteral("'x'")));
+    QVERIFY(p.arguments.at(1).contains(QStringLiteral("npx")));
+    QVERIFY(p.arguments.at(1).contains(QStringLiteral("'-y'")));
+    QVERIFY(p.arguments.at(1).contains(QStringLiteral("'x'")));
 }
 
 void TestAcpSpawnArgv::posixWithSingleQuote()
@@ -48,7 +50,7 @@ void TestAcpSpawnArgv::posixWithSingleQuote()
                                          QStringList{QStringLiteral("a'b")},
                                          true);
     // expect 'a'\''b'
-    QVERIFY(p.second.at(1).contains(QStringLiteral("'a'\\''b'")));
+    QVERIFY(p.arguments.at(1).contains(QStringLiteral("'a'\\''b'")));
 }
 
 void TestAcpSpawnArgv::posixUsesShellEnv()
@@ -61,8 +63,8 @@ void TestAcpSpawnArgv::posixUsesShellEnv()
     auto p = AcpProtocol::buildSpawnArgv(QStringLiteral("npx"),
                                          QStringList{QStringLiteral("a")},
                                          true);
-    QCOMPARE(p.first, QStringLiteral("/usr/bin/zsh"));
-    QCOMPARE(p.second.at(0), QStringLiteral("-lc"));
+    QCOMPARE(p.program, QStringLiteral("/usr/bin/zsh"));
+    QCOMPARE(p.arguments.at(0), QStringLiteral("-lc"));
 
     if (hadShell) {
         qputenv("SHELL", prior);
@@ -80,8 +82,8 @@ void TestAcpSpawnArgv::posixFallsBackToBinSh()
     auto p = AcpProtocol::buildSpawnArgv(QStringLiteral("npx"),
                                          QStringList{QStringLiteral("a")},
                                          true);
-    QCOMPARE(p.first, QStringLiteral("/bin/sh"));
-    QCOMPARE(p.second.at(0), QStringLiteral("-lc"));
+    QCOMPARE(p.program, QStringLiteral("/bin/sh"));
+    QCOMPARE(p.arguments.at(0), QStringLiteral("-lc"));
 
     if (hadShell) {
         qputenv("SHELL", prior);
@@ -94,11 +96,28 @@ void TestAcpSpawnArgv::windowsCmd()
                                          QStringList{QStringLiteral("-y")},
                                          false,
                                          QStringLiteral("C:/x/npx.cmd"));
-    QCOMPARE(p.first, QStringLiteral("cmd"));
-    QCOMPARE(p.second.size(), 3);
-    QCOMPARE(p.second.at(0), QStringLiteral("/C"));
-    QCOMPARE(p.second.at(1), QStringLiteral("C:/x/npx.cmd"));
-    QCOMPARE(p.second.at(2), QStringLiteral("-y"));
+    QCOMPARE(p.program, QStringLiteral("cmd"));
+    QVERIFY(p.arguments.isEmpty());
+    // No spaces in the resolved path → no need to quote it. Args still go through
+    // the Windows quoter; "-y" has no whitespace so it stays bare.
+    QCOMPARE(p.nativeArgumentsLine,
+             QStringLiteral("/D /S /C \"C:/x/npx.cmd -y\""));
+}
+
+void TestAcpSpawnArgv::windowsCmdSpacedPath()
+{
+    // Regression: "C:/Program Files/nodejs/npx.cmd" must end up double-quoted
+    // inside the cmd /C "<line>" wrapper so cmd.exe doesn't fragment on the
+    // space and try to launch "C:/Program".
+    auto p = AcpProtocol::buildSpawnArgv(QStringLiteral("npx"),
+                                         QStringList{QStringLiteral("-y"),
+                                                     QStringLiteral("@zed-industries/codex-acp@latest")},
+                                         false,
+                                         QStringLiteral("C:/Program Files/nodejs/npx.cmd"));
+    QCOMPARE(p.program, QStringLiteral("cmd"));
+    QVERIFY(p.arguments.isEmpty());
+    QCOMPARE(p.nativeArgumentsLine,
+             QStringLiteral("/D /S /C \"\"C:/Program Files/nodejs/npx.cmd\" -y @zed-industries/codex-acp@latest\""));
 }
 
 void TestAcpSpawnArgv::windowsPs1()
@@ -107,12 +126,13 @@ void TestAcpSpawnArgv::windowsPs1()
                                          QStringList{QStringLiteral("a")},
                                          false,
                                          QStringLiteral("C:/x/script.ps1"));
-    QCOMPARE(p.first, QStringLiteral("powershell"));
-    QCOMPARE(p.second.size(), 4);
-    QCOMPARE(p.second.at(0), QStringLiteral("-NoProfile"));
-    QCOMPARE(p.second.at(1), QStringLiteral("-File"));
-    QCOMPARE(p.second.at(2), QStringLiteral("C:/x/script.ps1"));
-    QCOMPARE(p.second.at(3), QStringLiteral("a"));
+    QCOMPARE(p.program, QStringLiteral("powershell"));
+    QVERIFY(p.nativeArgumentsLine.isEmpty());
+    QCOMPARE(p.arguments.size(), 4);
+    QCOMPARE(p.arguments.at(0), QStringLiteral("-NoProfile"));
+    QCOMPARE(p.arguments.at(1), QStringLiteral("-File"));
+    QCOMPARE(p.arguments.at(2), QStringLiteral("C:/x/script.ps1"));
+    QCOMPARE(p.arguments.at(3), QStringLiteral("a"));
 }
 
 void TestAcpSpawnArgv::windowsExe()
@@ -121,8 +141,9 @@ void TestAcpSpawnArgv::windowsExe()
                                          QStringList{QStringLiteral("a"), QStringLiteral("b")},
                                          false,
                                          QStringLiteral("C:/x/tool.exe"));
-    QCOMPARE(p.first, QStringLiteral("C:/x/tool.exe"));
-    QCOMPARE(p.second, (QStringList{QStringLiteral("a"), QStringLiteral("b")}));
+    QCOMPARE(p.program, QStringLiteral("C:/x/tool.exe"));
+    QVERIFY(p.nativeArgumentsLine.isEmpty());
+    QCOMPARE(p.arguments, (QStringList{QStringLiteral("a"), QStringLiteral("b")}));
 }
 
 QTEST_GUILESS_MAIN(TestAcpSpawnArgv)

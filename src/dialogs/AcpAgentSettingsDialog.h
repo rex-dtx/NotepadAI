@@ -66,6 +66,7 @@ private:
     void loadGoalSettings();
     void saveGoalSettings();
     void refreshGoalTemplateCombo();
+    void refreshGoalAgentCombo();
     QString selectedAgentId() const;
 
     Ui::AcpAgentSettingsDialog *ui;

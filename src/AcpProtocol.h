@@ -184,15 +184,29 @@ std::optional<QString> pickAutoApproveOptionId(const QList<AcpPermissionOption> 
 // is a pure string-level boundary check so it is hermetic in tests.
 bool pathIsInsideWorkingDir(const QString &canonicalPath, const QString &canonicalWorkingDir);
 
-// Produces `(program, args)` for spawning an ACP agent following the
-// design.md D2 spawn policy. POSIX collapses to `sh -lc "<cmd> 'args'..."`.
-// On Windows: `.cmd`/`.bat` → `cmd /C ...`; `.ps1` → `powershell -NoProfile -File ...`;
-// otherwise direct. `resolvedWindowsPath` is the PATH-resolved absolute path
-// (caller's responsibility); when empty in Windows mode falls back to `command`.
-QPair<QString, QStringList> buildSpawnArgv(const QString &command,
-                                           const QStringList &args,
-                                           bool isPosix,
-                                           const QString &resolvedWindowsPath = QString());
+// Produces a spawn descriptor for an ACP agent following the design.md D2
+// spawn policy. POSIX collapses to `sh -lc "<cmd> 'args'..."`.
+// On Windows: `.cmd`/`.bat` → `cmd /D /S /C "<command line>"` via
+// `nativeArgumentsLine` (callers must use QProcess::setNativeArguments to
+// preserve our hand-built quoting — cmd /C won't survive QProcess's default
+// arg-list quoting when the resolved path contains spaces);
+// `.ps1` → `powershell -NoProfile -File ...`; otherwise invoke directly.
+// `resolvedWindowsPath` is the PATH-resolved absolute path (caller's
+// responsibility); when empty in Windows mode falls back to `command`.
+struct SpawnArgv
+{
+    QString program;
+    QStringList arguments;
+    // Windows-only. When non-empty, the caller MUST use
+    // QProcess::setNativeArguments(nativeArgumentsLine) instead of
+    // setArguments(arguments) — arguments will be empty in that case.
+    QString nativeArgumentsLine;
+};
+
+SpawnArgv buildSpawnArgv(const QString &command,
+                         const QStringList &args,
+                         bool isPosix,
+                         const QString &resolvedWindowsPath = QString());
 
 // JSON (de)serialization helpers — free functions so unit tests don't need
 // to spin up an AcpConnection.

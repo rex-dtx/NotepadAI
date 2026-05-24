@@ -108,8 +108,12 @@
 
 #include <QEvent>
 #include <QActionEvent>
+#include <QFont>
+#include <QMenu>
 #include <QPointer>
 #include "DockWidget.h"
+
+#include <algorithm>
 
 namespace {
 
@@ -1214,41 +1218,62 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 activeIsFile = true;
             }
         }
-        ui->actionOpenAiAgentInWorkspace->setEnabled(TerminalCwdResolver::canOpenInWorkspace(workspaceRoot));
-        ui->actionOpenAiAgentInFolder->setEnabled(TerminalCwdResolver::canOpenInFolder(activeFilePath, activeIsFile, workspaceRoot));
-    });
-
-    connect(ui->actionOpenAiAgentInWorkspace, &QAction::triggered, this, [this]() {
-        const QString cwd = TerminalCwdResolver::resolveWorkspace(currentWorkspaceRoot());
-        if (cwd.isEmpty()) return;
+        const bool workspaceOk = TerminalCwdResolver::canOpenInWorkspace(workspaceRoot);
+        const bool folderOk = TerminalCwdResolver::canOpenInFolder(activeFilePath, activeIsFile, workspaceRoot);
 
         AcpAgentManager *manager = this->app->getAiAgentManager();
-        if (!manager) return;
-        AiAgentDock *dock = manager->openAgent(manager->registry()->defaultAgentId(), cwd);
-        if (dock) {
-            attachAiAgentDock(dock);
-        }
-    });
+        AcpAgentRegistry *registry = manager ? manager->registry() : nullptr;
+        QList<AcpAgentDefinition> agents = registry ? registry->agents() : QList<AcpAgentDefinition>();
+        const QString defaultId = registry ? registry->defaultAgentId() : QString();
+        // Surface the default agent first so a single keystroke (Enter) picks it.
+        std::stable_partition(agents.begin(), agents.end(),
+            [&defaultId](const AcpAgentDefinition &a) { return a.id == defaultId; });
 
-    connect(ui->actionOpenAiAgentInFolder, &QAction::triggered, this, [this]() {
-        const QString workspaceRoot = currentWorkspaceRoot();
-        QString activeFilePath;
-        bool activeIsFile = false;
-        if (ScintillaNext *editor = currentEditor()) {
-            if (editor->isFile()) {
-                activeFilePath = editor->getFilePath();
-                activeIsFile = true;
+        auto rebuildSubmenu = [this, &agents, &defaultId](QMenu *submenu, bool enabled, bool isWorkspaceVariant) {
+            submenu->clear();
+            const bool hasAgents = !agents.isEmpty();
+            submenu->setEnabled(enabled && hasAgents);
+            if (!enabled || !hasAgents) {
+                return;
             }
-        }
-        const QString cwd = TerminalCwdResolver::resolveFolder(activeFilePath, activeIsFile, workspaceRoot);
-        if (cwd.isEmpty()) return;
+            for (const AcpAgentDefinition &agent : agents) {
+                QAction *action = submenu->addAction(agent.name);
+                if (agent.id == defaultId) {
+                    QFont f = action->font();
+                    f.setBold(true);
+                    action->setFont(f);
+                }
+                const QString agentId = agent.id;
+                connect(action, &QAction::triggered, this, [this, agentId, isWorkspaceVariant]() {
+                    QString cwd;
+                    if (isWorkspaceVariant) {
+                        cwd = TerminalCwdResolver::resolveWorkspace(currentWorkspaceRoot());
+                    } else {
+                        const QString workspaceRoot = currentWorkspaceRoot();
+                        QString activeFilePath;
+                        bool activeIsFile = false;
+                        if (ScintillaNext *editor = currentEditor()) {
+                            if (editor->isFile()) {
+                                activeFilePath = editor->getFilePath();
+                                activeIsFile = true;
+                            }
+                        }
+                        cwd = TerminalCwdResolver::resolveFolder(activeFilePath, activeIsFile, workspaceRoot);
+                    }
+                    if (cwd.isEmpty()) return;
 
-        AcpAgentManager *manager = this->app->getAiAgentManager();
-        if (!manager) return;
-        AiAgentDock *dock = manager->openAgent(manager->registry()->defaultAgentId(), cwd);
-        if (dock) {
-            attachAiAgentDock(dock);
-        }
+                    AcpAgentManager *m = this->app->getAiAgentManager();
+                    if (!m) return;
+                    AiAgentDock *dock = m->openAgent(agentId, cwd);
+                    if (dock) {
+                        attachAiAgentDock(dock);
+                    }
+                });
+            }
+        };
+
+        rebuildSubmenu(ui->menuOpenAiAgentInWorkspace, workspaceOk, /*isWorkspaceVariant=*/true);
+        rebuildSubmenu(ui->menuOpenAiAgentInFolder, folderOk, /*isWorkspaceVariant=*/false);
     });
 
     } // MainWindow::ctor.terminalManager

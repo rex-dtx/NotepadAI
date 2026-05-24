@@ -105,13 +105,59 @@ QString posixSingleQuote(const QString &s)
     return QLatin1Char('\'') + escaped + QLatin1Char('\'');
 }
 
+// Quote a single token for inclusion on a Windows command line (the form
+// CommandLineToArgvW expects). Implements the canonical algorithm from
+// MSDN "Everyone quotes command line arguments the wrong way" — backslashes
+// before a double-quote are doubled, the inner quote is escaped, and the
+// whole thing is wrapped in double quotes if it contains whitespace, a quote,
+// a tab, or is empty. Used for assembling the argument tail of `cmd /D /S /C
+// "..."` so the inner program path's spaces don't fragment the parse.
+QString windowsCommandLineQuote(const QString &arg)
+{
+    if (!arg.isEmpty()
+        && !arg.contains(QLatin1Char(' '))
+        && !arg.contains(QLatin1Char('\t'))
+        && !arg.contains(QLatin1Char('\n'))
+        && !arg.contains(QLatin1Char('\v'))
+        && !arg.contains(QLatin1Char('"'))) {
+        return arg;
+    }
+
+    QString out;
+    out.reserve(arg.size() + 2);
+    out.append(QLatin1Char('"'));
+    int backslashes = 0;
+    for (const QChar c : arg) {
+        if (c == QLatin1Char('\\')) {
+            ++backslashes;
+        } else if (c == QLatin1Char('"')) {
+            // Backslashes preceding a quote must be doubled, then escape the quote.
+            out.append(QString(backslashes * 2 + 1, QLatin1Char('\\')));
+            out.append(QLatin1Char('"'));
+            backslashes = 0;
+        } else {
+            if (backslashes) {
+                out.append(QString(backslashes, QLatin1Char('\\')));
+                backslashes = 0;
+            }
+            out.append(c);
+        }
+    }
+    // Trailing backslashes before the closing quote must be doubled too.
+    out.append(QString(backslashes * 2, QLatin1Char('\\')));
+    out.append(QLatin1Char('"'));
+    return out;
+}
+
 } // namespace
 
-QPair<QString, QStringList> buildSpawnArgv(const QString &command,
-                                           const QStringList &args,
-                                           bool isPosix,
-                                           const QString &resolvedWindowsPath)
+SpawnArgv buildSpawnArgv(const QString &command,
+                         const QStringList &args,
+                         bool isPosix,
+                         const QString &resolvedWindowsPath)
 {
+    SpawnArgv out;
+
     if (isPosix) {
         QString line = command;
         for (const QString &a : args) {
@@ -126,18 +172,30 @@ QPair<QString, QStringList> buildSpawnArgv(const QString &command,
         if (loginShell.isEmpty()) {
             loginShell = QStringLiteral("/bin/sh");
         }
-        return { loginShell, QStringList{ QStringLiteral("-lc"), line } };
+        out.program = loginShell;
+        out.arguments = QStringList{ QStringLiteral("-lc"), line };
+        return out;
     }
 
     const QString resolved = resolvedWindowsPath.isEmpty() ? command : resolvedWindowsPath;
     const QString lower = resolved.toLower();
     if (lower.endsWith(QLatin1String(".cmd")) || lower.endsWith(QLatin1String(".bat"))) {
-        QStringList outArgs;
-        outArgs.reserve(args.size() + 2);
-        outArgs.append(QStringLiteral("/C"));
-        outArgs.append(resolved);
-        outArgs.append(args);
-        return { QStringLiteral("cmd"), outArgs };
+        // Path may contain spaces (e.g. "C:/Program Files/nodejs/npx.cmd"). The
+        // only reliable cmd.exe form is `cmd /D /S /C "<command line>"` where
+        // the entire command line is wrapped in a single pair of double quotes
+        // and /S tells cmd to strip exactly the outer pair (so quotes inside
+        // the path are preserved). QProcess's default arg quoting can't
+        // produce that shape, so we hand-build the line and ask the caller
+        // to feed it via setNativeArguments.
+        QString line = windowsCommandLineQuote(resolved);
+        for (const QString &a : args) {
+            line.append(QLatin1Char(' '));
+            line.append(windowsCommandLineQuote(a));
+        }
+        out.program = QStringLiteral("cmd");
+        out.nativeArgumentsLine =
+            QStringLiteral("/D /S /C \"") + line + QLatin1Char('"');
+        return out;
     }
     if (lower.endsWith(QLatin1String(".ps1"))) {
         QStringList outArgs;
@@ -146,9 +204,13 @@ QPair<QString, QStringList> buildSpawnArgv(const QString &command,
         outArgs.append(QStringLiteral("-File"));
         outArgs.append(resolved);
         outArgs.append(args);
-        return { QStringLiteral("powershell"), outArgs };
+        out.program = QStringLiteral("powershell");
+        out.arguments = outArgs;
+        return out;
     }
-    return { resolved, args };
+    out.program = resolved;
+    out.arguments = args;
+    return out;
 }
 
 QJsonObject contentBlockToJson(const AcpContentBlock &block)

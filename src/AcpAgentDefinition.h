@@ -39,6 +39,60 @@ struct AcpAgentDefinition
     bool builtin = false;
 };
 
+// Shell-like splitter shared by the settings dialog and the registry loader.
+// Whitespace separates tokens; single/double quotes preserve spaces; backslash
+// escapes the next character. Used at save time *and* at load time so legacy
+// data persisted under the old "one arg per line" rule is auto-migrated to
+// real argv tokens.
+inline QStringList parseShellLikeArgs(const QString &text)
+{
+    QStringList out;
+    QString token;
+    token.reserve(text.size());
+
+    QChar quote;
+    bool escaped = false;
+    for (const QChar c : text) {
+        if (escaped) {
+            token.append(c);
+            escaped = false;
+            continue;
+        }
+        if (c == QLatin1Char('\\')) {
+            escaped = true;
+            continue;
+        }
+        if (!quote.isNull()) {
+            if (c == quote) {
+                quote = QChar();
+            } else {
+                token.append(c);
+            }
+            continue;
+        }
+        if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+            quote = c;
+            continue;
+        }
+        if (c.isSpace()) {
+            if (!token.isEmpty()) {
+                out.append(token);
+                token.clear();
+            }
+            continue;
+        }
+        token.append(c);
+    }
+
+    if (escaped) {
+        token.append(QLatin1Char('\\'));
+    }
+    if (!token.isEmpty()) {
+        out.append(token);
+    }
+    return out;
+}
+
 inline QJsonObject acpAgentDefinitionToJson(const AcpAgentDefinition &def)
 {
     QJsonObject obj;
@@ -51,6 +105,10 @@ inline QJsonObject acpAgentDefinitionToJson(const AcpAgentDefinition &def)
         argsArray.append(arg);
     }
     obj.insert(QStringLiteral("args"), argsArray);
+    // Marker so the loader knows args are already proper argv tokens and must
+    // not be re-tokenized. Pre-marker entries may contain whitespace inside a
+    // single string (legacy "one arg per line" save path) and need splitting.
+    obj.insert(QStringLiteral("argsTokenized"), true);
 
     QJsonObject envObj;
     for (auto it = def.env.constBegin(); it != def.env.constEnd(); ++it) {
@@ -71,9 +129,19 @@ inline AcpAgentDefinition acpAgentDefinitionFromJson(const QJsonObject &obj)
     def.command = obj.value(QStringLiteral("command")).toString();
 
     const QJsonArray argsArray = obj.value(QStringLiteral("args")).toArray();
+    const bool tokenized =
+        obj.value(QStringLiteral("argsTokenized")).toBool(false);
     def.args.reserve(argsArray.size());
     for (const auto &v : argsArray) {
-        def.args.append(v.toString());
+        const QString s = v.toString();
+        if (tokenized) {
+            def.args.append(s);
+        } else {
+            const QStringList split = parseShellLikeArgs(s);
+            for (const QString &t : split) {
+                def.args.append(t);
+            }
+        }
     }
 
     const QJsonObject envObj = obj.value(QStringLiteral("env")).toObject();

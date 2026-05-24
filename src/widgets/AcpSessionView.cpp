@@ -183,10 +183,31 @@ void AcpSessionView::buildUi()
     // 1. Status banner.
     m_banner = new QFrame(this);
     m_banner->setObjectName(QStringLiteral("AcpStatusBanner"));
+    // Soft warm backgrounds (Bootstrap "alert" pair) hold across themes; in
+    // dark mode the widget text role flips to white, so we must pin a dark
+    // text colour on the banner contents in the warning/error variants —
+    // otherwise we get white-on-pink / white-on-yellow. Bootstrap's matching
+    // text tokens are #856404 (warning) and #721c24 (error).
     m_banner->setStyleSheet(QStringLiteral(
         "QFrame#AcpStatusBanner { background: transparent; border: none; border-radius: 4px; padding: 0px; }"
         "QFrame#AcpStatusBanner[bannerKind=\"warning\"] { background: #fff3cd; border: 1px solid #ffeeba; padding: 4px; }"
-        "QFrame#AcpStatusBanner[bannerKind=\"error\"] { background: #f8d7da; border: 1px solid #f5c6cb; padding: 4px; }"));
+        "QFrame#AcpStatusBanner[bannerKind=\"warning\"] QLabel,"
+        "QFrame#AcpStatusBanner[bannerKind=\"warning\"] QPushButton,"
+        "QFrame#AcpStatusBanner[bannerKind=\"warning\"] QToolButton { color: #856404; }"
+        "QFrame#AcpStatusBanner[bannerKind=\"warning\"] QPushButton {"
+        " background: rgba(255, 255, 255, 160); border: 1px solid #ffeeba; border-radius: 3px; padding: 2px 8px; }"
+        "QFrame#AcpStatusBanner[bannerKind=\"warning\"] QPushButton:hover { background: rgba(255, 255, 255, 220); }"
+        "QFrame#AcpStatusBanner[bannerKind=\"warning\"] QToolButton:hover {"
+        " color: #533f03; border: 1px solid #856404; }"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] { background: #f8d7da; border: 1px solid #f5c6cb; padding: 4px; }"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] QLabel,"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] QPushButton,"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] QToolButton { color: #721c24; }"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] QPushButton {"
+        " background: rgba(255, 255, 255, 160); border: 1px solid #f5c6cb; border-radius: 3px; padding: 2px 8px; }"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] QPushButton:hover { background: rgba(255, 255, 255, 220); }"
+        "QFrame#AcpStatusBanner[bannerKind=\"error\"] QToolButton:hover {"
+        " color: #491217; border: 1px solid #721c24; }"));
     auto *banL = new QHBoxLayout(m_banner);
     banL->setContentsMargins(0, 0, 0, 0);
     banL->setSpacing(4);
@@ -583,8 +604,15 @@ void AcpSessionView::setBanner(const QString &text, BannerKind kind)
     case BannerKind::Error:   kindStr = QStringLiteral("error"); break;
     }
     m_banner->setProperty("bannerKind", kindStr);
+    // Re-polish parent + every child whose color is selected via the
+    // [bannerKind=...] descendant rules. Without polishing the children,
+    // Qt keeps their previously-resolved palette text colour.
     m_banner->style()->unpolish(m_banner);
     m_banner->style()->polish(m_banner);
+    for (QWidget *child : m_banner->findChildren<QWidget *>()) {
+        child->style()->unpolish(child);
+        child->style()->polish(child);
+    }
     m_bannerRetry->setVisible(kind == BannerKind::Error || kind == BannerKind::Warning);
     m_banner->show();
 }
@@ -601,6 +629,10 @@ void AcpSessionView::clearBanner()
     m_banner->setProperty("bannerKind", QStringLiteral("info"));
     m_banner->style()->unpolish(m_banner);
     m_banner->style()->polish(m_banner);
+    for (QWidget *child : m_banner->findChildren<QWidget *>()) {
+        child->style()->unpolish(child);
+        child->style()->polish(child);
+    }
 }
 
 void AcpSessionView::rebind(AcpSessionModel *model, AcpConnection *connection)

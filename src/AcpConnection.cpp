@@ -180,8 +180,15 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
     const auto argv = AcpProtocol::buildSpawnArgv(agent.command, agent.args, isPosix);
 #endif
 
-    m_process->setProgram(argv.first);
-    m_process->setArguments(argv.second);
+    m_process->setProgram(argv.program);
+    if (!argv.nativeArgumentsLine.isEmpty()) {
+        // Windows-only path. The CMD `/D /S /C "<line>"` form must be passed
+        // verbatim — QProcess::setArguments would re-quote our hand-built
+        // command line and break paths with spaces.
+        m_process->setNativeArguments(argv.nativeArgumentsLine);
+    } else {
+        m_process->setArguments(argv.arguments);
+    }
 
     {
         QStringList envOverrides;
@@ -189,8 +196,12 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
         for (auto it = agent.env.constBegin(); it != agent.env.constEnd(); ++it) {
             envOverrides.append(it.key() + QStringLiteral("=") + it.value());
         }
-        appendDebugLog(QStringLiteral("spawn: program=%1").arg(argv.first));
-        appendDebugLog(QStringLiteral("spawn: args=[%1]").arg(argv.second.join(QStringLiteral(", "))));
+        appendDebugLog(QStringLiteral("spawn: program=%1").arg(argv.program));
+        if (!argv.nativeArgumentsLine.isEmpty()) {
+            appendDebugLog(QStringLiteral("spawn: nativeArguments=%1").arg(argv.nativeArgumentsLine));
+        } else {
+            appendDebugLog(QStringLiteral("spawn: args=[%1]").arg(argv.arguments.join(QStringLiteral(", "))));
+        }
         appendDebugLog(QStringLiteral("spawn: cwd=%1").arg(workingDirectory));
         if (!envOverrides.isEmpty()) {
             appendDebugLog(QStringLiteral("spawn: env-overrides=[%1]").arg(envOverrides.join(QStringLiteral(", "))));

@@ -30,6 +30,8 @@ public:
                       model,
                       /*connection=*/nullptr,
                       /*registry=*/nullptr,
+                      /*agentManager=*/nullptr,
+                      /*appSettings=*/nullptr,
                       /*parent=*/nullptr)
         , m_confirmResult(confirmResult)
     {

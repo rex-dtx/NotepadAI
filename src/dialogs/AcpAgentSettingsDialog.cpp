@@ -50,16 +50,7 @@ QString joinArgsForDisplay(const QStringList &args)
 
 QStringList splitArgsFromInput(const QString &text)
 {
-    // Newline-separated, one arg per line. Empty lines are skipped.
-    QStringList out;
-    const QStringList rawLines = text.split(QLatin1Char('\n'));
-    for (const QString &line : rawLines) {
-        const QString trimmed = line.trimmed();
-        if (!trimmed.isEmpty()) {
-            out.append(trimmed);
-        }
-    }
-    return out;
+    return parseShellLikeArgs(text);
 }
 
 QString joinArgsForEdit(const QStringList &args)
@@ -85,7 +76,7 @@ public:
         form->addRow(tr("Command:"), m_commandEdit);
 
         m_argsEdit = new QPlainTextEdit(joinArgsForEdit(def->args), this);
-        m_argsEdit->setPlaceholderText(tr("One argument per line"));
+        m_argsEdit->setPlaceholderText(tr("Whitespace-separated; quote values with spaces"));
         form->addRow(tr("Arguments:"), m_argsEdit);
 
         QString envText;
@@ -193,6 +184,8 @@ AcpAgentSettingsDialog::AcpAgentSettingsDialog(AcpAgentRegistry *registry,
             this, &AcpAgentSettingsDialog::refreshAgentTable);
         connect(m_registry, &AcpAgentRegistry::changed,
             this, &AcpAgentSettingsDialog::refreshDefaultAgentCombo);
+        connect(m_registry, &AcpAgentRegistry::changed,
+            this, &AcpAgentSettingsDialog::refreshGoalAgentCombo);
     }
 
     refreshAgentTable();
@@ -461,15 +454,7 @@ void AcpAgentSettingsDialog::loadGoalSettings()
     }
 
     // Populate goal-agent combo from registry
-    m_goalAgentCombo->clear();
-    if (m_registry) {
-        const auto agents = m_registry->agents();
-        for (const auto &a : agents) {
-            m_goalAgentCombo->addItem(a.name, a.id);
-        }
-        int idx = m_goalAgentCombo->findData(gs.agentId);
-        if (idx >= 0) m_goalAgentCombo->setCurrentIndex(idx);
-    }
+    refreshGoalAgentCombo();
 
     m_goalMaxIterSpin->setValue(gs.defaultMaxIterations);
     refreshGoalTemplateCombo();
@@ -505,6 +490,69 @@ void AcpAgentSettingsDialog::saveGoalSettings()
 
     m_appSettings->setValue(QStringLiteral("Ai/GoalAgentSettings"),
                             QString::fromUtf8(QJsonDocument(gs.toJson()).toJson(QJsonDocument::Compact)));
+}
+
+void AcpAgentSettingsDialog::refreshGoalAgentCombo()
+{
+    if (!m_goalAgentCombo) return;
+
+    // Effective selection precedence:
+    //   1. id currently shown in the combo (preserves user's in-dialog choice)
+    //   2. id persisted in Ai/GoalAgentSettings.agentId (preserves prior session)
+    //   3. registry's default agent
+    //   4. first agent in the list
+    QString preferredId = m_goalAgentCombo->currentData().toString();
+
+    QString persistedId;
+    if (m_appSettings) {
+        const QString settingsJson = m_appSettings->get(
+            "Ai/GoalAgentSettings", QString());
+        if (!settingsJson.isEmpty()) {
+            const GoalAgentSettings gs = GoalAgentSettings::fromJson(
+                QJsonDocument::fromJson(settingsJson.toUtf8()).object());
+            persistedId = gs.agentId;
+        }
+    }
+
+    const bool wasLoading = m_goalLoading;
+    m_goalLoading = true;
+    m_goalAgentCombo->blockSignals(true);
+    m_goalAgentCombo->clear();
+
+    if (m_registry) {
+        const auto agents = m_registry->agents();
+        for (const auto &a : agents) {
+            m_goalAgentCombo->addItem(a.name, a.id);
+        }
+    }
+
+    int idx = -1;
+    if (!preferredId.isEmpty()) {
+        idx = m_goalAgentCombo->findData(preferredId);
+    }
+    if (idx < 0 && !persistedId.isEmpty()) {
+        idx = m_goalAgentCombo->findData(persistedId);
+    }
+    if (idx < 0 && m_registry) {
+        idx = m_goalAgentCombo->findData(m_registry->defaultAgentId());
+    }
+    if (idx < 0 && m_goalAgentCombo->count() > 0) {
+        idx = 0;
+    }
+    if (idx >= 0) {
+        m_goalAgentCombo->setCurrentIndex(idx);
+    }
+
+    m_goalAgentCombo->blockSignals(false);
+    m_goalLoading = wasLoading;
+
+    // If the effective selection drifted from the persisted id (e.g. previously
+    // selected agent was removed), persist the new value so external readers
+    // (GoalAgent, SendWithGoalDialog) stop pointing at a missing agent.
+    const QString effectiveId = m_goalAgentCombo->currentData().toString();
+    if (!m_goalLoading && effectiveId != persistedId) {
+        saveGoalSettings();
+    }
 }
 
 void AcpAgentSettingsDialog::refreshGoalTemplateCombo()
