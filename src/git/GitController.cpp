@@ -29,6 +29,8 @@
 #include "GitStatusParser.h"
 #include "GitWatcher.h"
 
+#include "../NotepadNextApplication.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -74,6 +76,8 @@ GitController::GitController(const QString &workspaceRoot, QObject *parent)
     connect(m_watcher, &GitWatcher::headChanged, this, [this]() {
         if (!m_currentRepo.isEmpty())
             GitBaseBlobCache::instance().invalidateRepo(m_currentRepo);
+        if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance()))
+            emit app->gitHeadChanged();
     });
     connect(m_watcher, &GitWatcher::indexChanged,
             this, &GitController::scheduleDebouncedRefresh);
@@ -874,6 +878,23 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
         case OpKind::Push:
         case OpKind::ForcePush:
             if (kind == OpKind::Commit) emit commitSucceeded();
+            if (kind == OpKind::Commit || kind == OpKind::Pull) {
+                // Commit and Pull move the current branch tip (the ref file
+                // content changes, e.g. .git/refs/heads/main). GitWatcher only
+                // watches the refs/heads DIRECTORY (add/remove), not individual
+                // ref file content, so headChanged won't fire for these. We
+                // must invalidate the blob cache and notify decorators directly.
+                //
+                // NOTE: External git operations (e.g. `git commit` in a
+                // terminal) that move the branch tip without adding/removing
+                // ref files are NOT detected until the user saves the file
+                // (SavePointReached triggers re-fetch). This is a known
+                // limitation of QFileSystemWatcher directory monitoring.
+                if (!m_currentRepo.isEmpty())
+                    GitBaseBlobCache::instance().invalidateRepo(m_currentRepo);
+                if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance()))
+                    emit app->gitHeadChanged();
+            }
             if (!humanName.isEmpty()) emit opSucceeded(humanName);
             scheduleDebouncedRefresh();
             break;

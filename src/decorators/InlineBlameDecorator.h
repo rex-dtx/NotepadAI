@@ -73,6 +73,7 @@ private slots:
                        const QString &message);
     void onCaretDebounced();
     void onThemeChanged();
+    void onHeadChanged();
 
 private:
     void setupEolAnnotationOnce();

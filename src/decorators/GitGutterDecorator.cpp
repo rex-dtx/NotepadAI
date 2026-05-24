@@ -159,6 +159,8 @@ GitGutterDecorator::GitGutterDecorator(ScintillaNext *editor)
     if (auto *app = qobject_cast<NotepadNextApplication *>(qApp)) {
         connect(app, &NotepadNextApplication::effectiveThemeChanged,
                 this, &GitGutterDecorator::onThemeChanged);
+        connect(app, &NotepadNextApplication::gitHeadChanged,
+                this, &GitGutterDecorator::invalidateAndRefresh);
     }
 }
 
@@ -369,6 +371,13 @@ void GitGutterDecorator::onThemeChanged()
 {
     applyPalette();
     if (m_annotStylesReady) applyAnnotationPalette();
+}
+
+void GitGutterDecorator::invalidateAndRefresh()
+{
+    m_baseBlob.clear();
+    m_baseBlobReady = false;
+    refresh();
 }
 
 void GitGutterDecorator::refresh()

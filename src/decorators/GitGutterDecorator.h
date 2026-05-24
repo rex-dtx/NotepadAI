@@ -40,6 +40,7 @@ public:
     ~GitGutterDecorator() override;
 
     void refresh();
+    void invalidateAndRefresh();
 
 public slots:
     void notify(const Scintilla::NotificationData *pscn) override;

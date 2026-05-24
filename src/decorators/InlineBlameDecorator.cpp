@@ -98,6 +98,8 @@ InlineBlameDecorator::InlineBlameDecorator(ScintillaNext *editor)
     if (auto *app = qobject_cast<NotepadNextApplication *>(qApp)) {
         connect(app, &NotepadNextApplication::effectiveThemeChanged,
                 this, &InlineBlameDecorator::onThemeChanged);
+        connect(app, &NotepadNextApplication::gitHeadChanged,
+                this, &InlineBlameDecorator::onHeadChanged);
     }
 }
 
@@ -195,6 +197,15 @@ void InlineBlameDecorator::onCaretDebounced()
 void InlineBlameDecorator::onThemeChanged()
 {
     if (m_annotStyleReady) applyEolPalette();
+}
+
+void InlineBlameDecorator::onHeadChanged()
+{
+    m_blame = {};
+    m_blameValid = false;
+    clearAnnotation();
+    if (isEnabled() && editor && editor->isFile() && !editor->modify())
+        startBlameFetch();
 }
 
 bool InlineBlameDecorator::isPointOnAnnotation(const QPoint &localPos) const

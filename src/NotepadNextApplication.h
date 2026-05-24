@@ -88,6 +88,7 @@ public:
 
 signals:
     void effectiveThemeChanged();
+    void gitHeadChanged();
 
 protected:
     bool event(QEvent *event) override;
