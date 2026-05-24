@@ -33,6 +33,7 @@ class QComboBox;
 class QFrame;
 class QLabel;
 class QMenu;
+class QScrollArea;
 class QStackedWidget;
 class QToolButton;
 
@@ -101,7 +102,7 @@ private:
     void updateBranchButtonText();
     void persistCommitDraft();
     void restoreCommitDraft();
-    void showError(const QString &text, const QString &hint = {});
+    void showError(const QString &text, const QString &hint = {}, const QString &details = {});
     void clearError();
     void appendStatus(const QString &msg);
     QString settingsKey(const QString &subkey) const;
@@ -137,6 +138,9 @@ private:
     QLabel *m_statusLabel = nullptr;
     QFrame *m_errorBanner = nullptr;
     QLabel *m_errorLabel = nullptr;
+    QLabel *m_errorDetailsLabel = nullptr;
+    QScrollArea *m_errorDetailsScroll = nullptr;
+    QToolButton *m_errorCopyBtn = nullptr;
     QToolButton *m_errorCloseBtn = nullptr;
     QLabel *m_emptyHint = nullptr;
 

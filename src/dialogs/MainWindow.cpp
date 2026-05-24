@@ -93,6 +93,7 @@
 
 #include "ZoomEventWatcher.h"
 #include "FileDialogHelpers.h"
+#include "FileWatcher.h"
 
 #include "HtmlConverter.h"
 #include "RtfConverter.h"
@@ -225,6 +226,24 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connect(dockedEditor, &DockedEditor::editorActivated, this, &MainWindow::activateEditor);
     connect(dockedEditor, &DockedEditor::contextMenuRequestedForEditor, this, &MainWindow::tabBarRightClicked);
     connect(dockedEditor, &DockedEditor::titleBarDoubleClicked, this, &MainWindow::newFile);
+
+    fileWatcher = new FileWatcher(this);
+    connect(fileWatcher, &FileWatcher::fileModifiedExternally, this, [this](ScintillaNext *editor) {
+        if (!editor->modify()) {
+            editor->reload();
+        } else if (editor == currentEditor()) {
+            checkFileForModification(editor);
+        }
+        updateGui(editor);
+    });
+    connect(fileWatcher, &FileWatcher::fileDeletedExternally, this, [this](ScintillaNext *editor) {
+        updateGui(editor);
+    });
+    connect(fileWatcher, &FileWatcher::fileRestoredExternally, this, [this](ScintillaNext *editor) {
+        if (editor == currentEditor())
+            checkFileForModification(editor);
+        updateGui(editor);
+    });
 
     // Set up the menus
     {
@@ -2739,6 +2758,14 @@ void MainWindow::addEditor(ScintillaNext *editor)
         PROFILE_SCOPE("MainWindow::addEditor.detectLanguage");
         detectLanguage(editor);
     }
+
+    fileWatcher->watchEditor(editor);
+    connect(editor, &ScintillaNext::closed, this, [this, editor]() {
+        fileWatcher->unwatchEditor(editor);
+    });
+    connect(editor, &QObject::destroyed, this, [this, editor]() {
+        fileWatcher->unwatchEditor(editor);
+    });
 
     // These should only ever occur for the focused editor??
     // TODO: look at editor inspector as an example to ensure updates are only coming from one editor.

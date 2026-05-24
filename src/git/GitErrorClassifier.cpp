@@ -46,12 +46,14 @@ GitError make(GitError::Kind k, const QString &human, const QString &hint,
 
 GitError GitErrorClassifier::classify(int exitCode, const QByteArray &stderr_, const QStringList &argv)
 {
-    Q_UNUSED(exitCode);
-    Q_UNUSED(argv);
-
-    const QString tr_ = QString();
     const QString lowered = QString::fromUtf8(stderr_).toLower();
-    const QString details = QString::fromUtf8(stderr_).trimmed();
+    QString details = QString::fromUtf8(stderr_).trimmed();
+
+    if (details.isEmpty()) {
+        details = QStringLiteral("exit code %1\ncmd: git %2")
+                      .arg(exitCode)
+                      .arg(argv.join(QLatin1Char(' ')));
+    }
 
     auto tr = [](const char *s) { return QCoreApplication::translate("GitError", s); };
 

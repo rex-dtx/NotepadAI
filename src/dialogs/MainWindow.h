@@ -33,6 +33,8 @@
 #include "NppImporter.h"
 #include "SearchResultsCollector.h"
 
+class FileWatcher;
+
 namespace Ui {
 class MainWindow;
 }
@@ -223,6 +225,7 @@ private:
     QMenu *buildMenu(QStringList actionNames);
 
     TerminalManager *terminalManager = Q_NULLPTR;
+    FileWatcher *fileWatcher = Q_NULLPTR;
 
     QPointer<FolderAsWorkspaceDock> m_activeWorkspace;
 

@@ -34,10 +34,12 @@
 #include "../docks/FolderAsWorkspaceDock.h"
 
 #include <QAction>
+#include <QClipboard>
 #include <QComboBox>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -47,6 +49,7 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -190,18 +193,45 @@ void GitTabWidget::buildUi()
     m_errorBanner->setFrameShape(QFrame::StyledPanel);
     m_errorBanner->setStyleSheet(
         QStringLiteral("QFrame { background-color: #fdecea; border: 1px solid #f5c2c0; border-radius: 3px; }"
-                       "QLabel { color: #8a1f1c; }"));
+                       "QLabel { color: #8a1f1c; }"
+                       "QToolButton { color: #8a1f1c; }"
+                       "QLabel#errorDetails { color: #6b1714; font-family: monospace; font-size: 11px; }"));
     {
-        auto *lay = new QHBoxLayout(m_errorBanner);
-        lay->setContentsMargins(8, 4, 4, 4);
-        lay->setSpacing(6);
+        auto *outerLay = new QVBoxLayout(m_errorBanner);
+        outerLay->setContentsMargins(8, 4, 4, 4);
+        outerLay->setSpacing(4);
+
+        auto *topRow = new QHBoxLayout();
+        topRow->setContentsMargins(0, 0, 0, 0);
+        topRow->setSpacing(6);
         m_errorLabel = new QLabel(m_errorBanner);
         m_errorLabel->setWordWrap(true);
+        m_errorCopyBtn = new QToolButton(m_errorBanner);
+        m_errorCopyBtn->setText(tr("Copy"));
+        m_errorCopyBtn->setToolTip(tr("Copy error to clipboard"));
+        m_errorCopyBtn->setAutoRaise(true);
         m_errorCloseBtn = new QToolButton(m_errorBanner);
         m_errorCloseBtn->setText(QStringLiteral("×"));
         m_errorCloseBtn->setAutoRaise(true);
-        lay->addWidget(m_errorLabel, 1);
-        lay->addWidget(m_errorCloseBtn, 0, Qt::AlignTop);
+        topRow->addWidget(m_errorLabel, 1);
+        topRow->addWidget(m_errorCopyBtn, 0, Qt::AlignTop);
+        topRow->addWidget(m_errorCloseBtn, 0, Qt::AlignTop);
+        outerLay->addLayout(topRow);
+
+        m_errorDetailsLabel = new QLabel(m_errorBanner);
+        m_errorDetailsLabel->setObjectName(QStringLiteral("errorDetails"));
+        m_errorDetailsLabel->setWordWrap(true);
+        m_errorDetailsLabel->setTextFormat(Qt::PlainText);
+        m_errorDetailsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+        m_errorDetailsScroll = new QScrollArea(m_errorBanner);
+        m_errorDetailsScroll->setWidget(m_errorDetailsLabel);
+        m_errorDetailsScroll->setWidgetResizable(true);
+        m_errorDetailsScroll->setMaximumHeight(80);
+        m_errorDetailsScroll->setFrameShape(QFrame::NoFrame);
+        m_errorDetailsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_errorDetailsScroll->hide();
+        outerLay->addWidget(m_errorDetailsScroll);
     }
     m_errorBanner->hide();
     root->addWidget(m_errorBanner);
@@ -236,6 +266,12 @@ void GitTabWidget::buildUi()
         if (m_controller) m_controller->pull(/*rebase=*/false);
     });
     connect(m_errorCloseBtn, &QToolButton::clicked, this, &GitTabWidget::clearError);
+    connect(m_errorCopyBtn, &QToolButton::clicked, this, [this]() {
+        QString text = m_errorLabel->text();
+        if (m_errorDetailsLabel && !m_errorDetailsLabel->text().isEmpty())
+            text += QStringLiteral("\n\n") + m_errorDetailsLabel->text();
+        QGuiApplication::clipboard()->setText(text);
+    });
 
     // ChangesPanel wiring — translate user actions into controller calls.
     connect(m_changesPanel, &ChangesPanel::stageRequested, this,
@@ -749,7 +785,7 @@ void GitTabWidget::onError(const GitError &err)
     m_committing = false;
     QString text = err.humanMessage;
     if (text.isEmpty()) text = tr("Git operation failed.");
-    showError(text, err.hint);
+    showError(text, err.hint, err.details);
     appendStatus(text);
 }
 
@@ -816,11 +852,18 @@ void GitTabWidget::updateActionsEnabled()
     }
 }
 
-void GitTabWidget::showError(const QString &text, const QString &hint)
+void GitTabWidget::showError(const QString &text, const QString &hint, const QString &details)
 {
     QString full = text;
     if (!hint.isEmpty()) full += QStringLiteral("\n") + hint;
     m_errorLabel->setText(full);
+    if (!details.isEmpty() && details != text) {
+        m_errorDetailsLabel->setText(details);
+        m_errorDetailsScroll->show();
+    } else {
+        m_errorDetailsLabel->clear();
+        m_errorDetailsScroll->hide();
+    }
     m_errorBanner->show();
 }
 
@@ -828,6 +871,8 @@ void GitTabWidget::clearError()
 {
     m_errorBanner->hide();
     m_errorLabel->clear();
+    m_errorDetailsLabel->clear();
+    m_errorDetailsScroll->hide();
 }
 
 void GitTabWidget::appendStatus(const QString &msg)

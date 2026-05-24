@@ -479,7 +479,8 @@ void GitController::runNext()
 void GitController::handleToplevelDone(int exit, const QByteArray &out, const QByteArray &err)
 {
     if (exit != 0) {
-        GitError e = GitErrorClassifier::classify(exit, err, m_current.argv);
+        const QByteArray classifyInput = err.trimmed().isEmpty() ? out : err;
+        GitError e = GitErrorClassifier::classify(exit, classifyInput, m_current.argv);
         // Force NotARepo for an explicit "no repo" case.
         if (e.kind == GitError::Unknown) {
             e.kind = GitError::NotARepo;
@@ -780,7 +781,8 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
     }
 
     if (exit != 0) {
-        GitError e = GitErrorClassifier::classify(exit, err, m_current.argv);
+        const QByteArray classifyInput = err.trimmed().isEmpty() ? out : err;
+        GitError e = GitErrorClassifier::classify(exit, classifyInput, m_current.argv);
         if (kind == OpKind::Toplevel) {
             handleToplevelDone(exit, out, err);
             popAndAdvance();
