@@ -932,6 +932,7 @@ void AcpConnection::handleFsWriteTextFile(const QJsonValue &id, const QJsonObjec
     }
     f.close();
     sendResponse(id, QJsonObject{});
+    emit fileWrittenOnDisk(canonical);
 }
 
 // ---------- Terminal handlers --------------------------------------------

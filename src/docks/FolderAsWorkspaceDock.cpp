@@ -82,6 +82,12 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(QWidget *parent) :
         }
     });
 
+    connect(ui->treeView, &QTreeView::clicked, this, [=](const QModelIndex &index) {
+        if (!model->isDir(index)) {
+            emit fileClicked(model->filePath(index));
+        }
+    });
+
     wireTreeContextMenu();
 
     const int wakeUpDelay = QApplication::style()->styleHint(QStyle::SH_ToolTip_WakeUpDelay);
@@ -139,6 +145,12 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget
     connect(ui->treeView, &QTreeView::doubleClicked, this, [=](const QModelIndex &index) {
         if (!model->isDir(index)) {
             emit fileDoubleClicked(model->filePath(index));
+        }
+    });
+
+    connect(ui->treeView, &QTreeView::clicked, this, [=](const QModelIndex &index) {
+        if (!model->isDir(index)) {
+            emit fileClicked(model->filePath(index));
         }
     });
 

@@ -45,6 +45,7 @@ public:
 
     void setCollapsed(bool collapsed);
     bool isCollapsed() const { return m_collapsed; }
+    bool shouldPreserveExpanded() const { return m_userToggled || m_autoExpandedForDiff; }
 
 protected:
     void resizeEvent(QResizeEvent *event) override;

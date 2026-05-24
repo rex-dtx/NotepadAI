@@ -53,12 +53,23 @@ public:
 
     int count() const;
 
+    ScintillaNext *previewEditor() const;
+    void pinPreviewEditor();
+
 public slots:
     void addEditor(ScintillaNext *editor);
+    void addPreviewEditor(ScintillaNext *editor);
 
 private slots:
     void dockWidgetCloseRequested();
     void editorRenamed(ScintillaNext *editor);
+
+private:
+    QPointer<ScintillaNext> m_previewEditor;
+    void applyPreviewStyle(ads::CDockWidget *dockWidget, bool preview);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 signals:
     void editorAdded(ScintillaNext *editor);

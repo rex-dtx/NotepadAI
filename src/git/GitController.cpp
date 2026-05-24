@@ -85,6 +85,16 @@ GitController::GitController(const QString &workspaceRoot, QObject *parent)
             this, &GitController::scheduleDebouncedRefresh);
     connect(m_watcher, &GitWatcher::workingTreeChanged,
             this, &GitController::scheduleDebouncedRefresh);
+
+    if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance()))
+        connect(app, &NotepadNextApplication::gitWorkingTreeDirtied,
+                this, [this](const QString &path) {
+                    if (m_currentRepo.isEmpty()) return;
+                    if (path.startsWith(m_currentRepo)
+                        && (path.size() == m_currentRepo.size()
+                            || path.at(m_currentRepo.size()) == QLatin1Char('/')))
+                        scheduleDebouncedRefresh();
+                });
 }
 
 GitController::~GitController() = default;

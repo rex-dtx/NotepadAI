@@ -89,6 +89,7 @@ public:
 signals:
     void effectiveThemeChanged();
     void gitHeadChanged();
+    void gitWorkingTreeDirtied(const QString &path);
 
 protected:
     bool event(QEvent *event) override;

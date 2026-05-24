@@ -27,6 +27,7 @@
 
 #include "ScintillaNext.h"
 
+#include <QEvent>
 #include <QUuid>
 
 
@@ -220,6 +221,69 @@ void DockedEditor::addEditor(ScintillaNext *editor)
     latestDockArea = dockManager->addDockWidget(ads::CenterDockWidgetArea, dockWidget, currentDockArea());
 
     emit editorAdded(editor);
+}
+
+void DockedEditor::addPreviewEditor(ScintillaNext *editor)
+{
+    if (m_previewEditor && m_previewEditor != editor) {
+        m_previewEditor->close();
+    }
+
+    m_previewEditor = editor;
+    addEditor(editor);
+
+    ads::CDockWidget *dockWidget = qobject_cast<ads::CDockWidget *>(editor->parentWidget());
+    if (dockWidget) {
+        applyPreviewStyle(dockWidget, true);
+        dockWidget->tabWidget()->installEventFilter(this);
+    }
+
+    connect(editor, &ScintillaNext::savePointChanged, this, [this, editor](bool dirty) {
+        if (dirty && m_previewEditor == editor) {
+            pinPreviewEditor();
+        }
+    });
+}
+
+ScintillaNext *DockedEditor::previewEditor() const
+{
+    return m_previewEditor.data();
+}
+
+void DockedEditor::pinPreviewEditor()
+{
+    if (!m_previewEditor) return;
+
+    ads::CDockWidget *dockWidget = qobject_cast<ads::CDockWidget *>(m_previewEditor->parentWidget());
+    if (dockWidget) {
+        applyPreviewStyle(dockWidget, false);
+        dockWidget->tabWidget()->removeEventFilter(this);
+    }
+    m_previewEditor = nullptr;
+}
+
+void DockedEditor::applyPreviewStyle(ads::CDockWidget *dockWidget, bool preview)
+{
+    auto *tab = dockWidget->tabWidget();
+    QFont f = tab->font();
+    f.setItalic(preview);
+    tab->setFont(f);
+}
+
+bool DockedEditor::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::MouseButtonDblClick && m_previewEditor) {
+        auto *tab = qobject_cast<ads::CDockWidgetTab *>(watched);
+        if (tab) {
+            ads::CDockWidget *dw = tab->dockWidget();
+            ScintillaNext *editor = qobject_cast<ScintillaNext *>(dw->widget());
+            if (editor == m_previewEditor) {
+                pinPreviewEditor();
+                return true;
+            }
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 void DockedEditor::editorRenamed(ScintillaNext *editor)

@@ -27,6 +27,7 @@
 #include "ApplicationSettings.h"
 #include "ProfileScope.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -339,6 +340,16 @@ void AcpAgentManager::wireConnectionToModel(AcpConnection *conn, AcpSessionModel
     // permissionRequested + errorOccurred bypass the model — the view will
     // connect directly to the connection for those (the dock holds both
     // pointers). See AiAgentDock for the wiring (Group 5).
+
+    // String-based invokeMethod because NotepadNextApplication.h pulls in
+    // SingleApplication which isn't available in test targets. Compile-time
+    // safety: GitController.cpp uses a typed connect to the same signal, so
+    // a rename breaks the build there.
+    connect(conn, &AcpConnection::fileWrittenOnDisk, this, [](const QString &path) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                  "gitWorkingTreeDirtied",
+                                  Q_ARG(QString, path));
+    });
 }
 
 void AcpAgentManager::teardownSession(Session &session)

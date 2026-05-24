@@ -1130,6 +1130,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     DockMiddleClickCloser::install(fawDock);
     ui->menuView->addAction(fawDock->toggleViewAction());
     connect(fawDock, &FolderAsWorkspaceDock::fileDoubleClicked, this, &MainWindow::openFile);
+    connect(fawDock, &FolderAsWorkspaceDock::fileClicked, this, &MainWindow::previewFile);
     wireWorkspaceGitSignals(fawDock);
     registerWorkspaceDock(fawDock);
 
@@ -1541,6 +1542,9 @@ void MainWindow::openFileList(const QStringList &fileNames)
                 editor = app->getEditorManager()->createEditorFromFile(filePath);
             }
         }
+        else if (editor == dockedEditor->previewEditor()) {
+            dockedEditor->pinPreviewEditor();
+        }
 
         if (editor) {
             openedEditors.append(editor);
@@ -1600,6 +1604,30 @@ void MainWindow::openFileDialog()
 void MainWindow::openFile(const QString &filePath)
 {
     openFileList(QStringList() << filePath);
+}
+
+void MainWindow::previewFile(const QString &filePath)
+{
+    ScintillaNext *editor = app->getEditorManager()->getEditorByFilePath(filePath);
+
+    if (editor) {
+        dockedEditor->switchToEditor(editor);
+        return;
+    }
+
+    QFileInfo fileInfo(filePath);
+    if (!fileInfo.isFile()) return;
+
+    editor = app->getEditorManager()->createEditorFromFile(filePath);
+    if (!editor) return;
+
+    ScintillaNext *initialEditor = getInitialEditor();
+    dockedEditor->addPreviewEditor(editor);
+    dockedEditor->switchToEditor(editor);
+
+    if (initialEditor) {
+        initialEditor->close();
+    }
 }
 
 void MainWindow::openFolderAsWorkspaceDialog()
@@ -1683,6 +1711,7 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
     DockMiddleClickCloser::install(dock);
     ui->menuView->addAction(dock->toggleViewAction());
     connect(dock, &FolderAsWorkspaceDock::fileDoubleClicked, this, &MainWindow::openFile);
+    connect(dock, &FolderAsWorkspaceDock::fileClicked, this, &MainWindow::previewFile);
     wireWorkspaceGitSignals(dock);
     registerWorkspaceDock(dock);
 

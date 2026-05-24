@@ -96,6 +96,7 @@ public:
     WorkspaceStateSnapshot captureState() const;
 
 signals:
+    void fileClicked(const QString &filePath);
     void fileDoubleClicked(const QString &filePath);
     // Forwarded from GitTabWidget once the Git tab is created.
     void gitDiffRequested(const GitStatusEntry &entry);

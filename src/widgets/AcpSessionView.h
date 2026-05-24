@@ -98,6 +98,8 @@ signals:
 private slots:
     void onShowDebugLogClicked();
 
+    QSize minimumSizeHint() const override;
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void changeEvent(QEvent *event) override;

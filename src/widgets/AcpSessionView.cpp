@@ -181,12 +181,18 @@ AcpSessionView::AcpSessionView(AcpSessionModel *model,
     , m_connection(connection)
     , m_registry(registry)
 {
+    setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     buildUi();
     wireSignals();
     hydrateFromModel();
 }
 
 AcpSessionView::~AcpSessionView() = default;
+
+QSize AcpSessionView::minimumSizeHint() const
+{
+    return QSize(200, 100);
+}
 
 void AcpSessionView::buildUi()
 {
@@ -1086,7 +1092,7 @@ void AcpSessionView::onTurnEnded(int groupId)
     Q_UNUSED(groupId);
     if (m_currentGroupCards.size() > 3) {
         for (auto *card : m_currentGroupCards) {
-            if (card) card->setCollapsed(true);
+            if (card && !card->shouldPreserveExpanded()) card->setCollapsed(true);
         }
     }
     m_currentGroupCards.clear();

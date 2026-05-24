@@ -124,6 +124,7 @@ void AcpImageAttachmentList::clear()
 {
     for (Item &item : m_items) {
         if (item.widget) {
+            m_layout->removeWidget(item.widget);
             item.widget->deleteLater();
             item.widget = nullptr;
         }
@@ -137,9 +138,11 @@ void AcpImageAttachmentList::removeItemAt(int index)
 {
     if (index < 0 || index >= m_items.size()) return;
     if (m_items[index].widget) {
+        m_layout->removeWidget(m_items[index].widget);
         m_items[index].widget->deleteLater();
     }
     m_items.remove(index);
+    rebuildLayout();
     if (m_items.isEmpty()) {
         hide();
     }

@@ -128,6 +128,8 @@ signals:
     // affordance. No auto-reconnect is attempted; the user must click Restart.
     void agentExited(int exitCode, QProcess::ExitStatus exitStatus);
 
+    void fileWrittenOnDisk(const QString &canonicalPath);
+
 private slots:
     void handleStdoutReady();
     void handleStderrReady();
