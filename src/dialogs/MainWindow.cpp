@@ -104,6 +104,7 @@
 
 #include "HtmlConverter.h"
 #include "RtfConverter.h"
+#include "PandocExporter.h"
 
 #include "FadingIndicator.h"
 
@@ -1972,6 +1973,68 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
             menu->addAction(openTerminal);
         }
 
+        // --- Export via Pandoc (markdown files only) ---
+        if (!isDir) {
+            const QString suffix = QFileInfo(absPath).suffix().toLower();
+            if (suffix == QLatin1String("md") || suffix == QLatin1String("markdown")) {
+                auto *pandocMenu = new QMenu(tr("Export via Pandoc"), menu);
+
+                auto addExportAction = [&](const QString &label, PandocExporter::Format fmt, const QString &ext) {
+                    auto *action = new QAction(label, pandocMenu);
+                    connect(action, &QAction::triggered, this, [this, absPath, fmt, ext]() {
+                        if (!PandocExporter::isAvailable()) {
+                            QMessageBox::warning(this, tr("Export via Pandoc"),
+                                tr("Pandoc 2.19 or later is required but was not found.\n"
+                                   "Install from pandoc.org/installing.html"));
+                            return;
+                        }
+
+                        ScintillaNext *editor = this->app->getEditorManager()->getEditorByFilePath(absPath);
+                        if (editor && editor->canSaveToDisk()) {
+                            auto btn = QMessageBox::question(this, tr("Export via Pandoc"),
+                                tr("This file has unsaved changes in the editor.\n"
+                                   "Export will use the version on disk (without your recent edits)."),
+                                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+                            if (btn == QMessageBox::Save) {
+                                editor->save();
+                            } else if (btn == QMessageBox::Cancel) {
+                                return;
+                            }
+                        }
+
+                        const QFileInfo fi(absPath);
+                        const QString defaultOut = fi.absolutePath() + QLatin1Char('/')
+                            + fi.completeBaseName() + QLatin1Char('.') + ext;
+                        const QString filter = ext == QStringLiteral("docx")
+                            ? tr("Word Documents (*.docx);;All files (*)")
+                            : ext == QStringLiteral("html")
+                                ? tr("HTML Files (*.html);;All files (*)")
+                                : tr("EPUB Files (*.epub);;All files (*)");
+                        const QString outPath = FileDialogHelpers::getSaveFileName(
+                            this, tr("Export via Pandoc"), defaultOut, filter);
+                        if (outPath.isEmpty()) return;
+
+                        auto *exporter = new PandocExporter(this, this);
+                        connect(exporter, &PandocExporter::finished, this,
+                                [this](bool ok, const QString &err) {
+                            if (ok)
+                                FadingIndicator::showText(centralWidget(), tr("Exported successfully"));
+                            else
+                                QMessageBox::warning(this, tr("Export via Pandoc"),
+                                    tr("Export failed: %1").arg(err));
+                        });
+                        exporter->exportFile(absPath, outPath, fmt);
+                    });
+                    pandocMenu->addAction(action);
+                };
+
+                addExportAction(tr("DOCX..."), PandocExporter::Docx, QStringLiteral("docx"));
+                addExportAction(tr("HTML..."), PandocExporter::Html, QStringLiteral("html"));
+                addExportAction(tr("EPUB..."), PandocExporter::Epub, QStringLiteral("epub"));
+                menu->addMenu(pandocMenu);
+            }
+        }
+
         menu->addSeparator();
 
         // --- Delete (submenu: Move to Trash / Delete Permanently) ---
@@ -3032,18 +3095,19 @@ void MainWindow::restoreWindowState()
     PROFILE_SCOPE("MainWindow::restoreWindowState");
     ApplicationSettings *settings = app->getSettings();
 
-    if (!restoreGeometry(settings->value("MainWindow/geometry").toByteArray())) {
-        QRect avail = screen()->availableGeometry();
-        int w = avail.width() * 4 / 5;
-        int h = avail.height() * 4 / 5;
-        setGeometry(avail.x() + (avail.width() - w) / 2,
-                    avail.y() + (avail.height() - h) / 2, w, h);
-    }
-    restoreState(settings->value("MainWindow/windowState").toByteArray());
+    // Temporarily skip restoreState to isolate the white-space bug
+    Q_UNUSED(settings);
 
     // Always hide the dock no matter how the application was closed
     SearchResultsDock *srDock = findChild<SearchResultsDock *>();
     srDock->hide();
+}
+
+void MainWindow::restoreWindowGeometry()
+{
+    // Intentionally skip restoreGeometry — it encodes a normal-state geometry
+    // that can confuse QMainWindow's internal layout when the window is shown
+    // maximized. We only need the maximized flag (handled at the show site).
 }
 
 void MainWindow::switchToEditor(const ScintillaNext *editor)

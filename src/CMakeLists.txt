@@ -37,6 +37,7 @@ qt_add_executable(NotepadAI
 	IFaceTable.h
 	MarkdownPreviewOverlay.h
 	MarkdownRenderer.h
+	PandocExporter.h
 	PreviewBrowser.h
 	IFaceTableMixer.h
 	ISearchResultsHandler.h
@@ -107,6 +108,7 @@ qt_add_executable(NotepadAI
 	IFaceTable.cpp
 	MarkdownPreviewOverlay.cpp
 	MarkdownRenderer.cpp
+	PandocExporter.cpp
 	PreviewBrowser.cpp
 	IFaceTableMixer.cpp
 	LanguageStylesModel.cpp

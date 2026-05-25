@@ -276,6 +276,11 @@ bool NotepadNextApplication::init()
 
     const bool isNewWindow = parser.isSet("new-window");
 
+    {
+        PROFILE_SCOPE("NotepadNextApplication::restoreWindowGeometry");
+        window->restoreWindowGeometry();
+    }
+
     if (!isNewWindow) {
         // One-shot migration from the pre-multi-workspace single-folder setting.
         // Builds before the multi-workspace refactor only persisted
@@ -328,15 +333,6 @@ bool NotepadNextApplication::init()
 
     // Everything should be ready at this point
 
-    {
-        PROFILE_SCOPE("NotepadNextApplication::restoreWindowState");
-        window->restoreWindowState();
-    }
-
-    if (!isNewWindow) {
-        window->raiseSavedActiveWorkspace();
-    }
-
     // Check this after restoring the state, as the state contains the previous visibility state of the FAW dock
     if (parser.isSet("workspace")) {
         const QString dir = parser.value("workspace");
@@ -346,10 +342,16 @@ bool NotepadNextApplication::init()
 
     {
     PROFILE_SCOPE("NotepadNextApplication::init.windowShow");
-    if (settings->value("MainWindow/maximized", true).toBool())
-        window->showMaximized();
-    else
-        window->show();
+    window->showMaximized();
+    }
+
+    {
+        PROFILE_SCOPE("NotepadNextApplication::restoreWindowState");
+        window->restoreWindowState();
+    }
+
+    if (!isNewWindow) {
+        window->raiseSavedActiveWorkspace();
     }
 
     DebugManager::resumeDebugOutput();
