@@ -346,7 +346,10 @@ bool NotepadNextApplication::init()
 
     {
     PROFILE_SCOPE("NotepadNextApplication::init.windowShow");
-    window->show();
+    if (settings->value("MainWindow/maximized", true).toBool())
+        window->showMaximized();
+    else
+        window->show();
     }
 
     DebugManager::resumeDebugOutput();

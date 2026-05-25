@@ -227,6 +227,27 @@ QString sanitizeToolText(const QString &raw)
     return s.trimmed();
 }
 
+// Returns true if `text` is a JSON representation of empty content, e.g.
+// `{"content": []}` or just `[]`. Agents sometimes echo back the raw output
+// structure when there is nothing meaningful to report.
+bool isEmptyContentJson(const QString &text)
+{
+    const QByteArray utf8 = text.trimmed().toUtf8();
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(utf8, &err);
+    if (err.error != QJsonParseError::NoError)
+        return false;
+    if (doc.isArray())
+        return doc.array().isEmpty();
+    if (doc.isObject()) {
+        const QJsonObject obj = doc.object();
+        const QJsonValue cv = obj.value(QStringLiteral("content"));
+        if (cv.isArray() && cv.toArray().isEmpty())
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 AcpToolCallCard::AcpToolCallCard(const AcpProtocol::AcpToolCall &initial, QWidget *parent)
@@ -385,7 +406,9 @@ QString AcpToolCallCard::computeEnrichedTitle() const
         QStringLiteral("read"), QStringLiteral("read file")
     };
     if (readTitles.contains(tLower)) {
-        const QString path = m_rawInput.value(QStringLiteral("file_path")).toString();
+        QString path = m_rawInput.value(QStringLiteral("file_path")).toString();
+        if (path.isEmpty())
+            path = m_rawInput.value(QStringLiteral("path")).toString();
         if (!path.isEmpty())
             return QStringLiteral("Read: %1").arg(path);
         return t;
@@ -506,12 +529,14 @@ void AcpToolCallCard::rerenderBody()
             const QJsonObject obj = v.toObject();
             const QString type = obj.value(QStringLiteral("type")).toString();
             if (type == QLatin1String("text")) {
-                html += QStringLiteral("<pre style=\"font-family: Consolas, monospace; "
-                                       "color: %1; white-space: pre-wrap; "
-                                       "margin: 0 0 4px 0;\">%2</pre>")
-                            .arg(dpal.text,
-                                 obj.value(QStringLiteral("text")).toString().toHtmlEscaped());
-                decodedSomething = true;
+                const QString t = obj.value(QStringLiteral("text")).toString();
+                if (!t.isEmpty() && !isEmptyContentJson(t)) {
+                    html += QStringLiteral("<pre style=\"font-family: Consolas, monospace; "
+                                           "color: %1; white-space: pre-wrap; "
+                                           "margin: 0 0 4px 0;\">%2</pre>")
+                                .arg(dpal.text, t.toHtmlEscaped());
+                    decodedSomething = true;
+                }
             } else if (type == QLatin1String("image")) {
                 html += QStringLiteral("<p style=\"color: %1; margin: 0 0 4px 0;\">[image]</p>")
                             .arg(dpal.dim);
@@ -528,11 +553,13 @@ void AcpToolCallCard::rerenderBody()
                 if (innerType == QLatin1String("text")) {
                     const QString clean = sanitizeToolText(
                         inner.value(QStringLiteral("text")).toString());
-                    html += QStringLiteral("<pre style=\"font-family: Consolas, monospace; "
-                                           "color: %1; white-space: pre-wrap; "
-                                           "margin: 0 0 4px 0;\">%2</pre>")
-                                .arg(dpal.text, clean.toHtmlEscaped());
-                    decodedSomething = true;
+                    if (!clean.isEmpty() && !isEmptyContentJson(clean)) {
+                        html += QStringLiteral("<pre style=\"font-family: Consolas, monospace; "
+                                               "color: %1; white-space: pre-wrap; "
+                                               "margin: 0 0 4px 0;\">%2</pre>")
+                                    .arg(dpal.text, clean.toHtmlEscaped());
+                        decodedSomething = true;
+                    }
                 } else if (innerType == QLatin1String("image")) {
                     html += QStringLiteral("<p style=\"color: %1; margin: 0 0 4px 0;\">[image]</p>")
                                 .arg(dpal.dim);
@@ -560,9 +587,12 @@ void AcpToolCallCard::rerenderBody()
         const QJsonObject obj = v.toObject();
         const QString type = obj.value(QStringLiteral("type")).toString();
         if (type == QLatin1String("text")) {
-            text += obj.value(QStringLiteral("text")).toString();
-            text += QLatin1Char('\n');
-            decodedSomething = true;
+            const QString t = obj.value(QStringLiteral("text")).toString();
+            if (!t.isEmpty() && !isEmptyContentJson(t)) {
+                text += t;
+                text += QLatin1Char('\n');
+                decodedSomething = true;
+            }
         } else if (type == QLatin1String("image")) {
             text += QStringLiteral("[image]\n");
             decodedSomething = true;
@@ -570,9 +600,12 @@ void AcpToolCallCard::rerenderBody()
             const QJsonObject inner = obj.value(QStringLiteral("content")).toObject();
             const QString innerType = inner.value(QStringLiteral("type")).toString();
             if (innerType == QLatin1String("text")) {
-                text += sanitizeToolText(inner.value(QStringLiteral("text")).toString());
-                text += QLatin1Char('\n');
-                decodedSomething = true;
+                const QString clean = sanitizeToolText(inner.value(QStringLiteral("text")).toString());
+                if (!clean.isEmpty() && !isEmptyContentJson(clean)) {
+                    text += clean;
+                    text += QLatin1Char('\n');
+                    decodedSomething = true;
+                }
             } else if (innerType == QLatin1String("image")) {
                 text += QStringLiteral("[image]\n");
                 decodedSomething = true;

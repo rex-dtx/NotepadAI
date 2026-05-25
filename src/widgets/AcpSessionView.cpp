@@ -735,6 +735,13 @@ void AcpSessionView::rebind(AcpSessionModel *model, AcpConnection *connection)
     }
     if (m_connection) {
         disconnect(m_connection, nullptr, this, nullptr);
+        // Also sever the debug-dialog's live-update lambda which uses
+        // m_debugDialog as context (not `this`), so the generic disconnect
+        // above doesn't cover it.
+        if (m_debugDialog) {
+            disconnect(m_connection, &AcpConnection::debugLogAppended,
+                       m_debugDialog, nullptr);
+        }
     }
 
     m_model = model;
@@ -788,9 +795,23 @@ void AcpSessionView::rebind(AcpSessionModel *model, AcpConnection *connection)
 
     // If the debug-log popup is open, repoint its content at the new
     // connection's log so the user sees the freshly-restarted session.
+    // Also rewire the live-update connection to the new AcpConnection.
     if (m_debugDialog && m_debugDialogText) {
         if (m_connection) {
             m_debugDialogText->setPlainText(m_connection->debugLog().join(QLatin1Char('\n')));
+            // Wire live updates from the new connection.
+            QPointer<AcpSessionView> self(this);
+            connect(m_connection, &AcpConnection::debugLogAppended, m_debugDialog,
+                    [self](const QString &line) {
+                if (!self || !self->m_debugDialogText) return;
+                const bool onlyGoal = self->m_debugDialogOnlyGoal
+                                      && self->m_debugDialogOnlyGoal->isChecked();
+                if (onlyGoal) return;
+                QScrollBar *bar = self->m_debugDialogText->verticalScrollBar();
+                const bool wasAtBottom = bar ? (bar->value() == bar->maximum()) : true;
+                self->m_debugDialogText->appendPlainText(line);
+                if (wasAtBottom && bar) bar->setValue(bar->maximum());
+            });
         } else {
             m_debugDialogText->setPlainText(tr("(no active connection)"));
         }
@@ -1210,8 +1231,14 @@ QVector<QPair<QByteArray, QString>> AcpSessionView::takeInputImages()
 
 QStringList AcpSessionView::goalDebugLog() const
 {
-    auto *dock = qobject_cast<AiAgentDock *>(parentWidget());
-    if (dock) return dock->goalDebugLog();
+    // parentWidget() returns QDockWidget's internal container, not the dock
+    // itself. Walk up the ancestor chain to find the owning AiAgentDock.
+    QWidget *w = parentWidget();
+    while (w) {
+        if (auto *dock = qobject_cast<AiAgentDock *>(w))
+            return dock->goalDebugLog();
+        w = w->parentWidget();
+    }
     return {};
 }
 
@@ -1461,6 +1488,13 @@ void AcpSessionView::onElapsedTick()
 
 void AcpSessionView::onShowDebugLogClicked()
 {
+    // Find the owning AiAgentDock so we can scope the dialog title and goal
+    // log signals to this specific session/tab.
+    AiAgentDock *ownerDock = nullptr;
+    for (QWidget *w = parentWidget(); w; w = w->parentWidget()) {
+        if (auto *d = qobject_cast<AiAgentDock *>(w)) { ownerDock = d; break; }
+    }
+
     auto refresh = [this]() {
         if (!m_debugDialogText) return;
         if (m_debugDialogOnlyGoal && m_debugDialogOnlyGoal->isChecked()) {
@@ -1486,7 +1520,14 @@ void AcpSessionView::onShowDebugLogClicked()
 
     auto *dlg = new QDialog(window());
     dlg->setAttribute(Qt::WA_DeleteOnClose);
-    dlg->setWindowTitle(tr("ACP Debug Log"));
+    // Per-session title so multiple debug windows (one per AI tab) are
+    // distinguishable in the OS task list and on screen. Falls back to a
+    // generic title when the owning dock can't be located.
+    if (ownerDock && !ownerDock->windowTitle().isEmpty()) {
+        dlg->setWindowTitle(tr("ACP Debug Log — %1").arg(ownerDock->windowTitle()));
+    } else {
+        dlg->setWindowTitle(tr("ACP Debug Log"));
+    }
     dlg->resize(800, 500);
 
     auto *layout = new QVBoxLayout(dlg);
@@ -1553,6 +1594,38 @@ void AcpSessionView::onShowDebugLogClicked()
             self->m_debugDialogOnlyGoal = nullptr;
         }
     });
+
+    // Live updates — append each new line as it arrives so the dialog
+    // streams events instead of needing a manual Refresh. Each AI tab owns
+    // its own AcpConnection, so this scoping naturally keeps tab A's events
+    // out of tab B's debug window.
+    auto appendLive = [self](const QString &line) {
+        if (!self || !self->m_debugDialogText) return;
+        const bool onlyGoal = self->m_debugDialogOnlyGoal
+                              && self->m_debugDialogOnlyGoal->isChecked();
+        if (onlyGoal) return; // goal-only filter; ignore connection-level entries
+        QScrollBar *bar = self->m_debugDialogText->verticalScrollBar();
+        const bool wasAtBottom = bar ? (bar->value() == bar->maximum()) : true;
+        self->m_debugDialogText->appendPlainText(line);
+        if (wasAtBottom && bar) bar->setValue(bar->maximum());
+    };
+    if (m_connection) {
+        connect(m_connection, &AcpConnection::debugLogAppended, dlg, appendLive);
+    }
+    if (ownerDock) {
+        connect(ownerDock, &AiAgentDock::goalDebugLogAppended, dlg,
+                [self](const QString &line) {
+            if (!self || !self->m_debugDialogText) return;
+            QScrollBar *bar = self->m_debugDialogText->verticalScrollBar();
+            const bool wasAtBottom = bar ? (bar->value() == bar->maximum()) : true;
+            self->m_debugDialogText->appendPlainText(line);
+            if (wasAtBottom && bar) bar->setValue(bar->maximum());
+        });
+        // Close the debug dialog when the owning dock is destroyed (user
+        // closes the AI tab). The dialog is parented to the main window,
+        // not the dock, so it would otherwise survive as an orphan.
+        connect(ownerDock, &QObject::destroyed, dlg, &QDialog::close);
+    }
 
     refresh();
     dlg->show();

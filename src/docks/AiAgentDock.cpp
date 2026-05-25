@@ -301,6 +301,7 @@ void AiAgentDock::sendWithGoal()
     m_goalAgent->setTargetSession(m_connection, m_model);
     connect(m_goalAgent, &GoalAgent::debugLogEntry, this, [this](const QString &entry) {
         m_goalDebugLog.append(entry);
+        emit goalDebugLogAppended(entry);
     });
     connect(m_goalAgent, &GoalAgent::statusChanged, this, [this](GoalAgent::Status s) {
         if (!m_model) return;

@@ -93,6 +93,7 @@ public slots:
     void pull(bool rebase);
     void push(const QString &remote = {}, bool setUpstream = false);
     void forcePush(const QString &remote = {});
+    void revertPaths(const QStringList &relPaths);
     void cancelCurrent();
 
     // Request a unified diff for a single path. Side: false = working-tree
@@ -152,7 +153,8 @@ private:
         Stage, Unstage, StageAll, UnstageAll,
         Commit,
         SwitchBranch, CreateBranch, SetUpstream, ConfigTracking, Stash,
-        Fetch, Pull, Push, ForcePush
+        Fetch, Pull, Push, ForcePush,
+        Revert
     };
     struct Op {
         OpKind kind;

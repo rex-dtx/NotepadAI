@@ -21,12 +21,14 @@
 #include <QCoreApplication>
 #include <QDockWidget>
 #include <QEvent>
+#include <QMainWindow>
 #include <QMouseEvent>
 #include <QObject>
 #include <QPoint>
 #include <QPointer>
 #include <QStyle>
 #include <QStyleOptionDockWidget>
+#include <QTabBar>
 
 namespace {
 
@@ -83,6 +85,72 @@ Filter *sharedFilter()
     return instance.data();
 }
 
+// Finds the QDockWidget that owns a given tab in Qt's internal dock tab bar.
+// When QDockWidgets are tabified, Qt creates a QTabBar whose tab labels match
+// the docks' windowTitle(). We walk up to the nearest QMainWindow and search
+// its docks for a title match.
+QDockWidget *dockForTab(QTabBar *tabBar, int index)
+{
+    if (index < 0)
+        return nullptr;
+    const QString tabText = tabBar->tabText(index);
+    if (tabText.isEmpty())
+        return nullptr;
+    QWidget *w = tabBar->parentWidget();
+    QMainWindow *mw = nullptr;
+    while (w) {
+        if ((mw = qobject_cast<QMainWindow *>(w)))
+            break;
+        w = w->parentWidget();
+    }
+    if (!mw)
+        return nullptr;
+    const auto docks = mw->findChildren<QDockWidget *>();
+    for (auto *dock : docks) {
+        if (dock->windowTitle() == tabText)
+            return dock;
+    }
+    return nullptr;
+}
+
+class TabBarFilter : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() != QEvent::MouseButtonRelease)
+            return QObject::eventFilter(watched, event);
+
+        auto *tabBar = qobject_cast<QTabBar *>(watched);
+        if (!tabBar)
+            return QObject::eventFilter(watched, event);
+
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() != Qt::MiddleButton)
+            return QObject::eventFilter(watched, event);
+
+        const int idx = tabBar->tabAt(me->position().toPoint());
+        QDockWidget *dock = dockForTab(tabBar, idx);
+        if (!dock)
+            return QObject::eventFilter(watched, event);
+
+        dock->close();
+        return true;
+    }
+};
+
+TabBarFilter *sharedTabBarFilter()
+{
+    static QPointer<TabBarFilter> instance;
+    if (instance.isNull()) {
+        instance = new TabBarFilter(QCoreApplication::instance());
+    }
+    return instance.data();
+}
+
 } // namespace
 
 namespace DockMiddleClickCloser {
@@ -93,6 +161,16 @@ void install(QDockWidget *dock)
         return;
     }
     dock->installEventFilter(sharedFilter());
+}
+
+void installTabBarFilter(QMainWindow *mainWindow)
+{
+    Q_UNUSED(mainWindow);
+    // Install on qApp so we catch middle-clicks on any QTabBar in the process.
+    // The dockForTab() lookup ensures we only act when the tab bar actually
+    // belongs to a tabified dock group — other QTabBars (dialogs, etc.) are
+    // left alone because no sibling QDockWidget will match.
+    QCoreApplication::instance()->installEventFilter(sharedTabBarFilter());
 }
 
 } // namespace DockMiddleClickCloser

@@ -60,7 +60,7 @@ signals:
     void diffRequested(const GitStatusEntry &entry);
     void openSubmoduleRequested(const QString &absPath);
     void openCommitDetailRequested(const QByteArray &sha);
-    void changesTreeContextMenuRequested(QMenu *menu, const QString &relPath);
+    void changesTreeContextMenuRequested(QMenu *menu, const GitStatusEntry &entry);
 
 private slots:
     void onRepoSelected(int index);

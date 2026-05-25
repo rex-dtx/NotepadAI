@@ -473,6 +473,24 @@ void GitController::forcePush(const QString &remote)
     enqueue(op);
 }
 
+void GitController::revertPaths(const QStringList &relPaths)
+{
+    if (m_currentRepo.isEmpty() || relPaths.isEmpty()) return;
+
+    constexpr int kChunk = 50;
+    for (int i = 0; i < relPaths.size(); i += kChunk) {
+        const QStringList chunk = relPaths.mid(i, kChunk);
+        Op op;
+        op.kind = OpKind::Revert;
+        op.argv = { QStringLiteral("-C"), m_currentRepo, QStringLiteral("checkout"),
+                    QStringLiteral("--") };
+        op.argv.append(chunk);
+        op.timeoutMs = kTimeoutNormal;
+        op.humanName = tr_("Reverting");
+        enqueue(op);
+    }
+}
+
 void GitController::cancelCurrent()
 {
     if (m_runner) m_runner->cancel();
@@ -931,6 +949,7 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
         case OpKind::Pull:
         case OpKind::Push:
         case OpKind::ForcePush:
+        case OpKind::Revert:
             if (kind == OpKind::Commit) emit commitSucceeded();
             if (kind == OpKind::CreateBranch) {
                 const QString newBranch = m_current.meta.value(QStringLiteral("newBranch")).toString();

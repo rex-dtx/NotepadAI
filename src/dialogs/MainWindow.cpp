@@ -74,6 +74,7 @@
 #include "FileListDock.h"
 #include "TerminalDock.h"
 #include "DockMiddleClickCloser.h"
+#include "MarkdownPreviewOverlay.h"
 
 #include "TerminalManager.h"
 #include "TerminalCwdResolver.h"
@@ -1103,6 +1104,8 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     {
     PROFILE_SCOPE("MainWindow::ctor.inspectorAndDocks");
+    DockMiddleClickCloser::installTabBarFilter(this);
+
     EditorInspectorDock *editorInspectorDock = new EditorInspectorDock(this);
     editorInspectorDock->hide();
     addDockWidget(Qt::RightDockWidgetArea, editorInspectorDock);
@@ -1145,6 +1148,47 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     addDockWidget(Qt::LeftDockWidgetArea, fileListDock);
     DockMiddleClickCloser::install(fileListDock);
     ui->menuView->addAction(fileListDock->toggleViewAction());
+
+    {
+        auto makeTintedIcon = [](const QString &svgPath, const QColor &color) {
+            QIcon source(svgPath);
+            if (source.isNull()) return source;
+            QIcon dst;
+            for (int sz : {16, 20, 22, 24, 32, 48}) {
+                QPixmap pm = source.pixmap(sz, sz);
+                if (pm.isNull()) continue;
+                QPainter p(&pm);
+                p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+                p.fillRect(pm.rect(), color);
+                p.end();
+                dst.addPixmap(pm);
+            }
+            return dst;
+        };
+        QIcon icon = makeTintedIcon(QStringLiteral(":/icons/markdown-preview.svg"),
+                                    palette().color(QPalette::ButtonText));
+        m_actionMarkdownPreview = new QAction(icon, tr("Markdown Preview"), this);
+    }
+    m_actionMarkdownPreview->setCheckable(true);
+    m_actionMarkdownPreview->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
+    m_actionMarkdownPreview->setEnabled(false);
+    ui->menuView->addAction(m_actionMarkdownPreview);
+    ui->mainToolBar->addAction(m_actionMarkdownPreview);
+
+    connect(m_actionMarkdownPreview, &QAction::triggered, this, [this](bool checked) {
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+
+        auto *overlay = editor->findChild<MarkdownPreviewOverlay *>(QString(), Qt::FindDirectChildrenOnly);
+        if (!overlay) {
+            overlay = new MarkdownPreviewOverlay(editor, this->app);
+        }
+
+        if (checked)
+            overlay->activate();
+        else
+            overlay->deactivate();
+    });
 
     connect(app->getSettings(), &ApplicationSettings::showMenuBarChanged, this, [=](bool showMenuBar) {
         // Don't 'hide' it, else the actions won't be enabled
@@ -2055,10 +2099,11 @@ void MainWindow::wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock)
             });
 
     connect(dock, &FolderAsWorkspaceDock::gitChangesContextMenuRequested, this,
-            [this](QMenu *menu, const QString &relPath) {
+            [this](QMenu *menu, const GitStatusEntry &entry) {
         AiAgentDock *targetDock = activeAiDock();
         if (!targetDock) return;
 
+        const QString relPath = entry.relPath;
         auto *sendToAi = new QAction(tr("Send to AI"), menu);
         connect(sendToAi, &QAction::triggered, this, [this, relPath]() {
             AiAgentDock *dock = activeAiDock();
@@ -2735,6 +2780,18 @@ void MainWindow::activateEditor(ScintillaNext *editor)
     }
 
     emit editorActivated(editor);
+
+    if (m_actionMarkdownPreview) {
+        const bool isMarkdown = editor && editor->languageName == QLatin1String("Markdown");
+        m_actionMarkdownPreview->setEnabled(isMarkdown);
+
+        bool previewActive = false;
+        if (isMarkdown) {
+            auto *overlay = editor->findChild<MarkdownPreviewOverlay *>(QString(), Qt::FindDirectChildrenOnly);
+            previewActive = overlay && overlay->isActive();
+        }
+        m_actionMarkdownPreview->setChecked(previewActive);
+    }
 }
 
 void MainWindow::applyStyleSheet()
@@ -2913,6 +2970,7 @@ void MainWindow::saveSettings() const
     ApplicationSettings *settings = app->getSettings();
 
     settings->setValue("MainWindow/geometry", saveGeometry());
+    settings->setValue("MainWindow/maximized", isMaximized() || isFullScreen());
     settings->setValue("MainWindow/windowState", saveState());
 
     settings->setValue("Editor/ZoomLevel", zoomLevel);
@@ -2974,7 +3032,13 @@ void MainWindow::restoreWindowState()
     PROFILE_SCOPE("MainWindow::restoreWindowState");
     ApplicationSettings *settings = app->getSettings();
 
-    restoreGeometry(settings->value("MainWindow/geometry").toByteArray());
+    if (!restoreGeometry(settings->value("MainWindow/geometry").toByteArray())) {
+        QRect avail = screen()->availableGeometry();
+        int w = avail.width() * 4 / 5;
+        int h = avail.height() * 4 / 5;
+        setGeometry(avail.x() + (avail.width() - w) / 2,
+                    avail.y() + (avail.height() - h) / 2, w, h);
+    }
     restoreState(settings->value("MainWindow/windowState").toByteArray());
 
     // Always hide the dock no matter how the application was closed
@@ -3036,6 +3100,15 @@ void MainWindow::addEditor(ScintillaNext *editor)
     connect(editor, &ScintillaNext::renamed, this, [=]() { detectLanguage(editor); });
     connect(editor, &ScintillaNext::renamed, this, [=]() { updateFileStatusBasedUi(editor); });
     connect(editor, &ScintillaNext::updateUi, this, &MainWindow::updateDocumentBasedUi);
+
+    connect(editor, &ScintillaNext::lexerChanged, this, [this, editor]() {
+        if (editor == currentEditor() && m_actionMarkdownPreview) {
+            const bool isMarkdown = editor->languageName == QLatin1String("Markdown");
+            m_actionMarkdownPreview->setEnabled(isMarkdown);
+            if (!isMarkdown)
+                m_actionMarkdownPreview->setChecked(false);
+        }
+    });
 
     // Watch for any zoom events (Ctrl+Scroll or pinch-to-zoom (Qt translates it as Ctrl+Scroll)) so that the event
     // can be handled before the ScintillaEditBase widget, so that it can be applied to all editors to keep zoom level equal.
@@ -3355,6 +3428,7 @@ void MainWindow::attachAiAgentDock(AiAgentDock *dock)
     connect(dock, &AiAgentDock::inputFocused, this, syncWorkspaceForDock);
 
     addDockWidget(AiAgentDock::defaultArea(), dock);
+    DockMiddleClickCloser::install(dock);
     if (existing) {
         tabifyDockWidget(existing, dock);
     }

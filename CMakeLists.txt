@@ -37,6 +37,7 @@ find_package(Qt6 6.5
             Network
             PrintSupport
             Core5Compat
+            Concurrent
 )
 
 option(NOTEPADAI_BUILD_TESTS "Build unit tests" OFF)

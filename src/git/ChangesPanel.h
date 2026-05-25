@@ -29,6 +29,7 @@
 class QMenu;
 class QModelIndex;
 class QPushButton;
+class QSplitter;
 class QTreeView;
 
 class CommitComposer;
@@ -69,6 +70,10 @@ public:
     // refreshed so user immediately sees per-file rows.
     void expandTree();
 
+    // Persist / restore the splitter position between the tree and composer.
+    void saveSplitterState(const QString &settingsKey);
+    void restoreSplitterState(const QString &settingsKey);
+
 signals:
     // Stage / unstage flow. `selectionRelPaths` is filtered to the side the
     // button is for (unstaged for stage, staged for unstage).
@@ -93,7 +98,7 @@ signals:
     void fileActivated(const QString &absPath);
     void diffRequested(const GitStatusEntry &entry);
     void openSubmoduleRequested(const QString &absPath);
-    void treeContextMenuRequested(QMenu *menu, const QString &relPath);
+    void treeContextMenuRequested(QMenu *menu, const GitStatusEntry &entry);
 
 private slots:
     void onStageClicked();
@@ -119,6 +124,7 @@ private:
     QPushButton *m_unstageBtn    = nullptr;
     QPushButton *m_stageAllBtn   = nullptr;
     QPushButton *m_unstageAllBtn = nullptr;
+    QSplitter   *m_splitter = nullptr;
     QTreeView   *m_tree     = nullptr;
     CommitComposer *m_composer = nullptr;
     GitStatusItemDelegate *m_delegate = nullptr;

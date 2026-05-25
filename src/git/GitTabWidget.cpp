@@ -319,7 +319,26 @@ void GitTabWidget::buildUi()
     connect(m_changesPanel, &ChangesPanel::openSubmoduleRequested,
             this, &GitTabWidget::onChangesOpenSubmoduleRequested);
     connect(m_changesPanel, &ChangesPanel::treeContextMenuRequested,
-            this, &GitTabWidget::changesTreeContextMenuRequested);
+            this, [this](QMenu *menu, const GitStatusEntry &entry) {
+        // Only show Revert for tracked (unstaged) changes.
+        if (m_controller && entry.section == GitStatusEntry::Tracked) {
+            auto *revertAction = new QAction(tr("Revert"), menu);
+            connect(revertAction, &QAction::triggered, this, [this, entry]() {
+                if (!m_controller) return;
+                auto answer = QMessageBox::warning(
+                    this, tr("Revert Changes"),
+                    tr("Are you sure you want to revert <b>%1</b>?<br>"
+                       "This will discard all uncommitted changes to this file.")
+                        .arg(entry.relPath.toHtmlEscaped()),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (answer == QMessageBox::Yes) {
+                    m_controller->revertPaths({entry.relPath});
+                }
+            });
+            menu->addAction(revertAction);
+        }
+        emit changesTreeContextMenuRequested(menu, entry);
+    });
 
     // History view → forward openCommitDetailRequested up to the host.
     connect(m_historyView, &GitHistoryView::openCommitDetailRequested,
@@ -449,6 +468,7 @@ void GitTabWidget::persistCommitDraft()
     ApplicationSettings settings;
     settings.setValue(settingsKey(QStringLiteral("commitDraft")),
                       m_changesPanel->composer()->message());
+    m_changesPanel->saveSplitterState(settingsKey(QStringLiteral("composerSplitter")));
 }
 
 void GitTabWidget::restoreCommitDraft()
@@ -457,6 +477,7 @@ void GitTabWidget::restoreCommitDraft()
     ApplicationSettings settings;
     const QString draft = settings.value(settingsKey(QStringLiteral("commitDraft"))).toString();
     if (!draft.isEmpty()) m_changesPanel->composer()->setMessage(draft);
+    m_changesPanel->restoreSplitterState(settingsKey(QStringLiteral("composerSplitter")));
 }
 
 void GitTabWidget::onTabChanged(int index)

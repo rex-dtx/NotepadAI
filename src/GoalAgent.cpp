@@ -119,6 +119,7 @@ void GoalAgent::stop()
     if (m_targetConnection) {
         disconnect(m_targetConnection, &AcpConnection::promptEnded,
                    this, &GoalAgent::onTargetPromptEnded);
+        m_targetConnection->cancelPrompt();
     }
     markTerminal(Cancelled, QStringLiteral("user_stop"));
 }

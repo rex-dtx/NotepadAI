@@ -2,6 +2,25 @@ QStatusBar {
     border-top: 1px solid darkgray;
 }
 
+QTabBar::tab {
+    background: rgb(220, 220, 220);
+    color: gray;
+    padding: 4px 8px;
+    border: 1px solid darkgray;
+    border-bottom: 2px solid transparent;
+}
+
+QTabBar::tab:selected {
+    background: rgb(240, 240, 240);
+    color: black;
+    border-bottom: 2px solid orange;
+}
+
+QTabBar::tab:hover:!selected {
+    background: rgb(230, 230, 230);
+    color: #444444;
+}
+
 ads--CDockWidgetTab ads--CElidingLabel {
     color : black;
 }
@@ -20,7 +39,7 @@ ads--CDockWidgetTab {
 ads--CDockWidgetTab[activeTab="true"]
 {
     background: rgb(240, 240, 240);
-    border-top: 4px solid rgb(255, 202, 176);
+    border-top: 2px solid rgb(255, 202, 176);
     padding-bottom: 2px;
     margin-top: 1px;
 }
@@ -28,7 +47,7 @@ ads--CDockWidgetTab[activeTab="true"]
 ads--CDockWidgetTab[focused="true"]
 {
     background: rgb(240, 240, 240);
-    border-top: 4px solid orange;
+    border-top: 2px solid orange;
     padding-bottom: 2px;
     margin-top: 1px;
 }

@@ -32,8 +32,11 @@
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTreeView>
 #include <QVBoxLayout>
+
+#include "ApplicationSettings.h"
 
 ChangesPanel::ChangesPanel(QWidget *parent) : QWidget(parent)
 {
@@ -92,11 +95,17 @@ void ChangesPanel::buildUi()
                 });
     }
 
-    root->addWidget(m_tree, 1);
-
     // Commit composer.
     m_composer = new CommitComposer(this);
-    root->addWidget(m_composer);
+
+    // Splitter between tree and composer for user-resizable commit area.
+    m_splitter = new QSplitter(Qt::Vertical, this);
+    m_splitter->setChildrenCollapsible(false);
+    m_splitter->addWidget(m_tree);
+    m_splitter->addWidget(m_composer);
+    m_splitter->setStretchFactor(0, 1);
+    m_splitter->setStretchFactor(1, 0);
+    root->addWidget(m_splitter, 1);
 
     // Connections.
     connect(m_stageBtn, &QPushButton::clicked,
@@ -132,10 +141,27 @@ void ChangesPanel::buildUi()
         const QString rel = index.data(GitStatusModel::RelPathRole).toString();
         if (rel.isEmpty()) return;
 
+        GitStatusEntry entry;
+        entry.relPath        = rel;
+        entry.origRelPath    = index.data(GitStatusModel::OrigPathRole).toString();
+        entry.change         = static_cast<GitStatusEntry::Change>(
+                                  index.data(GitStatusModel::ChangeRole).toInt());
+        entry.stagedSide     = index.data(GitStatusModel::StagedSideRole).toBool();
+        entry.section        = static_cast<GitStatusEntry::Section>(
+                                  index.data(GitStatusModel::SectionRole).toInt());
+        entry.xy             = index.data(GitStatusModel::XyRole).toString();
+        entry.hasUnstableEncoding =
+            index.data(GitStatusModel::HasUnstableEncodingRole).toBool();
+        entry.isBinary       = index.data(GitStatusModel::IsBinaryRole).toBool();
+        entry.addedLines     = index.data(GitStatusModel::AddedLinesRole).toInt();
+        entry.deletedLines   = index.data(GitStatusModel::DeletedLinesRole).toInt();
+        entry.oursSha        = index.data(GitStatusModel::OursShaRole).toString();
+        entry.theirsSha      = index.data(GitStatusModel::TheirsShaRole).toString();
+
         auto *menu = new QMenu(this);
         menu->setAttribute(Qt::WA_DeleteOnClose);
 
-        emit treeContextMenuRequested(menu, rel);
+        emit treeContextMenuRequested(menu, entry);
 
         if (menu->isEmpty()) {
             delete menu;
@@ -283,4 +309,19 @@ void ChangesPanel::onTreeDoubleClicked(const QModelIndex &index)
     const QString rel = index.data(GitStatusModel::RelPathRole).toString();
     if (rel.isEmpty()) return;
     emit fileActivated(rel);
+}
+
+void ChangesPanel::saveSplitterState(const QString &settingsKey)
+{
+    if (!m_splitter) return;
+    ApplicationSettings settings;
+    settings.setValue(settingsKey, m_splitter->saveState());
+}
+
+void ChangesPanel::restoreSplitterState(const QString &settingsKey)
+{
+    if (!m_splitter) return;
+    ApplicationSettings settings;
+    const QByteArray state = settings.value(settingsKey).toByteArray();
+    if (!state.isEmpty()) m_splitter->restoreState(state);
 }

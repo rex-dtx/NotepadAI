@@ -35,6 +35,9 @@ qt_add_executable(NotepadAI
 	FocusWatcher.h
 	HtmlConverter.h
 	IFaceTable.h
+	MarkdownPreviewOverlay.h
+	MarkdownRenderer.h
+	PreviewBrowser.h
 	IFaceTableMixer.h
 	ISearchResultsHandler.h
 	LanguageStylesModel.h
@@ -102,6 +105,9 @@ qt_add_executable(NotepadAI
 	Finder.cpp
 	HtmlConverter.cpp
 	IFaceTable.cpp
+	MarkdownPreviewOverlay.cpp
+	MarkdownRenderer.cpp
+	PreviewBrowser.cpp
 	IFaceTableMixer.cpp
 	LanguageStylesModel.cpp
 	LuaExtension.cpp
@@ -448,6 +454,7 @@ target_link_libraries(NotepadAI
         Qt6::Widgets
         Qt6::Network
         Qt6::PrintSupport
+        Qt6::Concurrent
         qtadvanceddocking-qt6
         QSimpleUpdater
         SingleApplication::SingleApplication
@@ -460,6 +467,7 @@ target_link_libraries(NotepadAI
         libptyqt
         xxhash
         xdiff
+        md4c
 )
 
 target_compile_definitions(NotepadAI

@@ -87,6 +87,10 @@ signals:
     void restartRequested(const QString &oldSessionId);
     void inputFocused();
 
+    // Emitted whenever a new entry is appended to the goal debug log. Lets
+    // the per-session debug dialog stream goal events live without polling.
+    void goalDebugLogAppended(const QString &entry);
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 

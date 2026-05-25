@@ -50,6 +50,7 @@ class TabsQuickActionsBar;
 class TerminalManager;
 class AiAgentDock;
 class FolderAsWorkspaceDock;
+class MarkdownPreviewOverlay;
 struct GitStatusEntry;
 struct WorkspaceStateSnapshot;
 
@@ -230,6 +231,8 @@ private:
 
     TerminalManager *terminalManager = Q_NULLPTR;
     FileWatcher *fileWatcher = Q_NULLPTR;
+
+    QAction *m_actionMarkdownPreview = nullptr;
 
     QPointer<FolderAsWorkspaceDock> m_activeWorkspace;
     QPointer<AiAgentDock> m_activeAiDock;

@@ -19,11 +19,16 @@
 #pragma once
 
 class QDockWidget;
+class QMainWindow;
 
 namespace DockMiddleClickCloser {
 
 // Install a shared event filter so middle-clicking the dock's title bar
 // closes it, matching the editor-tab middle-click-to-close UX.
 void install(QDockWidget *dock);
+
+// Install a filter on the main window so middle-clicking a tab in Qt's
+// internal dock tab bar (shown when docks are tabified) closes that dock.
+void installTabBarFilter(QMainWindow *mainWindow);
 
 } // namespace DockMiddleClickCloser

@@ -695,3 +695,18 @@ target_sources(test_path_status_index PRIVATE
     ${CMAKE_SOURCE_DIR}/src/git/GitStatusEntry.h
 )
 add_test(NAME PathStatusIndex COMMAND test_path_status_index)
+
+# --- MarkdownRenderer: md4c HTML output, truncation, fence mapping, anchors, highlighting ---
+qt_add_executable(test_markdown_renderer test_markdown_renderer.cpp)
+target_include_directories(test_markdown_renderer PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/thirdparty/scintilla/include
+    ${CMAKE_SOURCE_DIR}/thirdparty/lexilla/include
+    ${CMAKE_SOURCE_DIR}/thirdparty/lexilla/access
+)
+target_link_libraries(test_markdown_renderer PRIVATE Qt6::Core Qt6::Gui Qt6::Test md4c lexilla)
+target_sources(test_markdown_renderer PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/MarkdownRenderer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MarkdownRenderer.h
+)
+add_test(NAME MarkdownRenderer COMMAND test_markdown_renderer)

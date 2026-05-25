@@ -1,0 +1,7 @@
+add_library(md4c STATIC md4c.c md4c-html.c entity.c)
+target_include_directories(md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(MSVC)
+    target_compile_options(md4c PRIVATE /W0)
+else()
+    target_compile_options(md4c PRIVATE -w)
+endif()
