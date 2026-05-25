@@ -60,13 +60,14 @@
 #include <QMetaObject>
 #include <QObject>
 #include <QSet>
-#include <QStandardPaths>
 #include <QString>
 #include <QTemporaryFile>
 #include <QTextStream>
 #include <QVector>
 #include <QWidget>
 #include <QWindow>
+
+#include "DataPaths.h"
 
 #ifdef Q_OS_WIN
 #  define WIN32_LEAN_AND_MEAN
@@ -190,17 +191,9 @@ QString primaryPath()
 
 QString fallbackPath()
 {
-#ifdef Q_OS_WIN
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    // QStandardPaths returns ".../NotepadAI" if QCoreApplication::applicationName is set.
+    const QString base = DataPaths::appDataLocation();
     QDir().mkpath(base);
     return QDir(base).absoluteFilePath(QStringLiteral("shutdown_report.txt"));
-#else
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    const QString dir = QDir(base).absoluteFilePath(QStringLiteral("NotepadAI"));
-    QDir().mkpath(dir);
-    return QDir(dir).absoluteFilePath(QStringLiteral("shutdown_report.txt"));
-#endif
 }
 
 // Try to open a file for writing; uses QTemporaryFile probe to dodge the

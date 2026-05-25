@@ -24,9 +24,9 @@
 #include "SessionManager.h"
 #include "EditorManager.h"
 #include "NotepadNextApplication.h"
+#include "DataPaths.h"
 
 #include <QDir>
-#include <QStandardPaths>
 #include <QUuid>
 
 
@@ -67,7 +67,7 @@ void SessionManager::setSessionFileTypes(SessionFileTypes types)
 
 QDir SessionManager::sessionDirectory() const
 {
-    QDir d(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+    QDir d(DataPaths::appDataLocation());
 
     d.mkpath("session");
     d.cd("session");

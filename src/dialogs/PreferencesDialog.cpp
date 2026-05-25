@@ -18,6 +18,7 @@
 
 
 #include "PreferencesDialog.h"
+#include "DataPaths.h"
 #include "NotepadNextApplication.h"
 #include "TranslationManager.h"
 #include "ai/CredentialStore.h"
@@ -25,6 +26,7 @@
 #include "ScintillaNext.h"
 
 #include <QButtonGroup>
+#include <QDir>
 #include <QFileDialog>
 #include <QFont>
 #include <QFontDatabase>
@@ -32,6 +34,7 @@
 #include <QKeySequenceEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QSpinBox>
 
 
@@ -201,6 +204,82 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
         if (ok) {
             settings->setTerminalFont(chosen.toString());
         }
+    });
+
+    // --- Data Directory section ------------------------------------------------
+
+    ui->lineEditDataDir->setText(QDir::toNativeSeparators(DataPaths::appDataLocation()));
+    ui->labelDataDirSourceValue->setText(DataPaths::sourceLabel());
+
+    const bool isOverridden = (DataPaths::source() == DataPaths::Source::CLI
+                               || DataPaths::source() == DataPaths::Source::Env
+                               || DataPaths::source() == DataPaths::Source::Portable);
+    ui->btnBrowseDataDir->setEnabled(!isOverridden);
+
+    connect(ui->btnBrowseDataDir, &QToolButton::clicked, this, [this]() {
+        const QString dir = QFileDialog::getExistingDirectory(
+            this, tr("Choose Data Directory"),
+            QDir::toNativeSeparators(DataPaths::baseDir()));
+        if (dir.isEmpty()) return;
+
+        const QString newAppData = QDir::cleanPath(dir) + QStringLiteral("/NotepadAI");
+        if (QDir::cleanPath(newAppData) == QDir::cleanPath(DataPaths::appDataLocation())) {
+            return;
+        }
+
+        // Check if target already has data
+        QDir targetDir(newAppData);
+        if (targetDir.exists() && !targetDir.isEmpty()) {
+            const int choice = QMessageBox::question(
+                this, tr("Data Directory"),
+                tr("The directory already contains data.\n\n"
+                   "Use existing data (no copy), overwrite with current data, or cancel?"),
+                tr("Use Existing"), tr("Overwrite"), tr("Cancel"),
+                0, 2);
+            if (choice == 2) return;
+            if (choice == 0) {
+                writeBootstrapDataDir(dir);
+                offerRestart();
+                return;
+            }
+        }
+
+        // Copy current data to new location
+        if (!targetDir.exists()) targetDir.mkpath(QStringLiteral("."));
+
+        const QDir sourceDir(DataPaths::appDataLocation());
+        bool copyOk = true;
+        const auto entries = sourceDir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString &entry : entries) {
+            const QString srcPath = sourceDir.absoluteFilePath(entry);
+            const QString dstPath = targetDir.absoluteFilePath(entry);
+            QFileInfo fi(srcPath);
+            if (fi.isDir()) {
+                copyOk = QDir(dstPath).mkpath(QStringLiteral("."));
+                if (copyOk) {
+                    QDir subDir(srcPath);
+                    const auto subEntries = subDir.entryList(QDir::Files);
+                    for (const QString &subEntry : subEntries) {
+                        QFile::remove(targetDir.absoluteFilePath(entry + QLatin1Char('/') + subEntry));
+                        copyOk = QFile::copy(subDir.absoluteFilePath(subEntry),
+                                             targetDir.absoluteFilePath(entry + QLatin1Char('/') + subEntry));
+                        if (!copyOk) break;
+                    }
+                }
+            } else {
+                QFile::remove(dstPath);
+                copyOk = QFile::copy(srcPath, dstPath);
+            }
+            if (!copyOk) {
+                QMessageBox::warning(this, tr("Data Directory"),
+                    tr("Failed to copy data to the new directory.\n"
+                       "The data directory has not been changed."));
+                return;
+            }
+        }
+
+        writeBootstrapDataDir(dir);
+        offerRestart();
     });
 
     // --- AI commit-message settings ------------------------------------------
@@ -395,5 +474,32 @@ void PreferencesDialog::populateTranslationComboBox()
     int index = ui->comboBoxTranslation->findData(settings->translation());
     if (index != -1) {
         ui->comboBoxTranslation->setCurrentIndex(index);
+    }
+}
+
+void PreferencesDialog::writeBootstrapDataDir(const QString &baseDir)
+{
+    QSettings bootstrap(QSettings::IniFormat, QSettings::UserScope,
+                        QStringLiteral("NotepadAI"), QStringLiteral("NotepadAI"));
+    bootstrap.setValue(QStringLiteral("App/DataDir"), baseDir);
+    if (bootstrap.status() != QSettings::NoError) {
+        QMessageBox::warning(this, tr("Data Directory"),
+            tr("Cannot save data directory preference to the default settings file.\n"
+               "Use --data-dir flag or NOTEPADAI_DATA_DIR environment variable instead."));
+    }
+}
+
+void PreferencesDialog::offerRestart()
+{
+    const int result = QMessageBox::question(
+        this, tr("Restart Required"),
+        tr("The data directory has been changed. Restart now to apply?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (result == QMessageBox::Yes) {
+        const QString exe = QCoreApplication::applicationFilePath();
+        QProcess::startDetached(exe, QCoreApplication::arguments().mid(1));
+        QCoreApplication::quit();
+    } else {
+        showApplicationRestartRequired();
     }
 }

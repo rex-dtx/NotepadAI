@@ -72,7 +72,8 @@ void parseCommandLine(QCommandLineParser &parser, const QStringList &args)
         {"reset-settings", "Resets all application settings."},
         {"n", "Places the cursor on the line number for the first file specified", "line number"},
         {"workspace", "Opens the specified folder as a workspace", "workspace path"},
-        {"new-window", "Forces a fresh independent window instead of forwarding to an existing instance"}
+        {"new-window", "Forces a fresh independent window instead of forwarding to an existing instance"},
+        {"data-dir", "Use a custom data directory for settings, sessions, and history", "path"}
     });
 
     parser.process(args);
@@ -87,8 +88,11 @@ static QString toLocalFileName(const QString file)
 // Detect --new-window from raw argv before SingleApplication runs its primary-instance
 // check. When set we hand the base ctor a unique userData so this process gets its own
 // block-server identity and isn't intercepted as a secondary of the existing instance.
-static QString detectNewWindowUserData(int argc, char **argv)
+// Skipped when a custom data dir provides its own userData (--data-dir wins).
+static QString detectNewWindowUserData(int argc, char **argv, const QString &dataDirUserData)
 {
+    if (!dataDirUserData.isEmpty())
+        return dataDirUserData;
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--new-window") == 0 || qstrcmp(argv[i], "-new-window") == 0) {
             return QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -97,8 +101,8 @@ static QString detectNewWindowUserData(int argc, char **argv)
     return {};
 }
 
-NotepadNextApplication::NotepadNextApplication(int &argc, char **argv)
-    : SingleApplication(argc, argv, true, opts, 1000, detectNewWindowUserData(argc, argv))
+NotepadNextApplication::NotepadNextApplication(int &argc, char **argv, const QString &userData)
+    : SingleApplication(argc, argv, true, opts, 1000, detectNewWindowUserData(argc, argv, userData))
 {
 #ifdef Q_OS_WIN
     // Create a system-wide mutex so the installer can detect if it is running

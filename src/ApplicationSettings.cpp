@@ -59,6 +59,8 @@ CREATE_SETTING(App, RestorePreviousSession, restorePreviousSession, bool, true)
 CREATE_SETTING(App, RestoreUnsavedFiles, restoreUnsavedFiles, bool, false)
 CREATE_SETTING(App, RestoreTempFiles, restoreTempFiles, bool, false)
 
+CREATE_SETTING(App, DataDir, dataDir, QString, QString())
+
 CREATE_SETTING(App, DefaultDirectoryBehavior, defaultDirectoryBehavior, ApplicationSettings::DefaultDirectoryBehaviorEnum, ApplicationSettings::FollowCurrentDocument)
 CREATE_SETTING(App, DefaultDirectory, defaultDirectory, QString, QString())
 

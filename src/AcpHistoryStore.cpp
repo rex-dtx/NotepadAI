@@ -17,13 +17,13 @@
  */
 
 #include "AcpHistoryStore.h"
+#include "DataPaths.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QSaveFile>
-#include <QStandardPaths>
 #include <QTimer>
 
 Q_LOGGING_CATEGORY(lcAcpHistory, "notepadnext.acp.history")
@@ -34,8 +34,7 @@ constexpr int kDebounceMs = 500;
 
 AcpHistoryStore::AcpHistoryStore(QObject *parent)
     : QObject(parent)
-    , m_historyDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                   + QStringLiteral("/acp-history"))
+    , m_historyDir(DataPaths::appDataLocation() + QStringLiteral("/acp-history"))
 {
 }
 

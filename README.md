@@ -38,6 +38,31 @@ See [doc/Building.md](doc/Building.md) for platform-specific details.
 
 NotepadAI speaks the [Agent Client Protocol (ACP)](doc/AcpAgents.md) over stdio. The default built-in agent is Claude Code. Add custom agents via Settings with any command that implements ACP's JSON-RPC 2.0 wire format.
 
+## Multi-Instance / Portable Mode
+
+NotepadAI supports running multiple independent instances, each with its own settings, sessions, and AI history. This is useful when you want separate profiles (e.g., work vs personal) without data conflicts.
+
+All application data is stored under `<data-dir>/NotepadAI/` (settings INI, session backups, ACP chat history).
+
+### Custom data directory
+
+Set a custom data directory using one of these methods (highest priority first):
+
+| Method | Example |
+|--------|---------|
+| CLI flag | `NotepadAI.exe --data-dir=D:\profiles\work` |
+| Environment variable | `NOTEPADAI_DATA_DIR=D:\profiles\work` |
+| Portable marker | Create an empty file named `portable` next to the exe |
+| Preferences UI | Settings > Data Directory > Browse |
+
+Relative paths are resolved relative to the executable's directory.
+
+When two instances use different data directories, they run as fully independent processes (separate settings, sessions, window state, and SingleApplication identity). Instances sharing the same data directory still behave as a single instance (the second forwards its files to the first).
+
+### Portable mode
+
+Place an empty file named `portable` next to `NotepadAI.exe`. The application will store all data in the same directory as the executable — no writes to `%APPDATA%` or system directories. Ideal for USB drives or self-contained deployments.
+
 ## License
 
 [GNU General Public License v3](https://www.gnu.org/licenses/gpl-3.0.txt)

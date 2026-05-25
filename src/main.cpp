@@ -18,14 +18,19 @@
 
 
 #include <QDebug>
+#include <QDir>
+#include <QCryptographicHash>
+#include <QFileInfo>
 #include <QSettings>
 #include <QSysInfo>
 #include <QApplication>
 #include <QDataStream>
 
 #include <cstring>
+#include <cstdlib>
 
 #include "CrashHandler.h"
+#include "DataPaths.h"
 #include "NotepadNextApplication.h"
 #include "ShutdownDiagnostics.h"
 
@@ -63,7 +68,116 @@ int main(int argc, char *argv[])
     // Default settings format
     QSettings::setDefaultFormat(QSettings::IniFormat);
 
-    NotepadNextApplication app(argc, argv);
+    // --- Resolve data directory (priority: CLI > env > portable > bootstrap INI > default) ---
+    QString dataDir;
+    DataPaths::Source dataSource = DataPaths::Source::Default;
+
+    auto resolveRelative = [&](const QString &path) -> QString {
+        QDir d(path);
+        if (d.isAbsolute())
+            return QDir::cleanPath(path);
+        const QString exeDir = QCoreApplication::applicationDirPath();
+        return QDir::cleanPath(exeDir + QLatin1Char('/') + path);
+    };
+
+    // 1) CLI: --data-dir=<path>
+    for (int i = 1; i < argc; ++i) {
+        const char *prefix = "--data-dir=";
+        if (std::strncmp(argv[i], prefix, std::strlen(prefix)) == 0) {
+            const char *val = argv[i] + std::strlen(prefix);
+            if (val[0] != '\0') {
+                dataDir = resolveRelative(QString::fromUtf8(val));
+                dataSource = DataPaths::Source::CLI;
+            }
+            break;
+        }
+    }
+
+    // 2) Env: NOTEPADAI_DATA_DIR
+    if (dataDir.isEmpty()) {
+        const char *envVal = std::getenv("NOTEPADAI_DATA_DIR");
+        if (envVal && envVal[0] != '\0') {
+            dataDir = resolveRelative(QString::fromUtf8(envVal));
+            dataSource = DataPaths::Source::Env;
+        }
+    }
+
+    // 3) Portable: file named "portable" next to exe
+    if (dataDir.isEmpty()) {
+        const QString exeDir = QCoreApplication::applicationDirPath();
+        if (QFileInfo::exists(exeDir + QStringLiteral("/portable"))) {
+            dataDir = exeDir;
+            dataSource = DataPaths::Source::Portable;
+        }
+    }
+
+    // 4) Bootstrap INI at default location: key App/DataDir
+    if (dataDir.isEmpty()) {
+        QSettings bootstrap(QSettings::IniFormat, QSettings::UserScope,
+                            QStringLiteral("NotepadAI"), QStringLiteral("NotepadAI"));
+        const QString stored = bootstrap.value(QStringLiteral("App/DataDir")).toString();
+        if (!stored.isEmpty()) {
+            const QString resolved = resolveRelative(stored);
+            QDir d(resolved + QStringLiteral("/NotepadAI"));
+            if (d.exists() || d.mkpath(QStringLiteral("."))) {
+                dataDir = resolved;
+                dataSource = DataPaths::Source::Setting;
+            }
+        }
+    }
+
+    // 5) Default
+    if (dataDir.isEmpty()) {
+        dataDir = QSettings(QSettings::IniFormat, QSettings::UserScope,
+                            QStringLiteral("NotepadAI"), QStringLiteral("NotepadAI"))
+                      .fileName();
+        // fileName() returns full path to INI; we need the parent of org dir
+        // e.g. "C:/Users/X/AppData/Roaming/NotepadAI/NotepadAI.ini" → "C:/Users/X/AppData/Roaming"
+        QFileInfo fi(dataDir);
+        dataDir = fi.absolutePath();           // .../NotepadAI
+        dataDir = QFileInfo(dataDir).absolutePath(); // .../Roaming
+        dataSource = DataPaths::Source::Default;
+    }
+
+    // Validate: ensure the data directory is writable
+    {
+        QDir d(dataDir + QStringLiteral("/NotepadAI"));
+        if (!d.exists() && !d.mkpath(QStringLiteral("."))) {
+            // Fallback to default if custom dir is not writable
+            if (dataSource != DataPaths::Source::Default) {
+                qWarning("Data directory '%s' is not writable, falling back to default",
+                         qUtf8Printable(dataDir));
+                QSettings fallback(QSettings::IniFormat, QSettings::UserScope,
+                                   QStringLiteral("NotepadAI"), QStringLiteral("NotepadAI"));
+                QFileInfo fi(fallback.fileName());
+                dataDir = QFileInfo(fi.absolutePath()).absolutePath();
+                dataSource = DataPaths::Source::Default;
+            }
+        }
+    }
+
+    DataPaths::init(dataDir, dataSource);
+
+    // Redirect QSettings to the resolved data directory
+    if (dataSource != DataPaths::Source::Default) {
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dataDir);
+    }
+
+    // --- SingleApplication userData based on data dir ---
+    // When using a custom data dir, hash the path to create a unique identity.
+    // This replaces --new-window behavior when --data-dir is present.
+    QString singleAppUserData;
+    if (dataSource != DataPaths::Source::Default) {
+        QString normalized = QDir::cleanPath(dataDir);
+#ifdef Q_OS_WIN
+        normalized = QDir::toNativeSeparators(normalized).toCaseFolded();
+#endif
+        const QByteArray hash = QCryptographicHash::hash(
+            normalized.toUtf8(), QCryptographicHash::Sha256);
+        singleAppUserData = QString::fromLatin1(hash.toHex());
+    }
+
+    NotepadNextApplication app(argc, argv, singleAppUserData);
 
     // Log some debug info
     qInfo("=============================");

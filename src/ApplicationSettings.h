@@ -111,6 +111,8 @@ public:
     DEFINE_SETTING(RestoreUnsavedFiles, restoreUnsavedFiles, bool)
     DEFINE_SETTING(RestoreTempFiles, restoreTempFiles, bool)
 
+    DEFINE_SETTING(DataDir, dataDir, QString)
+
     DEFINE_SETTING(DefaultDirectoryBehavior, defaultDirectoryBehavior, DefaultDirectoryBehaviorEnum)
     DEFINE_SETTING(DefaultDirectory, defaultDirectory, QString)
 

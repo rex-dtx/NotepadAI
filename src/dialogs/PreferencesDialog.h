@@ -53,6 +53,9 @@ private:
     void MapSettingToGroupBox(QGroupBox *groupBox, Func1 getter, Func2 setter, Func3 notifier) const;
 
     void populateTranslationComboBox();
+
+    void writeBootstrapDataDir(const QString &baseDir);
+    void offerRestart();
 };
 
 #endif // PREFERENCESDIALOG_H

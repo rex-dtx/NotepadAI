@@ -27,10 +27,10 @@
 #include <QJsonValue>
 #include <QLoggingCategory>
 #include <QMetaObject>
-#include <QStandardPaths>
 #include <utility>
 
 #include "AcpHistoryStore.h"
+#include "DataPaths.h"
 
 using namespace AcpProtocol;
 
@@ -38,8 +38,7 @@ namespace {
 
 QString defaultHistoryDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-           + QStringLiteral("/acp-history");
+    return DataPaths::appDataLocation() + QStringLiteral("/acp-history");
 }
 
 QJsonArray contentBlocksToJson(const QVector<AcpContentBlock> &blocks)

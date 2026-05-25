@@ -45,7 +45,7 @@ class NotepadNextApplication : public SingleApplication
     Q_OBJECT
 
 public:
-    NotepadNextApplication(int &argc, char **argv);
+    NotepadNextApplication(int &argc, char **argv, const QString &userData = QString());
 
     bool init();
 

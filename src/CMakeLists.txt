@@ -21,6 +21,7 @@ qt_add_executable(NotepadAI
 	Converter.h
 	CrashContext.h
 	CrashHandler.h
+	DataPaths.h
 	DebugManager.h
 	DefaultDirectoryManager.h
 	DockedEditor.h
@@ -89,6 +90,7 @@ qt_add_executable(NotepadAI
 	Converter.cpp
 	CrashContext.cpp
 	CrashHandler.cpp
+	DataPaths.cpp
 	DebugManager.cpp
 	DefaultDirectoryManager.cpp
 	DockedEditor.cpp
