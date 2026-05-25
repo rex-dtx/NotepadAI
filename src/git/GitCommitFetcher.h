@@ -39,7 +39,7 @@ class GitWatcher;
 //      and full message body.
 //   2. `git -c color.ui=never show --numstat -z --format= <sha>` for the
 //      file list with binary detection (numstat uses `-\t-\t<path>` for
-//      binaries — re-uses GitNumstatParser).
+//      binaries — reuses GitNumstatParser).
 //   3. `git -c color.ui=never show --first-parent --no-color -p
 //      --format= <sha>` for the actual unified diff bytes.
 //

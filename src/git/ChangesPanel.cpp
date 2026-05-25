@@ -255,7 +255,7 @@ void ChangesPanel::onTreeClicked(const QModelIndex &index)
 
     // Host (GitTabWidget) knows the repo root; we pass the relative path
     // via the entry's relPath. For absolute paths we still need the repo;
-    // delegate that resolution to the host by re-using the existing
+    // delegate that resolution to the host by reusing the existing
     // GitStatusEntry / GitTabWidget contract.
     GitStatusEntry entry;
     entry.relPath        = rel;

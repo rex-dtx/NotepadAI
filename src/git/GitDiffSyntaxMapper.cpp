@@ -71,7 +71,7 @@ public:
     {
         if (line < 0) return 0;
         const Sci_Position next = lineStartFor(line + 1);
-        if (next > 0 && next <= m_content.size() && m_content[next - 1] == '\n')
+        if (next > 0 && next <= m_content.size() && m_content[static_cast<qsizetype>(next - 1)] == '\n')
             return next - 1;
         return next;
     }
@@ -95,7 +95,7 @@ public:
     char SCI_METHOD StyleAt(Sci_Position position) const override
     {
         if (position < 0 || position >= m_styles.size()) return 0;
-        return m_styles[position];
+        return m_styles[static_cast<qsizetype>(position)];
     }
     Sci_Position SCI_METHOD LineFromPosition(Sci_Position position) const override
     {
@@ -163,7 +163,7 @@ public:
     {
         if (pWidth) *pWidth = 1;
         if (position < 0 || position >= m_content.size()) return 0;
-        return static_cast<unsigned char>(m_content[position]);
+        return static_cast<unsigned char>(m_content[static_cast<qsizetype>(position)]);
     }
 
 private:
