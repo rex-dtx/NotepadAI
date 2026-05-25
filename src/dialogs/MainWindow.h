@@ -148,6 +148,8 @@ public slots:
 
     void switchToEditor(const ScintillaNext *editor);
 
+    AiAgentDock *activeAiDock() const;
+
 signals:
     void editorActivated(ScintillaNext *editor);
     void aboutToClose();
@@ -182,7 +184,6 @@ private:
     void showSaveErrorMessage(ScintillaNext *editor, QFileDevice::FileError error);
     void showEditorZoomLevelIndicator();
     void attachAiAgentDock(AiAgentDock *dock);
-    AiAgentDock *activeAiDock() const;
     void registerWorkspaceDock(FolderAsWorkspaceDock *dock);
     void openFolderAsWorkspacePath(const QString &dir, bool showGitTab = false);
     void wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock);

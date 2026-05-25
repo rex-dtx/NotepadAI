@@ -52,6 +52,8 @@ public slots:
     void shutdown();
 
 private:
+    void wireContextMenu(TerminalDock *dock);
+
     NotepadNextApplication *m_app;
     MainWindow *m_mainWindow;
     QList<QPointer<TerminalDock>> m_docks;

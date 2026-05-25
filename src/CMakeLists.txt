@@ -343,6 +343,8 @@ qt_add_executable(NotepadAI
 	widgets/TabsQuickActionsBar.cpp
 	widgets/TabsQuickActionsBar.h
 
+	TerminalAiHelper.h
+	TerminalAiHelper.cpp
 	TerminalCwdResolver.h
 	TerminalCwdResolver.cpp
 	TerminalManager.h

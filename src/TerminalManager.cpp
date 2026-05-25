@@ -18,9 +18,11 @@
 
 #include "TerminalManager.h"
 
+#include "AiAgentDock.h"
 #include "ApplicationSettings.h"
 #include "MainWindow.h"
 #include "NotepadNextApplication.h"
+#include "TerminalAiHelper.h"
 #include "TerminalDock.h"
 #include "TerminalTaskRegistry.h"
 #include "TerminalWidget.h"
@@ -30,10 +32,12 @@
 #include "iptyprocess.h"
 #include "ptyqt.h"
 
+#include <QAction>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMessageBox>
 #include <QScopedPointer>
 #include <QStandardPaths>
@@ -111,6 +115,7 @@ void TerminalManager::openTerminal(const QString &cwd)
 
     auto *dock = new TerminalDock(shell, cwd, m_mainWindow);
     DockMiddleClickCloser::install(dock);
+    wireContextMenu(dock);
 
     QPointer<TerminalDock> p(dock);
     m_docks.append(p);
@@ -196,6 +201,7 @@ void TerminalManager::openTask(const QString &cwd, const QString &command, const
 
     auto *dock = new TerminalDock(shell, cwd, command, name, m_mainWindow);
     DockMiddleClickCloser::install(dock);
+    wireContextMenu(dock);
 
     QPointer<TerminalDock> p(dock);
     m_docks.append(p);
@@ -298,4 +304,25 @@ void TerminalManager::addTask(const QString &workspacePath, const TerminalTask &
     if (!m_app || !m_app->getSettings())
         return;
     TerminalTaskRegistry(m_app->getSettings()).addTask(workspacePath, task);
+}
+
+void TerminalManager::wireContextMenu(TerminalDock *dock)
+{
+    TerminalWidget *tw = dock->terminalWidget();
+    connect(tw, &TerminalWidget::contextMenuAboutToShow,
+            this, [this, tw](QMenu *menu) {
+        if (!tw->hasSelection()) return;
+        AiAgentDock *aiDock = m_mainWindow->activeAiDock();
+        if (!aiDock) return;
+        menu->addSeparator();
+        QAction *sendAi = menu->addAction(tr("Send to AI"));
+        connect(sendAi, &QAction::triggered, this, [this, tw]() {
+            AiAgentDock *aiDock = m_mainWindow->activeAiDock();
+            if (!aiDock) return;
+            QString wrapped = wrapInCodeblock(tw->selectedText());
+            aiDock->insertTextToInput(wrapped);
+            aiDock->setVisible(true);
+            aiDock->raise();
+        });
+    });
 }

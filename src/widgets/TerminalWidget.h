@@ -33,6 +33,7 @@
 #include <QTimer>
 #include <QVector>
 
+class QMenu;
 class QPainter;
 
 class  IPtyProcess;
@@ -55,12 +56,15 @@ public:
 
     QString title() const { return m_title; }
     bool hasExited() const { return m_exited; }
+    bool hasSelection() const { return m_hasSelection; }
+    QString selectedText() const;
 
 signals:
     void titleChanged(const QString &title);
     void processExited(int exitCode);
     void spawnFailed(const QString &message);
     void firstOutputReceived();
+    void contextMenuAboutToShow(QMenu *menu);
 
 protected:
     bool event(QEvent *event) override;
@@ -76,6 +80,7 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
     void inputMethodEvent(QInputMethodEvent *event) override;
     void scrollContentsBy(int dx, int dy) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private slots:
     void onPtyReadyRead();

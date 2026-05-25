@@ -110,6 +110,16 @@ target_sources(test_terminal_selection PRIVATE
 )
 add_test(NAME TerminalSelection COMMAND test_terminal_selection)
 
+# --- TerminalAiHelper: wrapInCodeblock fenced codeblock wrapping ---
+qt_add_executable(test_terminal_send_to_ai test_terminal_send_to_ai.cpp)
+target_include_directories(test_terminal_send_to_ai PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_terminal_send_to_ai PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_terminal_send_to_ai PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/TerminalAiHelper.cpp
+    ${CMAKE_SOURCE_DIR}/src/TerminalAiHelper.h
+)
+add_test(NAME TerminalSendToAi COMMAND test_terminal_send_to_ai)
+
 # --- TerminalWidget key routing: regression for Tab/Backtab being swallowed by
 #     QWidget::event() focus traversal before reaching keyPressEvent.
 #     Subclasses TerminalWidget to inspect the routing without starting a PTY. ---

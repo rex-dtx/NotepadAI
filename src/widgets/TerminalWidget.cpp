@@ -26,12 +26,16 @@
 #include <vterm.h>
 #include <vterm_keycodes.h>
 
+#include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QFontDatabase>
 #include <QFontMetricsF>
+#include <QGuiApplication>
 #include <QIODevice>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -647,6 +651,8 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
         const QPoint b = m_selEnd;
         const QPoint lo = (a.y() < b.y() || (a.y() == b.y() && a.x() <= b.x())) ? a : b;
         const QPoint hi = (lo == a) ? b : a;
+        QColor sel = m_scheme.selection;
+        sel.setAlpha(128);
         for (int absRow = lo.y(); absRow <= hi.y(); ++absRow) {
             const int viewportRow = absoluteToViewportRow(absRow);
             if (viewportRow < 0 || viewportRow >= m_rows) continue;
@@ -655,7 +661,7 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
             for (int col = startCol; col <= endCol; ++col) {
                 const int x = col * m_cellW;
                 const int y = viewportRow * m_cellH;
-                p.fillRect(QRect(x, y, m_cellW, m_cellH), m_scheme.selection);
+                p.fillRect(QRect(x, y, m_cellW, m_cellH), sel);
             }
         }
     }
@@ -1029,6 +1035,32 @@ void TerminalWidget::pasteClipboard()
         vterm_keyboard_unichar(m_vt, static_cast<uint32_t>(cp), VTERM_MOD_NONE);
     }
     vterm_keyboard_end_paste(m_vt);
+}
+
+QString TerminalWidget::selectedText() const
+{
+    return selectionText();
+}
+
+void TerminalWidget::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (isMouseReportingActive(QGuiApplication::keyboardModifiers())) {
+        event->ignore();
+        return;
+    }
+
+    QMenu menu(this);
+
+    QAction *copyAct = menu.addAction(tr("Copy"));
+    copyAct->setEnabled(m_hasSelection);
+    connect(copyAct, &QAction::triggered, this, [this]() { copySelection(); });
+
+    QAction *pasteAct = menu.addAction(tr("Paste"));
+    connect(pasteAct, &QAction::triggered, this, [this]() { pasteClipboard(); });
+
+    emit contextMenuAboutToShow(&menu);
+
+    menu.exec(event->globalPos());
 }
 
 void TerminalWidget::selectWord(const QPoint &absCell)
