@@ -5,6 +5,7 @@
 #include "MarkdownRenderer.h"
 
 #include <QTextBrowser>
+#include <QTextBlock>
 #include <QFutureWatcher>
 #include <QHash>
 #include <QUrl>
@@ -12,6 +13,7 @@
 #include <atomic>
 
 class NotepadNextApplication;
+class QToolButton;
 
 class MarkdownPreviewWidget : public PreviewContentWidget
 {
@@ -28,14 +30,23 @@ public:
 
     void scrollToLine(int line);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void renderAsync(const QString &text);
     void applyHtml(const QString &html);
     MarkdownRenderRequest buildRequest(const QString &text);
     void onFontChanged();
+    void updateCopyButtonPosition(const QPoint &mousePos);
+    void copyCurrentCodeBlock();
+    QString extractCodeBlockText(const QTextBlock &block) const;
+    bool isCodeBlock(const QTextBlock &block) const;
 
     NotepadNextApplication *m_app;
     QTextBrowser *m_browser;
+    QToolButton *m_copyBtn = nullptr;
+    QTextBlock m_hoveredCodeBlock;
     QString m_title;
     QString m_basePath;
     QPalette m_palette;

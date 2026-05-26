@@ -123,10 +123,12 @@
 #include "CrashHandler.h"
 #include "ProfileScope.h"
 
+#include <QApplication>
 #include <QEvent>
 #include <QActionEvent>
 #include <QFont>
 #include <QMenu>
+#include <QMetaObject>
 #include <QPointer>
 #include "DockWidget.h"
 
@@ -196,6 +198,24 @@ protected:
         return QObject::eventFilter(obj, ev);
     }
 };
+
+bool isEditorFocused()
+{
+    QWidget *w = QApplication::focusWidget();
+    while (w) {
+        if (qobject_cast<ScintillaNext *>(w))
+            return true;
+        w = w->parentWidget();
+    }
+    return false;
+}
+
+bool forwardClipboardToFocusWidget(const char *slot)
+{
+    QWidget *w = QApplication::focusWidget();
+    if (!w) return false;
+    return QMetaObject::invokeMethod(w, slot);
+}
 
 } // namespace
 
@@ -489,11 +509,23 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionUndo, &QAction::triggered, this, [=]() { currentEditor()->undo(); });
     connect(ui->actionRedo, &QAction::triggered, this, [=]() { currentEditor()->redo(); });
-    connect(ui->actionCut, &QAction::triggered, this, [=]() { currentEditor()->cutAllowLine(); });
-    connect(ui->actionCopy, &QAction::triggered, this, [=]() { currentEditor()->copyAllowLine(); });
+    connect(ui->actionCut, &QAction::triggered, this, [=]() {
+        if (!isEditorFocused() && forwardClipboardToFocusWidget("cut")) return;
+        currentEditor()->cutAllowLine();
+    });
+    connect(ui->actionCopy, &QAction::triggered, this, [=]() {
+        if (!isEditorFocused() && forwardClipboardToFocusWidget("copy")) return;
+        currentEditor()->copyAllowLine();
+    });
     connect(ui->actionDelete, &QAction::triggered, this, [=]() { currentEditor()->clear(); });
-    connect(ui->actionPaste, &QAction::triggered, this, [=]() { currentEditor()->paste(); });
-    connect(ui->actionSelectAll, &QAction::triggered, this, [=]() { currentEditor()->selectAll(); });
+    connect(ui->actionPaste, &QAction::triggered, this, [=]() {
+        if (!isEditorFocused() && forwardClipboardToFocusWidget("paste")) return;
+        currentEditor()->paste();
+    });
+    connect(ui->actionSelectAll, &QAction::triggered, this, [=]() {
+        if (!isEditorFocused() && forwardClipboardToFocusWidget("selectAll")) return;
+        currentEditor()->selectAll();
+    });
     connect(ui->actionSelectNext, &QAction::triggered, this, [=]() {
         ScintillaNext *editor = currentEditor();
 

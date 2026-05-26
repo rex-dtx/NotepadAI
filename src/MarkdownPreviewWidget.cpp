@@ -6,8 +6,16 @@
 #include <QImage>
 #include <QScrollBar>
 #include <QTextDocument>
+#include <QTextBlock>
+#include <QTextBlockFormat>
+#include <QAbstractTextDocumentLayout>
+#include <QTextFrame>
 #include <QtConcurrent>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QToolButton>
+#include <QGuiApplication>
+#include <QClipboard>
 
 MarkdownPreviewWidget::MarkdownPreviewWidget(NotepadNextApplication *app, QWidget *parent)
     : PreviewContentWidget(parent)
@@ -20,7 +28,20 @@ MarkdownPreviewWidget::MarkdownPreviewWidget(NotepadNextApplication *app, QWidge
     m_browser->setOpenExternalLinks(true);
     m_browser->setFrameShape(QFrame::NoFrame);
     m_browser->setReadOnly(true);
+    m_browser->viewport()->setMouseTracking(true);
+    m_browser->viewport()->installEventFilter(this);
     layout->addWidget(m_browser);
+
+    m_copyBtn = new QToolButton(m_browser->viewport());
+    m_copyBtn->setText(QStringLiteral("Copy"));
+    m_copyBtn->setAutoRaise(true);
+    m_copyBtn->setCursor(Qt::PointingHandCursor);
+    m_copyBtn->setStyleSheet(QStringLiteral(
+        "QToolButton { background: palette(mid); border: none; padding: 2px 6px;"
+        " border-radius: 3px; font-size: 11px; }"
+        "QToolButton:hover { background: palette(dark); }"));
+    m_copyBtn->hide();
+    connect(m_copyBtn, &QToolButton::clicked, this, &MarkdownPreviewWidget::copyCurrentCodeBlock);
 
     m_relayoutTimer.setSingleShot(true);
     m_relayoutTimer.setInterval(100);
@@ -122,6 +143,8 @@ void MarkdownPreviewWidget::renderAsync(const QString &text)
 void MarkdownPreviewWidget::applyHtml(const QString &html)
 {
     m_cachedHtml = html;
+    m_copyBtn->hide();
+    m_hoveredCodeBlock = QTextBlock();
     int scrollPos = m_browser->verticalScrollBar()->value();
     m_browser->setHtml(html);
     m_browser->verticalScrollBar()->setValue(scrollPos);
@@ -131,4 +154,87 @@ void MarkdownPreviewWidget::onFontChanged()
 {
     if (m_cachedHtml.isEmpty()) return;
     renderAsync(m_lastSourceText);
+}
+
+bool MarkdownPreviewWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_browser->viewport()) {
+        if (event->type() == QEvent::MouseMove) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            updateCopyButtonPosition(me->pos());
+        } else if (event->type() == QEvent::Leave) {
+            if (!m_copyBtn->underMouse())  {
+                m_copyBtn->hide();
+                m_hoveredCodeBlock = QTextBlock();
+            }
+        }
+    }
+    return PreviewContentWidget::eventFilter(watched, event);
+}
+
+void MarkdownPreviewWidget::updateCopyButtonPosition(const QPoint &mousePos)
+{
+    QTextCursor cursor = m_browser->cursorForPosition(mousePos);
+    QTextBlock block = cursor.block();
+
+    if (!block.isValid() || !isCodeBlock(block)) {
+        m_copyBtn->hide();
+        m_hoveredCodeBlock = QTextBlock();
+        return;
+    }
+
+    // Find the first block of this code group
+    QTextBlock first = block;
+    while (first.previous().isValid() && isCodeBlock(first.previous()))
+        first = first.previous();
+
+    if (m_hoveredCodeBlock == first && m_copyBtn->isVisible())
+        return;
+
+    m_hoveredCodeBlock = first;
+
+    QRectF firstRect = m_browser->document()->documentLayout()->blockBoundingRect(first);
+    int scrollY = m_browser->verticalScrollBar()->value();
+
+    QSize btnSize = m_copyBtn->sizeHint();
+    int x = m_browser->viewport()->width() - btnSize.width() - 8;
+    int y = static_cast<int>(firstRect.top()) - scrollY + 4;
+
+    if (y < 0) y = 4;
+
+    m_copyBtn->move(x, y);
+    m_copyBtn->show();
+    m_copyBtn->raise();
+}
+
+void MarkdownPreviewWidget::copyCurrentCodeBlock()
+{
+    if (!m_hoveredCodeBlock.isValid()) return;
+    QString text = extractCodeBlockText(m_hoveredCodeBlock);
+    if (!text.isEmpty())
+        QGuiApplication::clipboard()->setText(text);
+}
+
+QString MarkdownPreviewWidget::extractCodeBlockText(const QTextBlock &block) const
+{
+    QString result;
+    QTextBlock b = block;
+    while (b.isValid() && isCodeBlock(b)) {
+        if (!result.isEmpty()) result += QLatin1Char('\n');
+        result += b.text();
+        b = b.next();
+    }
+    return result;
+}
+
+bool MarkdownPreviewWidget::isCodeBlock(const QTextBlock &block) const
+{
+    if (!block.isValid()) return false;
+    QTextBlockFormat fmt = block.blockFormat();
+    // QTextBrowser renders <pre> blocks with a non-default background from our CSS
+    QBrush bg = fmt.background();
+    if (bg.style() == Qt::NoBrush) return false;
+    // Check that the background differs from the document's default (body) background
+    QColor docBg = m_browser->document()->rootFrame()->frameFormat().background().color();
+    return bg.color() != docBg && bg.color().isValid();
 }

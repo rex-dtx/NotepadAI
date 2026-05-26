@@ -266,10 +266,10 @@ QString MarkdownRenderer::highlightCodeBlock(const QByteArray &code, const QStri
     for (int i = 0; i < code.size(); ++i) {
         int s = static_cast<unsigned char>(styles[i]);
         if (s != prevStyle) {
-            if (prevStyle >= 0) html += QStringLiteral("</span>");
+            if (prevStyle >= 0) html += QStringLiteral("</font>");
             SemanticStyle sem = classifyStyle(s);
             const QString &color = colorForSemantic(sem, isDark);
-            html += QStringLiteral("<span style=\"color:") + color + QStringLiteral("\">");
+            html += QStringLiteral("<font color=\"") + color + QStringLiteral("\">");
             prevStyle = s;
         }
         char ch = code[i];
@@ -281,7 +281,7 @@ QString MarkdownRenderer::highlightCodeBlock(const QByteArray &code, const QStri
         default:  html += QLatin1Char(ch); break;
         }
     }
-    if (prevStyle >= 0) html += QStringLiteral("</span>");
+    if (prevStyle >= 0) html += QStringLiteral("</font>");
     html += QStringLiteral("</code></pre>");
     return html;
 }
@@ -305,13 +305,21 @@ QString MarkdownRenderer::buildStyleBlock(const QPalette &palette, bool isDark,
     if (fontSize > 0)
         fontCss += QStringLiteral("font-size:%1pt;").arg(fontSize);
 
+    QString codeFontCss;
+    if (!fontFamily.isEmpty())
+        codeFontCss += QStringLiteral("font-family:'%1',monospace;").arg(fontFamily);
+    else
+        codeFontCss += QStringLiteral("font-family:monospace;");
+    if (fontSize > 0)
+        codeFontCss += QStringLiteral("font-size:%1pt;").arg(fontSize);
+
     return QStringLiteral(
         "<style>"
         "body{background:%1;color:%2;%6padding:16px;line-height:1.6;}"
         "a{color:%3;}"
-        "code{background:%4;padding:2px 4px;border-radius:3px;font-family:monospace;}"
-        "pre{background:%4;padding:12px;border-radius:4px;overflow-x:auto;}"
-        "pre code{background:none;padding:0;}"
+        "code{background:%4;padding:2px 4px;border-radius:3px;%7line-height:normal;}"
+        "pre{background:%4;padding:0.8em 1em;border-radius:4px;overflow-x:auto;line-height:normal;}"
+        "pre code{background:none;padding:0;line-height:normal;}"
         "blockquote{border-left:3px solid %5;padding-left:12px;margin-left:0;}"
         "table{border-collapse:collapse;}"
         "th,td{border:1px solid %5;padding:6px 12px;}"
@@ -319,7 +327,7 @@ QString MarkdownRenderer::buildStyleBlock(const QPalette &palette, bool isDark,
         "hr{border:none;border-top:1px solid %5;}"
         "img{max-width:100%%;}"
         "</style>"
-    ).arg(bg, fg, link, altBase, mid, fontCss);
+    ).arg(bg, fg, link, altBase, mid, fontCss, codeFontCss);
 }
 
 namespace {

@@ -144,7 +144,7 @@ private slots:
         MarkdownRenderRequest req = makeRequest("```cpp\nint main() { return 0; }\n```");
         req.resolvedLexers.insert("cpp", "cpp");
         auto result = MarkdownRenderer::render(req);
-        QVERIFY(result.html.contains("<span style=\"color:"));
+        QVERIFY(result.html.contains("<font color=\""));
     }
 
     void highlightedCodeBlock_unknownLanguage_noSpans()
