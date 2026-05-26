@@ -11,6 +11,8 @@ struct MarkdownRenderRequest {
     QPalette palette;
     bool isDark = false;
     QString basePath;
+    QString fontFamily;
+    int fontSize = 0;
 };
 
 struct MarkdownRenderResult {
@@ -29,7 +31,8 @@ public:
     static constexpr size_t kMaxHtmlBytes = 512 * 1024;
 
 private:
-    static QString buildStyleBlock(const QPalette &palette, bool isDark);
+    static QString buildStyleBlock(const QPalette &palette, bool isDark,
+                                    const QString &fontFamily, int fontSize);
     static QString highlightCodeBlock(const QByteArray &code, const QString &lexerName, bool isDark);
 };
 

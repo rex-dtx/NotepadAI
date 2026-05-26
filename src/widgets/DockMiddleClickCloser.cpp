@@ -29,6 +29,7 @@
 #include <QStyle>
 #include <QStyleOptionDockWidget>
 #include <QTabBar>
+#include <QVariant>
 
 namespace {
 
@@ -85,14 +86,22 @@ Filter *sharedFilter()
     return instance.data();
 }
 
-// Finds the QDockWidget that owns a given tab in Qt's internal dock tab bar.
-// When QDockWidgets are tabified, Qt creates a QTabBar whose tab labels match
-// the docks' windowTitle(). We walk up to the nearest QMainWindow and search
-// its docks for a title match.
 QDockWidget *dockForTab(QTabBar *tabBar, int index)
 {
     if (index < 0)
         return nullptr;
+
+    // Qt stores the QDockWidget pointer (as quintptr) in each tab's data.
+    // This is the only unambiguous mapping when multiple docks share a title.
+    const QVariant data = tabBar->tabData(index);
+    if (data.isValid()) {
+        auto *widget = reinterpret_cast<QWidget *>(qvariant_cast<quintptr>(data));
+        if (auto *dock = qobject_cast<QDockWidget *>(widget))
+            return dock;
+    }
+
+    // Fallback: title match (ambiguous with duplicate titles, but covers the
+    // case where tabData is not populated).
     const QString tabText = tabBar->tabText(index);
     if (tabText.isEmpty())
         return nullptr;

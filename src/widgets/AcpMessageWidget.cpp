@@ -82,6 +82,40 @@ void normalizeBlockMargins(QTextDocument *doc)
     } while (cur.movePosition(QTextCursor::NextBlock));
 }
 
+// Agent output uses bare \n for visual line breaks, but CommonMark treats a
+// single newline as a soft break (rendered as a space). Convert lone \n into
+// hard breaks (two trailing spaces before the newline) so they render visually.
+// Preserves code fences, blank-line paragraph separators, and lines that
+// already end with trailing spaces or a backslash hard break.
+QString ensureHardBreaks(const QString &md)
+{
+    const QStringList lines = md.split(QLatin1Char('\n'));
+    QString out;
+    out.reserve(md.size() + lines.size() * 2);
+    bool inFence = false;
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString &line = lines[i];
+
+        if (line.startsWith(QLatin1String("```")) || line.startsWith(QLatin1String("~~~"))) {
+            inFence = !inFence;
+        }
+
+        out += line;
+
+        if (i < lines.size() - 1) {
+            const bool nextIsBlank = (i + 1 < lines.size()) && lines[i + 1].trimmed().isEmpty();
+            const bool alreadyHard = line.endsWith(QLatin1String("  "))
+                                     || line.endsWith(QLatin1Char('\\'));
+            if (!inFence && !nextIsBlank && !line.trimmed().isEmpty() && !alreadyHard) {
+                out += QLatin1String("  ");
+            }
+            out += QLatin1Char('\n');
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 AcpMessageWidget::AcpMessageWidget(QString role, QWidget *parent)
@@ -313,7 +347,7 @@ void AcpMessageWidget::rerender()
         // producing visible double borders. Re-emit the HTML with
         // cellspacing="0" so border-collapse actually collapses.
         QTextDocument tmp;
-        tmp.setMarkdown(m_text);
+        tmp.setMarkdown(ensureHardBreaks(m_text));
         QString html = tmp.toHtml();
         html.replace(QRegularExpression(QStringLiteral("<table([^>]*)>")),
                      QStringLiteral("<table\\1 cellspacing=\"0\" cellpadding=\"8\">"));
@@ -332,7 +366,7 @@ void AcpMessageWidget::rerender()
                                    || text.endsWith(QLatin1Char('\t')))) {
             text.chop(1);
         }
-        m_browser->document()->setMarkdown(text);
+        m_browser->document()->setMarkdown(ensureHardBreaks(text));
         normalizeBlockMargins(m_browser->document());
     } else {
         // Streamed chunks often end with "\n", which QTextDocument turns into

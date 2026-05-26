@@ -32,6 +32,7 @@ private:
     void renderAsync(const QString &text);
     void applyHtml(const QString &html);
     MarkdownRenderRequest buildRequest(const QString &text);
+    void onFontChanged();
 
     NotepadNextApplication *m_app;
     QTextBrowser *m_browser;
@@ -40,6 +41,7 @@ private:
     QPalette m_palette;
     bool m_isDark = false;
     QString m_cachedHtml;
+    QString m_lastSourceText;
     std::atomic<int> m_renderGeneration{0};
     QFutureWatcher<MarkdownRenderResult> *m_watcher = nullptr;
 

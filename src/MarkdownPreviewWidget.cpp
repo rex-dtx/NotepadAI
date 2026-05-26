@@ -1,5 +1,6 @@
 #include "MarkdownPreviewWidget.h"
 #include "NotepadNextApplication.h"
+#include "ApplicationSettings.h"
 
 #include <QVBoxLayout>
 #include <QImage>
@@ -29,6 +30,10 @@ MarkdownPreviewWidget::MarkdownPreviewWidget(NotepadNextApplication *app, QWidge
 
     m_palette = app->palette();
     m_isDark = app->isEffectiveThemeDark();
+
+    auto *settings = app->getSettings();
+    connect(settings, &ApplicationSettings::fontNameChanged, this, &MarkdownPreviewWidget::onFontChanged);
+    connect(settings, &ApplicationSettings::fontSizeChanged, this, &MarkdownPreviewWidget::onFontChanged);
 }
 
 void MarkdownPreviewWidget::setContent(const QString &text, const QString &basePath)
@@ -69,6 +74,10 @@ MarkdownRenderRequest MarkdownPreviewWidget::buildRequest(const QString &text)
     req.isDark = m_isDark;
     req.basePath = m_basePath;
 
+    auto *settings = m_app->getSettings();
+    req.fontFamily = settings->fontName();
+    req.fontSize = settings->fontSize();
+
     QSet<QString> labels = MarkdownRenderer::scanFenceLabels(text);
     for (const QString &label : labels) {
         QString normalized = MarkdownRenderer::normalizeFenceLabel(label);
@@ -89,6 +98,7 @@ MarkdownRenderRequest MarkdownPreviewWidget::buildRequest(const QString &text)
 
 void MarkdownPreviewWidget::renderAsync(const QString &text)
 {
+    m_lastSourceText = text;
     int gen = m_renderGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
     MarkdownRenderRequest req = buildRequest(text);
 
@@ -115,4 +125,10 @@ void MarkdownPreviewWidget::applyHtml(const QString &html)
     int scrollPos = m_browser->verticalScrollBar()->value();
     m_browser->setHtml(html);
     m_browser->verticalScrollBar()->setValue(scrollPos);
+}
+
+void MarkdownPreviewWidget::onFontChanged()
+{
+    if (m_cachedHtml.isEmpty()) return;
+    renderAsync(m_lastSourceText);
 }

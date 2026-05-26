@@ -288,7 +288,8 @@ QString MarkdownRenderer::highlightCodeBlock(const QByteArray &code, const QStri
 
 // PLACEHOLDER_RENDER
 
-QString MarkdownRenderer::buildStyleBlock(const QPalette &palette, bool isDark)
+QString MarkdownRenderer::buildStyleBlock(const QPalette &palette, bool isDark,
+                                          const QString &fontFamily, int fontSize)
 {
     QString bg = palette.color(QPalette::Base).name();
     QString fg = palette.color(QPalette::Text).name();
@@ -296,9 +297,17 @@ QString MarkdownRenderer::buildStyleBlock(const QPalette &palette, bool isDark)
     QString mid = palette.color(QPalette::Mid).name();
     QString altBase = palette.color(QPalette::AlternateBase).name();
 
+    QString fontCss;
+    if (!fontFamily.isEmpty())
+        fontCss += QStringLiteral("font-family:'%1',system-ui,sans-serif;").arg(fontFamily);
+    else
+        fontCss += QStringLiteral("font-family:system-ui,sans-serif;");
+    if (fontSize > 0)
+        fontCss += QStringLiteral("font-size:%1pt;").arg(fontSize);
+
     return QStringLiteral(
         "<style>"
-        "body{background:%1;color:%2;font-family:system-ui,sans-serif;padding:16px;line-height:1.6;}"
+        "body{background:%1;color:%2;%6padding:16px;line-height:1.6;}"
         "a{color:%3;}"
         "code{background:%4;padding:2px 4px;border-radius:3px;font-family:monospace;}"
         "pre{background:%4;padding:12px;border-radius:4px;overflow-x:auto;}"
@@ -310,7 +319,7 @@ QString MarkdownRenderer::buildStyleBlock(const QPalette &palette, bool isDark)
         "hr{border:none;border-top:1px solid %5;}"
         "img{max-width:100%%;}"
         "</style>"
-    ).arg(bg, fg, link, altBase, mid);
+    ).arg(bg, fg, link, altBase, mid, fontCss);
 }
 
 namespace {
@@ -365,7 +374,7 @@ MarkdownRenderResult MarkdownRenderer::render(const MarkdownRenderRequest &reque
 
     ctx.html.reserve(ctx.sourceUtf8.size() * 2);
     ctx.html += QStringLiteral("<!DOCTYPE html><html><head>");
-    ctx.html += buildStyleBlock(request.palette, request.isDark);
+    ctx.html += buildStyleBlock(request.palette, request.isDark, request.fontFamily, request.fontSize);
     ctx.html += QStringLiteral("</head><body>");
 
     // Two-pass approach:
