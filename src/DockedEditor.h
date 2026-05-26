@@ -60,6 +60,9 @@ public:
     ads::CDockWidget *addPreviewTab(QWidget *widget, const QString &title, const QIcon &icon);
     void closeFocusedTab();
 
+    void splitToRight(ScintillaNext *editor);
+    void splitToBottom(ScintillaNext *editor);
+
 public slots:
     void addEditor(ScintillaNext *editor);
     void addPreviewEditor(ScintillaNext *editor);
