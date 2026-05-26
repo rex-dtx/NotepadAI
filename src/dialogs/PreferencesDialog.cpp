@@ -282,7 +282,19 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
         offerRestart();
     });
 
-    // --- AI commit-message settings ------------------------------------------
+    // --- AI provider settings --------------------------------------------------
+
+    // Add a note explaining which features use this configuration.
+    {
+        auto *noteLabel = new QLabel(
+            tr("Used by: AI Commit Message, Prompt Improver. "
+               "More features will use this provider in the future."),
+            this);
+        noteLabel->setWordWrap(true);
+        noteLabel->setStyleSheet(QStringLiteral(
+            "color: palette(placeholder-text); font-size: 11px; margin-bottom: 4px;"));
+        ui->formLayoutAi->insertRow(0, noteLabel);
+    }
 
     ui->lineEditAiUrl->setText(settings->commitMessageProviderUrl());
     connect(ui->lineEditAiUrl, &QLineEdit::editingFinished, this, [=]() {

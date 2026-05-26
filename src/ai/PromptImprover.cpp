@@ -26,8 +26,8 @@ const QString kSystemTemplate = QStringLiteral(
     "- If the prompt starts with a slash command (e.g. /chore, /feat, /fix, "
     "/refactor), you MUST keep that command at the beginning. Never remove, "
     "rename, or reorder it.\n"
-    "- Preserve the user's language (if they write in Vietnamese, respond in "
-    "Vietnamese; English stays English).\n"
+    "- Always output the improved prompt in English, regardless of the input "
+    "language.\n"
     "- Do not add information the user did not mention. You may restructure, "
     "clarify ambiguity, add specificity where the intent is obvious, and "
     "improve phrasing.\n"
@@ -71,17 +71,18 @@ bool PromptImprover::canImprove(QString *whyNot) const
     if (m_state == State::Streaming)
         return fail(tr("Improvement already in progress"));
     if (m_settings->commitMessageProviderUrl().trimmed().isEmpty())
-        return fail(tr("Configure the AI provider URL in Preferences → AI"));
+        return fail(tr("AI provider not configured. Set the endpoint in Preferences → AI Provider."));
     if (m_settings->commitMessageModel().trimmed().isEmpty())
-        return fail(tr("Configure the AI model in Preferences → AI"));
+        return fail(tr("AI model not configured. Set the model in Preferences → AI Provider."));
     if (m_credStore && !m_credStore->isApiKeyAvailable())
-        return fail(tr("Configure the AI API key in Preferences → AI"));
+        return fail(tr("AI API key not configured. Save your key in Preferences → AI Provider."));
     return true;
 }
 
 void PromptImprover::trigger(const QString &userDraft,
                              const QString &workingDirectory,
-                             const QList<AcpProtocol::AcpCommandInfo> &commands)
+                             const QList<AcpProtocol::AcpCommandInfo> &commands,
+                             const QString &chatHistory)
 {
     QString why;
     if (!canImprove(&why)) {
@@ -104,12 +105,18 @@ void PromptImprover::trigger(const QString &userDraft,
 
     m_responseBuffer.clear();
 
+    QString userMessage;
+    if (!chatHistory.isEmpty()) {
+        userMessage += QStringLiteral("<chat_history>\n%1\n</chat_history>\n\n").arg(chatHistory);
+    }
+    userMessage += QStringLiteral("<user_draft>\n%1\n</user_draft>").arg(userDraft);
+
     ILlmHttpClient::Request req;
     req.url = QUrl(m_settings->commitMessageProviderUrl());
     req.model = m_settings->commitMessageModel();
     req.apiKey = apiKey;
     req.systemPrompt = systemPrompt;
-    req.prompt = QStringLiteral("<user_draft>\n%1\n</user_draft>").arg(userDraft);
+    req.prompt = userMessage;
     req.maxTokens = 4096;
     req.idleTimeoutSec = m_settings->commitMessageStreamIdleTimeoutSec();
 

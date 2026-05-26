@@ -205,6 +205,11 @@ AcpSessionView::AcpSessionView(AcpSessionModel *model,
 
 AcpSessionView::~AcpSessionView() = default;
 
+QSize AcpSessionView::sizeHint() const
+{
+    return QSize(420, 300);
+}
+
 QSize AcpSessionView::minimumSizeHint() const
 {
     return QSize(200, 100);
@@ -434,6 +439,13 @@ void AcpSessionView::buildUi()
     cb->onSubmit = [this]() { onSendClicked(); };
     cb->onRestart = [this]() { emit restartSessionRequested(); };
     cb->onKeyFilter = [this](QKeyEvent *ke) -> bool {
+        // Esc cancels prompt improvement if streaming.
+        if (ke->key() == Qt::Key_Escape
+            && m_promptImprover
+            && m_promptImprover->state() == ai::PromptImprover::State::Streaming) {
+            onImproveClicked(); // toggles to cancel
+            return true;
+        }
         if (!m_commandPopup || !m_commandPopup->isVisible())
             return false;
         switch (ke->key()) {
@@ -496,16 +508,16 @@ void AcpSessionView::buildUi()
     // 6b. Floating improve-prompt button (child of m_input, bottom-right).
     m_improveBtn = new QToolButton(m_input->viewport());
     m_improveBtn->setAutoRaise(true);
-    m_improveBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_improveBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_improveBtn->setText(QStringLiteral("✨"));
     m_improveBtn->setToolTip(tr("Improve prompt with AI (Ctrl+I)"));
     m_improveBtn->setAccessibleName(tr("Improve prompt with AI"));
     m_improveBtn->setAccessibleDescription(tr("Rewrite the current prompt to be clearer (Ctrl+I)"));
     m_improveBtn->setCursor(Qt::PointingHandCursor);
     m_improveBtn->setStyleSheet(QStringLiteral(
-        "QToolButton { background: transparent; border: none; padding: 2px; border-radius: 3px; }"
+        "QToolButton { background: transparent; border: none; padding: 2px; border-radius: 3px; font-size: 14px; }"
         "QToolButton:hover { background: palette(midlight); }"
         "QToolButton:disabled { opacity: 0.3; }"));
-    rebuildImproveIcon();
     m_improveBtn->hide();
     connect(m_improveBtn, &QToolButton::clicked, this, &AcpSessionView::onImproveClicked);
 
@@ -1751,7 +1763,6 @@ void AcpSessionView::changeEvent(QEvent *event)
     case QEvent::StyleChange:
     case QEvent::ApplicationPaletteChange:
         rebuildAttachIcon();
-        rebuildImproveIcon();
         break;
     default:
         break;
@@ -1763,13 +1774,6 @@ void AcpSessionView::rebuildAttachIcon()
     if (!m_attachBtn) return;
     m_attachBtn->setIcon(tintedIcon(QStringLiteral(":/icons/paperclip.svg"),
                                     palette().color(QPalette::WindowText)));
-}
-
-void AcpSessionView::rebuildImproveIcon()
-{
-    if (!m_improveBtn) return;
-    m_improveBtn->setIcon(tintedIcon(QStringLiteral(":/icons/sparkle.svg"),
-                                     palette().color(QPalette::WindowText)));
 }
 
 void AcpSessionView::applyChatFont()
@@ -1914,16 +1918,29 @@ void AcpSessionView::updateImproveButtonState()
 
     m_improveBtn->show();
     positionImproveButton();
-
-    // Disable when streaming or LLM not configured.
-    const bool canFire = m_promptImprover && m_promptImprover->canImprove();
-    m_improveBtn->setEnabled(canFire);
+    m_improveBtn->setEnabled(true);
 }
 
 void AcpSessionView::onImproveClicked()
 {
     if (!m_promptImprover || !m_input) return;
-    if (!m_promptImprover->canImprove()) return;
+
+    // If already streaming, cancel.
+    if (m_promptImprover->state() == ai::PromptImprover::State::Streaming) {
+        m_promptImprover->cancel();
+        m_input->setReadOnly(false);
+        m_improveBtn->setText(QStringLiteral("✨"));
+        m_improveBtn->setToolTip(tr("Improve prompt with AI (Ctrl+I)"));
+        updateImproveButtonState();
+        return;
+    }
+
+    QString whyNot;
+    if (!m_promptImprover->canImprove(&whyNot)) {
+        setBanner(whyNot, BannerKind::Warning);
+        QTimer::singleShot(5000, this, &AcpSessionView::clearBanner);
+        return;
+    }
 
     const QString draft = m_input->toPlainText().trimmed();
     if (draft.isEmpty()) return;
@@ -1940,12 +1957,43 @@ void AcpSessionView::onImproveClicked()
     const QList<AcpProtocol::AcpCommandInfo> commands =
         m_model ? m_model->availableCommands() : QList<AcpProtocol::AcpCommandInfo>{};
 
+    // Build a condensed chat history from recent messages (budget: ~4000 chars).
+    QString chatHistory;
+    if (m_model) {
+        constexpr int kHistoryBudget = 4000;
+        const auto &msgs = m_model->messages();
+        int totalChars = 0;
+        // Walk backwards to get the most recent messages first.
+        for (int i = msgs.size() - 1; i >= 0; --i) {
+            const auto &msg = msgs[i];
+            if (msg.role != QLatin1String("user") && msg.role != QLatin1String("assistant"))
+                continue;
+            QString text;
+            for (const auto &block : msg.content) {
+                if (block.kind == AcpProtocol::AcpContentBlock::Kind::Text)
+                    text += block.text;
+            }
+            text = text.trimmed();
+            if (text.isEmpty()) continue;
+            // Truncate individual messages that are too long.
+            if (text.size() > 800)
+                text = text.left(800) + QStringLiteral("...");
+            const QString entry = QStringLiteral("[%1]: %2\n").arg(msg.role, text);
+            if (totalChars + entry.size() > kHistoryBudget)
+                break;
+            chatHistory.prepend(entry);
+            totalChars += entry.size();
+        }
+        chatHistory = chatHistory.trimmed();
+    }
+
     m_originalDraftBeforeImprove = m_input->toPlainText();
     m_input->setReadOnly(true);
-    m_improveBtn->setEnabled(false);
-    m_improveBtn->setToolTip(tr("Improving prompt..."));
+    m_improveBtn->setText(QStringLiteral("■"));
+    m_improveBtn->setToolTip(tr("Stop improving (Esc)"));
+    m_improveBtn->setEnabled(true);
 
-    m_promptImprover->trigger(draft, workingDir, commands);
+    m_promptImprover->trigger(draft, workingDir, commands, chatHistory);
 }
 
 void AcpSessionView::onImproveFinished(const QString &improvedText)
@@ -1961,6 +2009,7 @@ void AcpSessionView::onImproveFinished(const QString &improvedText)
     cursor.endEditBlock();
 
     m_input->setReadOnly(false);
+    m_improveBtn->setText(QStringLiteral("✨"));
     m_improveBtn->setToolTip(tr("Improve prompt with AI (Ctrl+I)"));
     m_input->setFocus();
     updateImproveButtonState();
@@ -1971,6 +2020,7 @@ void AcpSessionView::onImproveError(const QString &message)
     if (!m_input) return;
 
     m_input->setReadOnly(false);
+    m_improveBtn->setText(QStringLiteral("✨"));
     m_improveBtn->setToolTip(tr("Improve prompt with AI (Ctrl+I)"));
     updateImproveButtonState();
 

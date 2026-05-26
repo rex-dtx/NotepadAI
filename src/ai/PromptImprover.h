@@ -34,7 +34,8 @@ public:
 
     void trigger(const QString &userDraft,
                  const QString &workingDirectory,
-                 const QList<AcpProtocol::AcpCommandInfo> &commands);
+                 const QList<AcpProtocol::AcpCommandInfo> &commands,
+                 const QString &chatHistory = {});
 
     void cancel();
 

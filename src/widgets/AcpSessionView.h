@@ -103,6 +103,7 @@ signals:
 private slots:
     void onShowDebugLogClicked();
 
+    QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
 protected:
@@ -144,7 +145,6 @@ private:
     void buildUi();
     void wireSignals();
     void rebuildAttachIcon();
-    void rebuildImproveIcon();
     void hydrateFromModel();
     void appendMessageWidget(int idx);
     // Insert a widget into the transcript timeline at the tail, just above

@@ -357,7 +357,7 @@
        <item>
         <widget class="QGroupBox" name="groupBoxAi">
          <property name="title">
-          <string>AI Commit Message</string>
+          <string>AI Provider</string>
          </property>
          <layout class="QFormLayout" name="formLayoutAi">
           <item row="0" column="0">
