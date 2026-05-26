@@ -32,6 +32,7 @@
 class MainWindow;
 class LuaState;
 class EditorManager;
+class PreviewTabManager;
 class RecentFilesListManager;
 class ScintillaNext;
 class SessionManager;
@@ -52,6 +53,7 @@ public:
     RecentFilesListManager *getRecentFilesListManager() const { return recentFilesListManager; }
     RecentFilesListManager *getRecentWorkspacesListManager() const { return recentWorkspacesListManager; }
     EditorManager *getEditorManager() const { return editorManager; }
+    PreviewTabManager *getPreviewTabManager() const { return previewTabManager; }
     SessionManager *getSessionManager() const;
     TranslationManager *getTranslationManager() const { return translationManager; };
     AcpAgentManager *getAiAgentManager() const { return aiAgentManager_; }
@@ -110,6 +112,7 @@ private:
     void applyTheme();
 
     EditorManager *editorManager;
+    PreviewTabManager *previewTabManager = nullptr;
     RecentFilesListManager *recentFilesListManager;
     RecentFilesListManager *recentWorkspacesListManager;
     ApplicationSettings *settings;

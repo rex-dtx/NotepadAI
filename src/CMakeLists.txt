@@ -35,10 +35,11 @@ qt_add_executable(NotepadAI
 	FocusWatcher.h
 	HtmlConverter.h
 	IFaceTable.h
-	MarkdownPreviewOverlay.h
+	MarkdownPreviewWidget.h
 	MarkdownRenderer.h
 	PandocExporter.h
-	PreviewBrowser.h
+	PreviewContentWidget.h
+	PreviewTabManager.h
 	IFaceTableMixer.h
 	ISearchResultsHandler.h
 	LanguageStylesModel.h
@@ -106,10 +107,10 @@ qt_add_executable(NotepadAI
 	Finder.cpp
 	HtmlConverter.cpp
 	IFaceTable.cpp
-	MarkdownPreviewOverlay.cpp
+	MarkdownPreviewWidget.cpp
 	MarkdownRenderer.cpp
 	PandocExporter.cpp
-	PreviewBrowser.cpp
+	PreviewTabManager.cpp
 	IFaceTableMixer.cpp
 	LanguageStylesModel.cpp
 	LuaExtension.cpp

@@ -28,6 +28,8 @@
 #include "TranslationManager.h"
 #include "ApplicationSettings.h"
 #include "AcpAgentManager.h"
+#include "PreviewTabManager.h"
+#include "MarkdownPreviewWidget.h"
 #include "ai/CommitMessageGenerator.h"
 #include "ai/CredentialStore.h"
 #include "ThemeResolver.h"
@@ -245,6 +247,18 @@ bool NotepadNextApplication::init()
         createNewWindow();
     }
     connect(editorManager, &EditorManager::editorCreated, window, &MainWindow::addEditor);
+
+    {
+        previewTabManager = new PreviewTabManager(this, window->getDockedEditor(), this);
+        previewTabManager->registerType(QStringLiteral("markdown"), {
+            {QStringLiteral("md"), QStringLiteral("markdown"), QStringLiteral("mdown"),
+             QStringLiteral("mkd"), QStringLiteral("mkdn"), QStringLiteral("mdwn")},
+            QStringLiteral(":/icons/markdown-preview.svg"),
+            [this](QWidget *parent) -> PreviewContentWidget * {
+                return new MarkdownPreviewWidget(this, parent);
+            }
+        });
+    }
 
     // If the application is activated (e.g. user switching to another program and them back) the focus
     // needs to be reset on whatever object previously had focus (e.g. the find dialog)

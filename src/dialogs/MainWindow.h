@@ -50,7 +50,6 @@ class TabsQuickActionsBar;
 class TerminalManager;
 class AiAgentDock;
 class FolderAsWorkspaceDock;
-class MarkdownPreviewOverlay;
 struct GitStatusEntry;
 struct WorkspaceStateSnapshot;
 

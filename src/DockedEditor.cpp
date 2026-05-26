@@ -76,6 +76,11 @@ DockedEditor::DockedEditor(QWidget *parent) : QObject(parent)
             return;
         }
 
+        if (now->property("nn_previewTab").toBool()) {
+            emit previewTabActivated(now->widget());
+            return;
+        }
+
         ScintillaNext *editor = qobject_cast<ScintillaNext *>(now->widget());
         if (editor == Q_NULLPTR) {
             return;
@@ -114,8 +119,12 @@ int DockedEditor::count() const
 {
     int total = 0;
 
-    for (int i = 0; i < dockManager->dockAreaCount(); ++i)
-        total += dockManager->dockArea(i)->dockWidgetsCount();
+    for (int i = 0; i < dockManager->dockAreaCount(); ++i) {
+        for (const ads::CDockWidget *dw : dockManager->dockArea(i)->dockWidgets()) {
+            if (!dw->property("nn_previewTab").toBool())
+                ++total;
+        }
+    }
 
     return total;
 }
@@ -124,10 +133,13 @@ QVector<ScintillaNext *> DockedEditor::editors() const
 {
     QVector<ScintillaNext *> editors;
 
-    // For each area, for each widget, append it to our list
     for (const ads::CDockAreaWidget* areaWidget : dockManager->openedDockAreas()) {
         for (const ads::CDockWidget* dockWidget : areaWidget->dockWidgets()) {
-            editors.append(qobject_cast<ScintillaNext *>(dockWidget->widget()));
+            if (dockWidget->property("nn_previewTab").toBool())
+                continue;
+            ScintillaNext *editor = qobject_cast<ScintillaNext *>(dockWidget->widget());
+            if (editor)
+                editors.append(editor);
         }
     }
 
@@ -298,5 +310,37 @@ void DockedEditor::editorRenamed(ScintillaNext *editor)
     }
     else {
         dockWidget->tabWidget()->setToolTip(editor->getName());
+    }
+}
+
+ads::CDockWidget *DockedEditor::addPreviewTab(QWidget *widget, const QString &title, const QIcon &icon)
+{
+    ads::CDockWidget *dockWidget = dockManager->createDockWidget(title);
+    dockWidget->setObjectName(QUuid::createUuid().toString());
+    dockWidget->setWidget(widget);
+    dockWidget->setProperty("nn_previewTab", true);
+    dockWidget->setFeature(ads::CDockWidget::DockWidgetFeature::DockWidgetDeleteOnClose, true);
+    dockWidget->setFeature(ads::CDockWidget::DockWidgetFeature::DockWidgetFloatable, false);
+
+    dockWidget->tabWidget()->setElideMode(Qt::ElideNone);
+    if (!icon.isNull())
+        dockWidget->tabWidget()->setIcon(icon);
+
+    latestDockArea = dockManager->addDockWidget(ads::CenterDockWidgetArea, dockWidget, currentDockArea());
+
+    return dockWidget;
+}
+
+void DockedEditor::closeFocusedTab()
+{
+    ads::CDockWidget *focused = dockManager->focusedDockWidget();
+    if (!focused) return;
+
+    if (focused->property("nn_previewTab").toBool()) {
+        focused->closeDockWidget();
+    } else {
+        ScintillaNext *editor = qobject_cast<ScintillaNext *>(focused->widget());
+        if (editor)
+            emit editorCloseRequested(editor);
     }
 }

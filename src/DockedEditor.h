@@ -22,6 +22,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QIcon>
 
 #include "DockManager.h"
 #include "ScintillaNext.h"
@@ -56,6 +57,9 @@ public:
     ScintillaNext *previewEditor() const;
     void pinPreviewEditor();
 
+    ads::CDockWidget *addPreviewTab(QWidget *widget, const QString &title, const QIcon &icon);
+    void closeFocusedTab();
+
 public slots:
     void addEditor(ScintillaNext *editor);
     void addPreviewEditor(ScintillaNext *editor);
@@ -77,6 +81,7 @@ signals:
     void editorClosed(ScintillaNext *editor);
     void editorActivated(ScintillaNext *editor);
     void editorOrderChanged();
+    void previewTabActivated(QWidget *widget);
 
     void contextMenuRequestedForEditor(ScintillaNext *editor);
     void titleBarDoubleClicked();

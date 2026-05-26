@@ -74,7 +74,7 @@
 #include "FileListDock.h"
 #include "TerminalDock.h"
 #include "DockMiddleClickCloser.h"
-#include "MarkdownPreviewOverlay.h"
+#include "PreviewTabManager.h"
 
 #include "TerminalManager.h"
 #include "TerminalCwdResolver.h"
@@ -236,6 +236,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     dockedEditor = new DockedEditor(this);
     connect(dockedEditor, &DockedEditor::editorCloseRequested, this, [=](ScintillaNext *editor) { closeFile(editor); });
     connect(dockedEditor, &DockedEditor::editorActivated, this, &MainWindow::activateEditor);
+    connect(dockedEditor, &DockedEditor::previewTabActivated, this, [this](QWidget *) {
+        if (m_actionMarkdownPreview)
+            m_actionMarkdownPreview->setChecked(true);
+    });
     connect(dockedEditor, &DockedEditor::contextMenuRequestedForEditor, this, &MainWindow::tabBarRightClicked);
     connect(dockedEditor, &DockedEditor::titleBarDoubleClicked, this, &MainWindow::newFile);
 
@@ -1177,18 +1181,23 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     ui->mainToolBar->addAction(m_actionMarkdownPreview);
 
     connect(m_actionMarkdownPreview, &QAction::triggered, this, [this](bool checked) {
+        Q_UNUSED(checked)
         ScintillaNext *editor = currentEditor();
         if (!editor) return;
 
-        auto *overlay = editor->findChild<MarkdownPreviewOverlay *>(QString(), Qt::FindDirectChildrenOnly);
-        if (!overlay) {
-            overlay = new MarkdownPreviewOverlay(editor, this->app);
-        }
+        auto *mgr = this->app->getPreviewTabManager();
+        if (!mgr) return;
 
-        if (checked)
-            overlay->activate();
-        else
-            overlay->deactivate();
+        auto *existing = mgr->previewForEditor(editor);
+        if (existing) {
+            if (existing->hasFocus() || existing->isAncestorOf(focusWidget())) {
+                dockedEditor->switchToEditor(editor);
+            } else {
+                existing->setFocus();
+            }
+        } else {
+            mgr->openOrFocusPreview(editor);
+        }
     });
 
     connect(app->getSettings(), &ApplicationSettings::showMenuBarChanged, this, [=](bool showMenuBar) {
@@ -2273,7 +2282,7 @@ void MainWindow::reloadFile()
 
 void MainWindow::closeCurrentFile()
 {
-    closeFile(currentEditor());
+    dockedEditor->closeFocusedTab();
 }
 
 void MainWindow::closeFile(ScintillaNext *editor)
@@ -2338,6 +2347,7 @@ void MainWindow::closeAllToLeft()
 
     for (int i = 0; i < index; ++i) {
         auto editor = qobject_cast<ScintillaNext *>(dockedEditor->currentDockArea()->dockWidget(i)->widget());
+        if (!editor) continue;
         editors.append(editor);
     }
 
@@ -2356,6 +2366,7 @@ void MainWindow::closeAllToRight()
 
     for (int i = index + 1; i < total; ++i) {
         auto editor = qobject_cast<ScintillaNext *>(dockedEditor->currentDockArea()->dockWidget(i)->widget());
+        if (!editor) continue;
         editors.append(editor);
     }
 
@@ -2849,9 +2860,8 @@ void MainWindow::activateEditor(ScintillaNext *editor)
         m_actionMarkdownPreview->setEnabled(isMarkdown);
 
         bool previewActive = false;
-        if (isMarkdown) {
-            auto *overlay = editor->findChild<MarkdownPreviewOverlay *>(QString(), Qt::FindDirectChildrenOnly);
-            previewActive = overlay && overlay->isActive();
+        if (isMarkdown && app->getPreviewTabManager()) {
+            previewActive = app->getPreviewTabManager()->previewForEditor(editor) != nullptr;
         }
         m_actionMarkdownPreview->setChecked(previewActive);
     }
