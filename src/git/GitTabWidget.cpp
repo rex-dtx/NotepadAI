@@ -189,14 +189,13 @@ void GitTabWidget::buildUi()
     topRow->addWidget(m_menuBtn);
     root->addLayout(topRow);
 
-    // Status label — immediately below the header row.
+    // Status label — created here, added to layout at the bottom.
     m_statusLabel = new QLabel(this);
     m_statusLabel->setStyleSheet(QStringLiteral(
         "color: palette(placeholder-text); font-size: 11px;"
         "border: none; padding: 0px; background: transparent;"));
     m_statusLabel->setWordWrap(true);
     m_statusLabel->hide();
-    root->addWidget(m_statusLabel);
 
     // Segmented bar Changes / History.
     m_segmentedBar = new GitTabSegmentedBar(this);
@@ -260,6 +259,9 @@ void GitTabWidget::buildUi()
     m_stack->addWidget(m_changesPanel);   // index 0 — Changes
     m_stack->addWidget(m_historyView);    // index 1 — History
     root->addWidget(m_stack, 1);
+
+    // Status label — at the bottom so it doesn't push content down.
+    root->addWidget(m_statusLabel);
 
     // --- Connections ---
     connect(m_repoCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),

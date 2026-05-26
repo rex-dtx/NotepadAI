@@ -50,6 +50,10 @@ class TabsQuickActionsBar;
 class TerminalManager;
 class AiAgentDock;
 class FolderAsWorkspaceDock;
+class ConflictListDock;
+class ConflictMergeViewerDock;
+class GitOperationManager;
+struct ConflictEntry;
 struct GitStatusEntry;
 struct WorkspaceStateSnapshot;
 
@@ -242,6 +246,12 @@ private:
     // mutable so const helpers can lazy-fill it.
     mutable QHash<QString, WorkspaceStateSnapshot> m_workspaceStateMemo;
     bool m_workspaceStateDirty = false;
+
+    GitOperationManager *m_gitOpMgr = nullptr;
+    QPointer<ConflictListDock> m_conflictListDock;
+    void setupGitOperationMenu();
+    void showConflictListDock(const QString &repoPath);
+    void openConflictMergeViewer(const ConflictEntry &entry);
 };
 
 #endif // MAINWINDOW_H

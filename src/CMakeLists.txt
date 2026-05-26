@@ -207,6 +207,8 @@ qt_add_executable(NotepadAI
 	dialogs/MainWindow.cpp
 	dialogs/MainWindow.h
 	dialogs/MainWindow.ui
+	dialogs/InteractiveRebaseDialog.cpp
+	dialogs/InteractiveRebaseDialog.h
 	dialogs/PreferencesDialog.cpp
 	dialogs/PreferencesDialog.h
 	dialogs/PreferencesDialog.ui
@@ -313,10 +315,19 @@ qt_add_executable(NotepadAI
 	git/GitTypes.cpp
 	git/GitWatcher.cpp
 	git/GitWatcher.h
+	git/ConflictEntry.h
+	git/GitOperationManager.cpp
+	git/GitOperationManager.h
+	git/SyncScrollMap.cpp
+	git/SyncScrollMap.h
 
 	docks/LanguageInspectorDock.cpp
 	docks/LanguageInspectorDock.h
 	docks/LanguageInspectorDock.ui
+	docks/ConflictListDock.cpp
+	docks/ConflictListDock.h
+	docks/ConflictMergeViewerDock.cpp
+	docks/ConflictMergeViewerDock.h
 	docks/LuaConsoleDock.cpp
 	docks/LuaConsoleDock.h
 	docks/LuaConsoleDock.ui
@@ -397,7 +408,7 @@ qt_add_executable(NotepadAI
 # Platform-conditional CredentialStore backend + native API link.
 if(WIN32)
     target_sources(NotepadAI PRIVATE ai/CredentialStore_Windows.cpp)
-    target_link_libraries(NotepadAI PRIVATE crypt32)
+    target_link_libraries(NotepadAI PRIVATE crypt32 dbghelp)
 elseif(APPLE)
     target_sources(NotepadAI PRIVATE ai/CredentialStore_Mac.mm)
     target_link_libraries(NotepadAI PRIVATE "-framework Security" "-framework CoreFoundation")
@@ -484,3 +495,13 @@ target_compile_definitions(NotepadAI
         APP_COPYRIGHT="${APP_COPYRIGHT}"
         APP_DISTRIBUTION="${APP_DISTRIBUTION}"
 )
+
+# --- notepadai-editor: helper exe for GIT_SEQUENCE_EDITOR / GIT_EDITOR ---
+qt_add_executable(notepadai-editor
+    helpers/notepadai-editor.cpp
+)
+target_link_libraries(notepadai-editor PRIVATE Qt6::Core Qt6::Network)
+set_target_properties(notepadai-editor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+install(TARGETS notepadai-editor RUNTIME DESTINATION bin)

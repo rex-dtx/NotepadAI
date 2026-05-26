@@ -362,12 +362,6 @@ qint64 ConPtyProcess::write(const QByteArray &byteArray)
 
 bool ConPtyProcess::isAvailable()
 {
-#ifdef TOO_OLD_WINSDK
-    return false;
-#else
-    // kernelVersion() returns e.g. "10.0.22621.2861". Index 2 is the OS build
-    // number; parts.last() would be the UBR (Update Build Revision, typically
-    // 3-4 digits) which is meaningless for ConPTY gating.
     const QString kernelVersion = QSysInfo::kernelVersion();
     const QStringList parts = kernelVersion.split(QLatin1Char('.'));
     if (parts.size() >= 3) {
@@ -378,7 +372,6 @@ bool ConPtyProcess::isAvailable()
         }
     }
     return m_winContext.init();
-#endif
 }
 
 void ConPtyProcess::moveToThread(QThread *targetThread)

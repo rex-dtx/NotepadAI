@@ -90,6 +90,15 @@
 #include "AcpAgentManager.h"
 #include "AiAgentDock.h"
 #include "ColumnEditorDialog.h"
+#include "ConflictListDock.h"
+#include "ConflictMergeViewerDock.h"
+#include "ConflictEntry.h"
+#include "GitOperationManager.h"
+#include "GitController.h"
+#include "GitProcessRunner.h"
+#include "GitTabWidget.h"
+#include "BranchPickerPopup.h"
+#include "InteractiveRebaseDialog.h"
 
 #include "TabsQuickActionsBar.h"
 
@@ -1438,6 +1447,12 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 });
     }
 #endif
+
+    {
+        PROFILE_SCOPE("MainWindow::ctor.gitOperationManager");
+        m_gitOpMgr = new GitOperationManager(this);
+        setupGitOperationMenu();
+    }
 
     {
         PROFILE_SCOPE("MainWindow::ctor.restoreSettings");
@@ -3722,4 +3737,303 @@ void MainWindow::saveWorkspaceStatesOnly()
         live << d->captureState();
     }
     persistWorkspaceStatesMerged(live);
+}
+
+// --- Git Operation Menu & Wiring ---
+
+void MainWindow::setupGitOperationMenu()
+{
+    auto *menuGit = menuBar()->addMenu(tr("&Git"));
+
+    auto *actionMerge = menuGit->addAction(tr("Merge Branch..."));
+    auto *actionRebase = menuGit->addAction(tr("Rebase Current Branch..."));
+    auto *actionInteractiveRebase = menuGit->addAction(tr("Interactive Rebase..."));
+    menuGit->addSeparator();
+    auto *actionContinue = menuGit->addAction(tr("Continue"));
+    auto *actionSkip = menuGit->addAction(tr("Skip"));
+    auto *actionAbort = menuGit->addAction(tr("Abort"));
+
+    connect(menuGit, &QMenu::aboutToShow, this, [=]() {
+        const QString wsRoot = currentWorkspaceRoot();
+        bool hasWorkspace = !wsRoot.isEmpty();
+        auto state = m_gitOpMgr->state(wsRoot);
+        bool idle = (state == GitOperationManager::OperationState::Idle);
+        bool suspended = (state == GitOperationManager::OperationState::RebaseSuspended ||
+                          state == GitOperationManager::OperationState::RebaseSuspendedEdit ||
+                          state == GitOperationManager::OperationState::MergeConflicted);
+
+        actionMerge->setEnabled(hasWorkspace && idle);
+        actionRebase->setEnabled(hasWorkspace && idle);
+        actionInteractiveRebase->setEnabled(hasWorkspace && idle);
+        actionContinue->setEnabled(hasWorkspace && suspended);
+        actionSkip->setEnabled(hasWorkspace &&
+            (state == GitOperationManager::OperationState::RebaseSuspended));
+        actionAbort->setEnabled(hasWorkspace && suspended);
+    });
+
+    connect(actionMerge, &QAction::triggered, this, [this]() {
+        auto *dock = activeWorkspaceDock();
+        if (!dock) return;
+        auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+        if (!ctrl) return;
+        // Use BranchPickerPopup for branch selection
+        auto *picker = new BranchPickerPopup(this);
+        picker->setBranches(ctrl->branchesLocal(), ctrl->branchesRemote(),
+                           ctrl->currentBranch());
+        connect(picker, &BranchPickerPopup::checkoutRequested, this,
+            [this, ctrl](const QString &branch) {
+                m_gitOpMgr->startMerge(ctrl, branch);
+            });
+        picker->popupAt(QCursor::pos());
+    });
+
+    connect(actionRebase, &QAction::triggered, this, [this]() {
+        auto *dock = activeWorkspaceDock();
+        if (!dock) return;
+        auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+        if (!ctrl) return;
+        auto *picker = new BranchPickerPopup(this);
+        picker->setBranches(ctrl->branchesLocal(), ctrl->branchesRemote(),
+                           ctrl->currentBranch());
+        connect(picker, &BranchPickerPopup::checkoutRequested, this,
+            [this, ctrl](const QString &branch) {
+                m_gitOpMgr->startRebase(ctrl, branch);
+            });
+        picker->popupAt(QCursor::pos());
+    });
+
+    connect(actionInteractiveRebase, &QAction::triggered, this, [this]() {
+        auto *dock = activeWorkspaceDock();
+        if (!dock) return;
+        auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+        if (!ctrl) return;
+        auto *picker = new BranchPickerPopup(this);
+        picker->setBranches(ctrl->branchesLocal(), ctrl->branchesRemote(),
+                           ctrl->currentBranch());
+        connect(picker, &BranchPickerPopup::checkoutRequested, this,
+            [this, ctrl](const QString &branch) {
+                m_gitOpMgr->startInteractiveRebase(ctrl, branch);
+            });
+        picker->popupAt(QCursor::pos());
+    });
+
+    connect(actionContinue, &QAction::triggered, this, [this]() {
+        auto *dock = activeWorkspaceDock();
+        if (!dock) return;
+        auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+        if (!ctrl) return;
+        auto state = m_gitOpMgr->state(ctrl->currentRepo());
+        if (state == GitOperationManager::OperationState::MergeConflicted)
+            m_gitOpMgr->commitMerge(ctrl);
+        else
+            m_gitOpMgr->continueRebase(ctrl);
+    });
+
+    connect(actionSkip, &QAction::triggered, this, [this]() {
+        auto *dock = activeWorkspaceDock();
+        if (!dock) return;
+        auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+        if (!ctrl) return;
+        m_gitOpMgr->skipRebase(ctrl);
+    });
+
+    connect(actionAbort, &QAction::triggered, this, [this]() {
+        auto *dock = activeWorkspaceDock();
+        if (!dock) return;
+        auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+        if (!ctrl) return;
+        auto state = m_gitOpMgr->state(ctrl->currentRepo());
+        if (state == GitOperationManager::OperationState::MergeConflicted)
+            m_gitOpMgr->abortMerge(ctrl);
+        else
+            m_gitOpMgr->abortRebase(ctrl);
+    });
+
+    // Connect operation manager signals to UI
+    connect(m_gitOpMgr, &GitOperationManager::mergeConflicted, this,
+            &MainWindow::showConflictListDock);
+    connect(m_gitOpMgr, &GitOperationManager::rebaseConflicted, this,
+            &MainWindow::showConflictListDock);
+
+    connect(m_gitOpMgr, &GitOperationManager::mergeCompleted, this, [this](const QString &) {
+        if (m_conflictListDock) m_conflictListDock->hide();
+    });
+    connect(m_gitOpMgr, &GitOperationManager::rebaseCompleted, this, [this](const QString &) {
+        if (m_conflictListDock) m_conflictListDock->hide();
+    });
+    connect(m_gitOpMgr, &GitOperationManager::rebaseAborted, this, [this](const QString &) {
+        if (m_conflictListDock) m_conflictListDock->hide();
+    });
+
+    connect(m_gitOpMgr, &GitOperationManager::conflictsUpdated, this,
+        [this](const QString &repoPath, const ConflictEntries &entries) {
+            if (m_conflictListDock) {
+                m_conflictListDock->setConflicts(entries);
+                m_conflictListDock->setOperationState(m_gitOpMgr->state(repoPath));
+            }
+        });
+
+    connect(m_gitOpMgr, &GitOperationManager::operationStateChanged, this,
+        [this](const QString &, GitOperationManager::OperationState state) {
+            if (m_conflictListDock)
+                m_conflictListDock->setOperationState(state);
+        });
+
+    connect(m_gitOpMgr, &GitOperationManager::interactiveRebaseRequested, this,
+        [this](const QString &todoFilePath) {
+            auto *dlg = new InteractiveRebaseDialog(todoFilePath, this);
+            int result = dlg->exec();
+            m_gitOpMgr->replyToEditor(result == QDialog::Accepted && dlg->wasAccepted());
+            dlg->deleteLater();
+        });
+
+    connect(m_gitOpMgr, &GitOperationManager::commitMessageEditRequested, this,
+        [this](const QString &) {
+            // For now, auto-accept commit messages (use .git/MERGE_MSG as-is)
+            m_gitOpMgr->replyToEditor(true);
+        });
+}
+
+void MainWindow::showConflictListDock(const QString &repoPath)
+{
+    if (!m_conflictListDock) {
+        m_conflictListDock = new ConflictListDock(m_gitOpMgr, this);
+        addDockWidget(ConflictListDock::defaultArea(), m_conflictListDock);
+
+        connect(m_conflictListDock, &ConflictListDock::openInMergeViewer, this,
+                &MainWindow::openConflictMergeViewer);
+
+        connect(m_conflictListDock, &ConflictListDock::continueRequested, this, [this]() {
+            auto *dock = activeWorkspaceDock();
+            if (!dock) return;
+            auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+            if (!ctrl) return;
+            auto state = m_gitOpMgr->state(ctrl->currentRepo());
+            if (state == GitOperationManager::OperationState::MergeConflicted)
+                m_gitOpMgr->commitMerge(ctrl);
+            else
+                m_gitOpMgr->continueRebase(ctrl);
+        });
+
+        connect(m_conflictListDock, &ConflictListDock::abortRequested, this, [this]() {
+            auto *dock = activeWorkspaceDock();
+            if (!dock) return;
+            auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+            if (!ctrl) return;
+            auto state = m_gitOpMgr->state(ctrl->currentRepo());
+            if (state == GitOperationManager::OperationState::MergeConflicted)
+                m_gitOpMgr->abortMerge(ctrl);
+            else
+                m_gitOpMgr->abortRebase(ctrl);
+        });
+
+        connect(m_conflictListDock, &ConflictListDock::skipRequested, this, [this]() {
+            auto *dock = activeWorkspaceDock();
+            if (!dock) return;
+            auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+            if (!ctrl) return;
+            m_gitOpMgr->skipRebase(ctrl);
+        });
+
+        connect(m_conflictListDock, &ConflictListDock::acceptOursRequested, this,
+            [this](const QStringList &paths) {
+                auto *dock = activeWorkspaceDock();
+                if (!dock) return;
+                auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+                if (!ctrl) return;
+                m_gitOpMgr->acceptOurs(ctrl, paths);
+            });
+
+        connect(m_conflictListDock, &ConflictListDock::acceptTheirsRequested, this,
+            [this](const QStringList &paths) {
+                auto *dock = activeWorkspaceDock();
+                if (!dock) return;
+                auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+                if (!ctrl) return;
+                m_gitOpMgr->acceptTheirs(ctrl, paths);
+            });
+    }
+
+    auto entries = m_gitOpMgr->conflicts(repoPath);
+    m_conflictListDock->setConflicts(entries);
+    m_conflictListDock->setOperationState(m_gitOpMgr->state(repoPath));
+    m_conflictListDock->setVisible(true);
+    m_conflictListDock->raise();
+}
+
+void MainWindow::openConflictMergeViewer(const ConflictEntry &entry)
+{
+    // Check if a viewer for this file already exists
+    const auto viewers = findChildren<ConflictMergeViewerDock *>();
+    for (auto *v : viewers) {
+        if (v->filePath() == entry.relPath) {
+            v->setVisible(true);
+            v->raise();
+            return;
+        }
+    }
+
+    auto *dock = activeWorkspaceDock();
+    if (!dock) return;
+    auto *ctrl = dock->gitTabWidget() ? dock->gitTabWidget()->controller() : nullptr;
+    if (!ctrl) return;
+
+    const QString repo = ctrl->currentRepo();
+    const QString absPath = repo + QLatin1Char('/') + entry.relPath;
+
+    // Load content from git index stages
+    ConflictData data;
+    data.filePath = entry.relPath;
+    data.isReversed = (m_gitOpMgr->state(repo) == GitOperationManager::OperationState::RebaseSuspended);
+    data.leftLabel = data.isReversed ? tr("Theirs (target)") : tr("Ours (current)");
+    data.rightLabel = data.isReversed ? tr("Yours (rebased)") : tr("Theirs (incoming)");
+
+    // Fetch stage content via git show :N:path
+    auto fetchStage = [&](int stage) -> QByteArray {
+        QProcess proc;
+        proc.setWorkingDirectory(repo);
+        proc.start(GitProcessRunner::gitExecutable(),
+                   {QStringLiteral("show"),
+                    QStringLiteral(":%1:%2").arg(stage).arg(entry.relPath)});
+        proc.waitForFinished(5000);
+        return proc.readAllStandardOutput();
+    };
+
+    data.baseContent = fetchStage(1);
+    QByteArray oursRaw = fetchStage(2);
+    QByteArray theirsRaw = fetchStage(3);
+
+    if (data.isReversed) {
+        data.oursContent = theirsRaw;
+        data.theirsContent = oursRaw;
+    } else {
+        data.oursContent = oursRaw;
+        data.theirsContent = theirsRaw;
+    }
+
+    auto *viewer = new ConflictMergeViewerDock(data, app->getEditorManager(), this);
+    addDockWidget(ConflictMergeViewerDock::defaultArea(), viewer);
+
+    // Tabify with existing viewers
+    const auto existingViewers = findChildren<ConflictMergeViewerDock *>();
+    for (auto *existing : existingViewers) {
+        if (existing != viewer) {
+            tabifyDockWidget(existing, viewer);
+            break;
+        }
+    }
+    viewer->setVisible(true);
+    viewer->raise();
+
+    connect(viewer, &ConflictMergeViewerDock::resolved, this,
+        [this, ctrl](const QString &filePath, const QByteArray &content) {
+            const QString repo = ctrl->currentRepo();
+            const QString absPath = repo + QLatin1Char('/') + filePath;
+            QFile f(absPath);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                f.write(content);
+                f.close();
+            }
+            m_gitOpMgr->resolveFile(ctrl, filePath);
+        });
 }

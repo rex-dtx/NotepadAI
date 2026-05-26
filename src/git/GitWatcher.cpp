@@ -84,6 +84,8 @@ QStringList GitWatcher::currentWatchedFiles() const
     files.append(m_gitDir + QStringLiteral("/HEAD"));
     files.append(m_gitDir + QStringLiteral("/index"));
     files.append(m_gitDir + QStringLiteral("/packed-refs"));
+    files.append(m_gitDir + QStringLiteral("/MERGE_HEAD"));
+    files.append(m_gitDir + QStringLiteral("/REBASE_HEAD"));
     // Trim missing files; QFileSystemWatcher will warn loudly on misses.
     QStringList existing;
     for (const QString &f : files)
@@ -97,6 +99,8 @@ QStringList GitWatcher::currentWatchedDirs() const
     if (m_gitDir.isEmpty()) return dirs;
     dirs.append(m_gitDir + QStringLiteral("/refs/heads"));
     dirs.append(m_gitDir + QStringLiteral("/refs/remotes"));
+    dirs.append(m_gitDir + QStringLiteral("/rebase-merge"));
+    dirs.append(m_gitDir + QStringLiteral("/rebase-apply"));
     dirs.append(m_repoRoot);
     QStringList existing;
     for (const QString &d : dirs)
@@ -114,10 +118,12 @@ void GitWatcher::rewatch()
 
 void GitWatcher::onFileChanged(const QString &path)
 {
-    if (path.endsWith(QStringLiteral("/HEAD")))         m_pending |= PHead;
-    else if (path.endsWith(QStringLiteral("/index")))   m_pending |= PIndex;
-    else if (path.endsWith(QStringLiteral("/packed-refs"))) m_pending |= PRefs;
-    else                                                m_pending |= PTree;
+    if (path.endsWith(QStringLiteral("/HEAD")))              m_pending |= PHead;
+    else if (path.endsWith(QStringLiteral("/index")))        m_pending |= PIndex;
+    else if (path.endsWith(QStringLiteral("/packed-refs")))  m_pending |= PRefs;
+    else if (path.endsWith(QStringLiteral("/MERGE_HEAD")) ||
+             path.endsWith(QStringLiteral("/REBASE_HEAD")))  m_pending |= POpState;
+    else                                                     m_pending |= PTree;
     // QFileSystemWatcher stops watching a file after it's atomically replaced
     // (common with git); re-add to keep tracking.
     if (!m_fs->files().contains(path) && QFile::exists(path)) m_fs->addPath(path);
@@ -129,6 +135,9 @@ void GitWatcher::onDirChanged(const QString &path)
     if (path.endsWith(QStringLiteral("/refs/heads")) ||
         path.endsWith(QStringLiteral("/refs/remotes"))) {
         m_pending |= PRefs;
+    } else if (path.endsWith(QStringLiteral("/rebase-merge")) ||
+               path.endsWith(QStringLiteral("/rebase-apply"))) {
+        m_pending |= POpState;
     } else {
         m_pending |= PTree;
     }
@@ -139,8 +148,9 @@ void GitWatcher::onDebounce()
 {
     const int p = m_pending;
     m_pending = 0;
-    if (p & PHead)  emit headChanged();
-    if (p & PIndex) emit indexChanged();
-    if (p & PRefs)  emit refsChanged();
-    if (p & PTree)  emit workingTreeChanged();
+    if (p & PHead)    emit headChanged();
+    if (p & PIndex)   emit indexChanged();
+    if (p & PRefs)    emit refsChanged();
+    if (p & PTree)    emit workingTreeChanged();
+    if (p & POpState) emit operationStateFileChanged();
 }

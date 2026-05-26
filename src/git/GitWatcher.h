@@ -45,6 +45,7 @@ signals:
     void indexChanged();
     void refsChanged();
     void workingTreeChanged();
+    void operationStateFileChanged();
 
 private slots:
     void onFileChanged(const QString &path);
@@ -58,7 +59,7 @@ private:
     QString m_gitDir;
     int m_pending = 0;
 
-    enum Pending : std::uint8_t { PHead = 1, PIndex = 2, PRefs = 4, PTree = 8 };
+    enum Pending : std::uint8_t { PHead = 1, PIndex = 2, PRefs = 4, PTree = 8, POpState = 16 };
 
     void rewatch();
     QStringList currentWatchedFiles() const;
