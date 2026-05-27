@@ -53,7 +53,6 @@ AiAgentDock::AiAgentDock(QString sessionId,
 {
     setAttribute(Qt::WA_DeleteOnClose, true);
     setObjectName(QStringLiteral("AiAgentDock_%1").arg(m_sessionId));
-    setMinimumWidth(600);
     // Spec ("Default dock area"): dock is unrestricted — user may move it to
     // any side. defaultArea() is only consulted on first attach.
     setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -199,6 +198,11 @@ AiAgentDock::~AiAgentDock()
     if (m_model) {
         disconnect(m_model, nullptr, this, nullptr);
     }
+}
+
+QSize AiAgentDock::sizeHint() const
+{
+    return QSize(600, 400);
 }
 
 void AiAgentDock::closeEvent(QCloseEvent *event)

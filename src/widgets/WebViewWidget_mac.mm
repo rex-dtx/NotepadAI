@@ -75,6 +75,8 @@ public:
 
     void reload() override { setLoading(true); [m_webView reload]; }
     void stop() override { [m_webView stopLoading]; setLoading(false); }
+    void goBack() override { if (m_webView) [m_webView goBack]; }
+    void goForward() override { if (m_webView) [m_webView goForward]; }
 
     void destroy() override
     {

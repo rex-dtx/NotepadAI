@@ -150,6 +150,18 @@ public:
         setLoading(false);
     }
 
+    void goBack() override
+    {
+        if (!m_webView) return;
+        m_webView->GoBack();
+    }
+
+    void goForward() override
+    {
+        if (!m_webView) return;
+        m_webView->GoForward();
+    }
+
     void destroy() override
     {
         m_alive->store(false, std::memory_order_release);
@@ -344,6 +356,11 @@ private:
         m_webView->add_DocumentTitleChanged(
             new DocumentTitleChangedHandler(this), &titleToken);
 
+        // Block new windows — navigate in-place instead
+        EventRegistrationToken newWinToken;
+        m_webView->add_NewWindowRequested(
+            new NewWindowRequestedHandler(this), &newWinToken);
+
         // Navigate to initial URL
         setLoading(true);
         m_dbgNavigateCalled = true;
@@ -475,6 +492,32 @@ private:
                 CoTaskMemFree(title);
                 emit owner->titleChanged(qtTitle);
             }
+            return S_OK;
+        }
+    };
+
+    // NewWindowRequestedHandler: intercepts window.open / target="_blank" and navigates in-place.
+    struct NewWindowRequestedHandler : ICoreWebView2NewWindowRequestedEventHandler {
+        WebViewWidgetWin *owner;
+        std::shared_ptr<std::atomic<bool>> alive;
+        ULONG refCount = 1;
+        NewWindowRequestedHandler(WebViewWidgetWin *o) : owner(o), alive(o->m_alive) {}
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+            if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ICoreWebView2NewWindowRequestedEventHandler)) {
+                *ppv = this; AddRef(); return S_OK;
+            }
+            *ppv = nullptr; return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
+        ULONG STDMETHODCALLTYPE Release() override { if (--refCount == 0) { delete this; return 0; } return refCount; }
+        HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2 *, ICoreWebView2NewWindowRequestedEventArgs *args) override {
+            if (!alive->load(std::memory_order_acquire)) return S_OK;
+            LPWSTR uri = nullptr;
+            if (args && SUCCEEDED(args->get_Uri(&uri)) && uri) {
+                owner->m_webView->Navigate(uri);
+                CoTaskMemFree(uri);
+            }
+            if (args) args->put_Handled(TRUE);
             return S_OK;
         }
     };

@@ -3739,6 +3739,8 @@ void MainWindow::attachAiAgentDock(AiAgentDock *dock)
     DockMiddleClickCloser::install(dock);
     if (existing) {
         tabifyDockWidget(existing, dock);
+    } else {
+        resizeDocks({dock}, {600}, Qt::Horizontal);
     }
     dock->setVisible(true);
     dock->raise();

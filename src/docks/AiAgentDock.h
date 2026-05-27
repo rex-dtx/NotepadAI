@@ -92,6 +92,7 @@ signals:
     void goalDebugLogAppended(const QString &entry);
 
 protected:
+    QSize sizeHint() const override;
     void closeEvent(QCloseEvent *event) override;
 
     // Test seam — override in tests to bypass the modal QMessageBox.

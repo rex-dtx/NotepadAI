@@ -29,6 +29,8 @@ public:
     virtual void navigate(const QUrl &url) = 0;
     virtual void reload() = 0;
     virtual void stop() = 0;
+    virtual void goBack() = 0;
+    virtual void goForward() = 0;
     virtual void destroy() = 0;
     virtual QString debugInfo() const { return QString(); }
 
@@ -68,6 +70,8 @@ private:
     QUrl m_url;
     QVBoxLayout *m_mainLayout = nullptr;
     QHBoxLayout *m_toolbarLayout = nullptr;
+    QToolButton *m_backBtn = nullptr;
+    QToolButton *m_forwardBtn = nullptr;
     QToolButton *m_reloadBtn = nullptr;
     QLabel *m_urlLabel = nullptr;
     QToolButton *m_stopBtn = nullptr;

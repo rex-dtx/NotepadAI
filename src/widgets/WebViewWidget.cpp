@@ -33,6 +33,22 @@ void WebViewWidget::setupToolbar()
     m_toolbarLayout->setContentsMargins(4, 0, 4, 0);
     m_toolbarLayout->setSpacing(4);
 
+    m_backBtn = new QToolButton(toolbarWidget);
+    m_backBtn->setAutoRaise(true);
+    m_backBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    m_backBtn->setToolTip(tr("Back"));
+    m_backBtn->setIconSize(QSize(14, 14));
+    connect(m_backBtn, &QToolButton::clicked, this, &WebViewWidget::goBack);
+    m_toolbarLayout->addWidget(m_backBtn);
+
+    m_forwardBtn = new QToolButton(toolbarWidget);
+    m_forwardBtn->setAutoRaise(true);
+    m_forwardBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
+    m_forwardBtn->setToolTip(tr("Forward"));
+    m_forwardBtn->setIconSize(QSize(14, 14));
+    connect(m_forwardBtn, &QToolButton::clicked, this, &WebViewWidget::goForward);
+    m_toolbarLayout->addWidget(m_forwardBtn);
+
     m_reloadBtn = new QToolButton(toolbarWidget);
     m_reloadBtn->setAutoRaise(true);
     m_reloadBtn->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
