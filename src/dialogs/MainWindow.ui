@@ -382,7 +382,7 @@
    </widget>
    <widget class="QMenu" name="menuMiniApps">
     <property name="title">
-     <string>Mini Apps</string>
+     <string>Miniapps</string>
     </property>
     <addaction name="actionEditMiniApps"/>
    </widget>
@@ -410,10 +410,10 @@
    <addaction name="menuEncodings"/>
    <addaction name="menuLanguage"/>
    <addaction name="menuSettings"/>
+   <addaction name="menuMacro"/>
    <addaction name="menuTerminal"/>
    <addaction name="menuAi"/>
    <addaction name="menuMiniApps"/>
-   <addaction name="menuMacro"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QToolBar" name="mainToolBar">
@@ -1092,7 +1092,7 @@
   </action>
   <action name="actionEditMiniApps">
    <property name="text">
-    <string>Edit Mini Apps…</string>
+    <string>Edit Miniapps…</string>
    </property>
   </action>
   <action name="actionQuickFind">

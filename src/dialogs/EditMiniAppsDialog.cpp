@@ -31,7 +31,7 @@ EditMiniAppsDialog::EditMiniAppsDialog(MiniAppRegistry *registry,
     , m_registry(registry)
     , m_workspacePath(workspacePath)
 {
-    setWindowTitle(tr("Edit Mini Apps"));
+    setWindowTitle(tr("Edit Miniapps"));
     resize(750, 520);
 
     auto *mainLayout = new QVBoxLayout(this);
