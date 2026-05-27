@@ -113,7 +113,7 @@ EditorManager::EditorManager(ApplicationSettings *settings, QObject *parent)
         }
     });
 
-    connect(settings, &ApplicationSettings::fontNameChanged, this, [=](QString fontName){
+    connect(settings, &ApplicationSettings::fontNameChanged, this, [=](const QString &fontName){
         for (auto &editor : getEditors()) {
             for (int i = 0; i <= STYLE_MAX; ++i) {
                 editor->styleSetFont(i, fontName.toUtf8().data());

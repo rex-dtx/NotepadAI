@@ -1437,11 +1437,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
         for (const TerminalTask &task : tasks) {
             QAction *action = ui->menuTasks->addAction(task.name);
-            const TerminalTask capturedTask = task;
-            connect(action, &QAction::triggered, this, [this, workspaceRoot, capturedTask]() {
+            connect(action, &QAction::triggered, this, [this, workspaceRoot, task]() {
                 const QString cwd = TerminalCwdResolver::resolveWorkspace(workspaceRoot);
                 if (cwd.isEmpty()) return;
-                terminalManager->openTask(cwd, capturedTask);
+                terminalManager->openTask(cwd, task);
             });
         }
     });
@@ -1810,7 +1809,7 @@ void MainWindow::setupLanguageMenu()
         // Get all consecutive names that start with the same letter
         // NOTE: this loop always runs once since i == j the first time
         while (j < language_names.size() && language_names[i][0].toUpper() == language_names[j][0].toUpper()) {
-            const QString key = language_names[j];
+            const QString &key = language_names[j];
             QAction *action = new QAction(key);
             action->setCheckable(true);
             action->setData(key);
@@ -3075,6 +3074,8 @@ void MainWindow::updateEOLBasedUi(ScintillaNext *editor)
     case SC_EOL_LF:
         ui->actionUnix->setChecked(true);
         break;
+    default:
+        break;
     }
 }
 
@@ -3196,8 +3197,6 @@ void MainWindow::detectLanguage(ScintillaNext *editor)
 
         setLanguage(editor, language_name);
     }
-
-    return;
 }
 
 void MainWindow::activateEditor(ScintillaNext *editor)
@@ -3280,7 +3279,7 @@ void MainWindow::bringWindowToForeground()
 
         HWND hCurWnd = GetForegroundWindow();
         DWORD threadId = GetCurrentThreadId();
-        DWORD procId = GetWindowThreadProcessId(hCurWnd, NULL);
+        DWORD procId = GetWindowThreadProcessId(hCurWnd, nullptr);
 
         int sw = 0;
         if (IsZoomed(hWnd)) {
@@ -3669,7 +3668,7 @@ void MainWindow::checkForUpdates(bool silent)
 #endif
 }
 
-void MainWindow::checkForUpdatesFinished(QString url)
+void MainWindow::checkForUpdatesFinished(const QString &url)
 {
 #ifdef Q_OS_WIN
     if (!QSimpleUpdater::getInstance()->getUpdateAvailable(url)) {
@@ -3823,7 +3822,7 @@ void MainWindow::dropEvent(QDropEvent *event)
     }
 }
 
-QMenu *MainWindow::buildMenu(QStringList actionNames)
+QMenu *MainWindow::buildMenu(const QStringList &actionNames)
 {
     QMenu *menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);

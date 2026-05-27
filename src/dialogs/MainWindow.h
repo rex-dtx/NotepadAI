@@ -171,7 +171,7 @@ protected:
 private slots:
     void tabBarRightClicked(ScintillaNext *editor);
     void languageMenuTriggered();
-    void checkForUpdatesFinished(QString url);
+    void checkForUpdatesFinished(const QString &url);
     void activateEditor(ScintillaNext *editor);
 
 private:
@@ -249,7 +249,7 @@ private:
     ZoomEventWatcher *zoomEventWatcher;
     int zoomLevel = 0;
     int contextMenuPos = 0;
-    QMenu *buildMenu(QStringList actionNames);
+    QMenu *buildMenu(const QStringList &actionNames);
 
     TerminalManager *terminalManager = Q_NULLPTR;
     FileWatcher *fileWatcher = Q_NULLPTR;
