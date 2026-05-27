@@ -57,6 +57,15 @@ jobs:
         with:
           nsis-version: '3.11'
 
+      - name: Install WebView2 SDK
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -sL -o webview2.nupkg "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.3967.48"
+          unzip -q -o webview2.nupkg -d webview2-sdk
+          cp webview2-sdk/build/native/include/WebView2.h thirdparty/webview2/include/WebView2.h
+          cp webview2-sdk/build/native/include/WebView2EnvironmentOptions.h thirdparty/webview2/include/WebView2EnvironmentOptions.h
+
       - name: Setup Linux
         if: runner.os == 'Linux'
         run: |
