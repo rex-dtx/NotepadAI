@@ -380,6 +380,12 @@
     <addaction name="separator"/>
     <addaction name="actionAiAgents"/>
    </widget>
+   <widget class="QMenu" name="menuMiniApps">
+    <property name="title">
+     <string>Mini Apps</string>
+    </property>
+    <addaction name="actionEditMiniApps"/>
+   </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
      <string>Help</string>
@@ -406,6 +412,7 @@
    <addaction name="menuSettings"/>
    <addaction name="menuTerminal"/>
    <addaction name="menuAi"/>
+   <addaction name="menuMiniApps"/>
    <addaction name="menuMacro"/>
    <addaction name="menuHelp"/>
   </widget>
@@ -1081,6 +1088,11 @@
   <action name="actionEditTasks">
    <property name="text">
     <string>Edit Tasks…</string>
+   </property>
+  </action>
+  <action name="actionEditMiniApps">
+   <property name="text">
+    <string>Edit Mini Apps…</string>
    </property>
   </action>
   <action name="actionQuickFind">

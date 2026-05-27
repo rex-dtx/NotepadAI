@@ -48,5 +48,7 @@
         <file>icons/list_with_icons.svg</file>
         <file>icons/paperclip.svg</file>
         <file>icons/markdown-preview.svg</file>
+        <file>icons/html-preview.svg</file>
+        <file>icons/mini-app.svg</file>
     </qresource>
 </RCC>

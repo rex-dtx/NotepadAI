@@ -28,6 +28,7 @@
 #include "ScintillaNext.h"
 
 #include <QEvent>
+#include <QTimer>
 #include <QUuid>
 
 
@@ -102,10 +103,13 @@ DockedEditor::DockedEditor(QWidget *parent) : QObject(parent)
             emit editorOrderChanged();
         });
 
-        // In theory the order changes when a new dock area is created (e.g. editor is dragged and dropped),
-        // but the dockAreaCreated() signal is triggered before it is actually added to the CDockManager,
-        // so interrogating the dock manager during the signal doesn't help.
-        //emit editorOrderChanged();
+        // Pin preview editor if it was dragged to create this new area
+        QTimer::singleShot(0, this, [this, DockArea]() {
+            if (!m_previewEditor) return;
+            auto *dw = qobject_cast<ads::CDockWidget *>(m_previewEditor->parentWidget());
+            if (dw && dw->dockAreaWidget() == DockArea)
+                pinPreviewEditor();
+        });
     });
 }
 
@@ -254,6 +258,8 @@ void DockedEditor::addPreviewEditor(ScintillaNext *editor)
             pinPreviewEditor();
         }
     });
+
+    emit previewEditorSet();
 }
 
 ScintillaNext *DockedEditor::previewEditor() const

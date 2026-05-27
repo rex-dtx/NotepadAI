@@ -85,6 +85,7 @@ signals:
     void editorActivated(ScintillaNext *editor);
     void editorOrderChanged();
     void previewTabActivated(QWidget *widget);
+    void previewEditorSet();
 
     void contextMenuRequestedForEditor(ScintillaNext *editor);
     void titleBarDoubleClicked();

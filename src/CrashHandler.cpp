@@ -45,8 +45,10 @@
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
 #  include <dbghelp.h>
+#  include <psapi.h>
 #  include <shlobj.h>
 #  pragma comment(lib, "dbghelp.lib")
+#  pragma comment(lib, "psapi.lib")
 #  pragma comment(lib, "shell32.lib")
 #else
 #  include <fcntl.h>
@@ -75,6 +77,9 @@ constexpr std::size_t kRotateBytes    = 10 * 1024 * 1024;
 constexpr std::size_t kFrameReserve   = 1024;
 #ifdef _WIN32
 constexpr DWORD64     kSymDispMax     = 256 * 1024;
+constexpr int         kMaxModules     = 64;
+constexpr std::size_t kRawStackBytes  = 512;
+constexpr int         kInsnBytes      = 16;
 #endif
 
 #ifndef _WIN32
@@ -381,6 +386,8 @@ void writeHeader(CrashFile *cf, const char *kind)
     appendStr(b, kSectionBufSize, &p, "\nPID  : ");
 #ifdef _WIN32
     appendU64(b, kSectionBufSize, &p, GetCurrentProcessId());
+    appendStr(b, kSectionBufSize, &p, "\nTID  : ");
+    appendU64(b, kSectionBufSize, &p, GetCurrentThreadId());
 #else
     appendU64(b, kSectionBufSize, &p, static_cast<std::uint64_t>(getpid()));
 #endif
@@ -475,10 +482,174 @@ bool isFatalSehCode(DWORD code)
     }
 }
 
+void writeRegisters(CrashFile *cf, CONTEXT *ctx)
+{
+    std::size_t p = 0;
+    char *b = g_section_buf;
+    appendStr(b, kSectionBufSize, &p, "Registers:\n");
+
+#if defined(_M_X64) || defined(__x86_64__)
+    auto reg = [&](const char *name, DWORD64 val) {
+        appendStr(b, kSectionBufSize, &p, "  ");
+        appendStr(b, kSectionBufSize, &p, name);
+        appendStr(b, kSectionBufSize, &p, ": 0x");
+        appendHex64(b, kSectionBufSize, &p, val, 16);
+        appendChar(b, kSectionBufSize, &p, '\n');
+    };
+    reg("RAX", ctx->Rax); reg("RBX", ctx->Rbx);
+    reg("RCX", ctx->Rcx); reg("RDX", ctx->Rdx);
+    reg("RSI", ctx->Rsi); reg("RDI", ctx->Rdi);
+    reg("RBP", ctx->Rbp); reg("RSP", ctx->Rsp);
+    reg("R8 ", ctx->R8);  reg("R9 ", ctx->R9);
+    reg("R10", ctx->R10); reg("R11", ctx->R11);
+    reg("R12", ctx->R12); reg("R13", ctx->R13);
+    reg("R14", ctx->R14); reg("R15", ctx->R15);
+    reg("RIP", ctx->Rip);
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    appendStr(b, kSectionBufSize, &p, "  (ARM64 register dump not implemented)\n");
+#else
+    appendStr(b, kSectionBufSize, &p, "  (unsupported arch)\n");
+#endif
+
+    writeSection(cf, b, &p);
+}
+
+bool isMemoryReadable(const void *ptr, std::size_t len)
+{
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(ptr, &mbi, sizeof(mbi)) == 0) return false;
+    if (mbi.State != MEM_COMMIT) return false;
+    const DWORD prot = mbi.Protect;
+    if (prot & (PAGE_NOACCESS | PAGE_GUARD)) return false;
+    const auto start = reinterpret_cast<std::uintptr_t>(ptr);
+    const auto regionEnd = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    return (start + len) <= regionEnd;
+}
+
+void writeInsnBytes(CrashFile *cf, void *addr)
+{
+    std::size_t p = 0;
+    char *b = g_section_buf;
+    unsigned char insnBuf[kInsnBytes] = {0};
+    bool insnOk = false;
+
+    if (addr && isMemoryReadable(addr, kInsnBytes)) {
+        memcpy(insnBuf, addr, kInsnBytes);
+        insnOk = true;
+    }
+
+    appendStr(b, kSectionBufSize, &p, "Insn : ");
+    if (insnOk) {
+        for (int i = 0; i < kInsnBytes; ++i) {
+            if (i > 0) appendChar(b, kSectionBufSize, &p, ' ');
+            appendHex64(b, kSectionBufSize, &p, insnBuf[i], 2);
+        }
+    } else {
+        appendStr(b, kSectionBufSize, &p, "(unreadable)");
+    }
+    appendChar(b, kSectionBufSize, &p, '\n');
+    writeSection(cf, b, &p);
+}
+
+void writeModules(CrashFile *cf)
+{
+    std::size_t p = 0;
+    char *b = g_section_buf;
+    appendStr(b, kSectionBufSize, &p, "Modules:\n");
+    writeSection(cf, b, &p);
+
+    HANDLE process = GetCurrentProcess();
+    HMODULE mods[kMaxModules];
+    DWORD needed = 0;
+    if (!EnumProcessModules(process, mods, sizeof(mods), &needed))
+        return;
+
+    const int count = static_cast<int>(needed / sizeof(HMODULE));
+    const int limit = count < kMaxModules ? count : kMaxModules;
+
+    for (int i = 0; i < limit; ++i) {
+        MODULEINFO mi{};
+        GetModuleInformation(process, mods[i], &mi, sizeof(mi));
+
+        char name[MAX_PATH] = {0};
+        GetModuleFileNameA(mods[i], name, MAX_PATH);
+
+        // Extract just the filename from the full path
+        const char *basename = name;
+        for (const char *c = name; *c; ++c) {
+            if (*c == '\\' || *c == '/') basename = c + 1;
+        }
+
+        p = 0;
+        appendStr(b, kSectionBufSize, &p, "  0x");
+        appendHex64(b, kSectionBufSize, &p,
+                    reinterpret_cast<std::uint64_t>(mi.lpBaseOfDll), 16);
+        appendChar(b, kSectionBufSize, &p, ' ');
+        appendHex64(b, kSectionBufSize, &p,
+                    static_cast<std::uint64_t>(mi.SizeOfImage), 8);
+        appendChar(b, kSectionBufSize, &p, ' ');
+        appendStr(b, kSectionBufSize, &p, basename);
+        appendChar(b, kSectionBufSize, &p, '\n');
+
+        if (kSectionBufSize - p < kFrameReserve) {
+            writeSection(cf, b, &p);
+        }
+    }
+    writeSection(cf, b, &p);
+}
+
+void writeRawStack(CrashFile *cf, CONTEXT *ctx)
+{
+#if defined(_M_X64) || defined(__x86_64__)
+    std::size_t p = 0;
+    char *b = g_section_buf;
+    appendStr(b, kSectionBufSize, &p, "Raw stack (512 bytes from RSP):\n");
+    writeSection(cf, b, &p);
+
+    unsigned char stackBuf[kRawStackBytes] = {0};
+    bool ok = false;
+    void *rspPtr = reinterpret_cast<void *>(ctx->Rsp);
+    if (rspPtr && isMemoryReadable(rspPtr, kRawStackBytes)) {
+        memcpy(stackBuf, rspPtr, kRawStackBytes);
+        ok = true;
+    }
+
+    if (!ok) {
+        p = 0;
+        appendStr(b, kSectionBufSize, &p, "  (unreadable)\n");
+        writeSection(cf, b, &p);
+        return;
+    }
+
+    // Dump as 64-bit qwords, 8 per line
+    const std::uint64_t *qwords = reinterpret_cast<const std::uint64_t *>(stackBuf);
+    const int totalQwords = static_cast<int>(kRawStackBytes / 8);
+    p = 0;
+    for (int i = 0; i < totalQwords; ++i) {
+        if (i % 8 == 0) appendStr(b, kSectionBufSize, &p, "  ");
+        appendStr(b, kSectionBufSize, &p, "0x");
+        appendHex64(b, kSectionBufSize, &p, qwords[i], 16);
+        if (i % 8 == 7 || i == totalQwords - 1) {
+            appendChar(b, kSectionBufSize, &p, '\n');
+            if (kSectionBufSize - p < kFrameReserve) {
+                writeSection(cf, b, &p);
+            }
+        } else {
+            appendChar(b, kSectionBufSize, &p, ' ');
+        }
+    }
+    writeSection(cf, b, &p);
+#else
+    (void)cf; (void)ctx;
+#endif
+}
+
 void writeStackTraceWindows(CrashFile *cf, CONTEXT *ctx)
 {
     HANDLE process = GetCurrentProcess();
     HANDLE thread  = GetCurrentThread();
+
+    SymRefreshModuleList(process);
 
     STACKFRAME64 frame{};
     DWORD machine = 0;
@@ -633,8 +804,12 @@ bool writeReportSeh(EXCEPTION_POINTERS *info, const char *origin)
         writeSection(&cf, b, &p);
     }
 
+    writeRegisters(&cf, info->ContextRecord);
+    writeInsnBytes(&cf, info->ExceptionRecord->ExceptionAddress);
     writeContextSection(&cf);
+    writeModules(&cf);
     writeStackTraceWindows(&cf, info->ContextRecord);
+    writeRawStack(&cf, info->ContextRecord);
     writeFooter(&cf);
     cf.close();
     return true;

@@ -221,3 +221,30 @@ void ApplicationSettings::setWorkspaceTasksJson(const QString &json)
 {
     setValue(QLatin1String(kWorkspaceTasksJsonKey), json);
 }
+
+// --- Mini Apps settings ----------------------------------------------------------
+
+static const char kMiniAppsGlobalJsonKey[]    = "MiniApps/GlobalAppsJson";
+static const char kMiniAppsWorkspaceJsonKey[] = "MiniApps/WorkspaceAppsJson";
+
+QString ApplicationSettings::miniAppsGlobalJson() const
+{
+    return value(QLatin1String(kMiniAppsGlobalJsonKey), QString()).toString();
+}
+
+void ApplicationSettings::setMiniAppsGlobalJson(const QString &json)
+{
+    setValue(QLatin1String(kMiniAppsGlobalJsonKey), json);
+    emit miniAppsGlobalJsonChanged(json);
+}
+
+QString ApplicationSettings::miniAppsWorkspaceJson() const
+{
+    return value(QLatin1String(kMiniAppsWorkspaceJsonKey), QString()).toString();
+}
+
+void ApplicationSettings::setMiniAppsWorkspaceJson(const QString &json)
+{
+    setValue(QLatin1String(kMiniAppsWorkspaceJsonKey), json);
+    emit miniAppsWorkspaceJsonChanged(json);
+}

@@ -34,6 +34,7 @@ qt_add_executable(NotepadAI
 	Finder.h
 	FocusWatcher.h
 	HtmlConverter.h
+	HtmlPreviewWidget.h
 	IFaceTable.h
 	MarkdownPreviewWidget.h
 	MarkdownRenderer.h
@@ -106,6 +107,7 @@ qt_add_executable(NotepadAI
 	FileWatcher.cpp
 	Finder.cpp
 	HtmlConverter.cpp
+	HtmlPreviewWidget.cpp
 	IFaceTable.cpp
 	MarkdownPreviewWidget.cpp
 	MarkdownRenderer.cpp
@@ -189,6 +191,8 @@ qt_add_executable(NotepadAI
 	dialogs/SendWithGoalDialog.h
 	dialogs/EditTasksDialog.cpp
 	dialogs/EditTasksDialog.h
+	dialogs/EditMiniAppsDialog.cpp
+	dialogs/EditMiniAppsDialog.h
 	dialogs/ColumnEditorDialog.cpp
 	dialogs/ColumnEditorDialog.h
 	dialogs/ColumnEditorDialog.ui
@@ -366,6 +370,8 @@ qt_add_executable(NotepadAI
 	ScintillaSorter.h ScintillaSorter.cpp
 	widgets/TabsQuickActionsBar.cpp
 	widgets/TabsQuickActionsBar.h
+	widgets/WebViewWidget.h
+	widgets/WebViewWidget.cpp
 
 	TerminalAiHelper.h
 	TerminalAiHelper.cpp
@@ -375,6 +381,13 @@ qt_add_executable(NotepadAI
 	TerminalManager.cpp
 	TerminalTaskRegistry.h
 	TerminalTaskRegistry.cpp
+	MiniAppDefinition.h
+	MiniAppRegistry.h
+	MiniAppRegistry.cpp
+	MiniAppInstance.h
+	MiniAppInstance.cpp
+	MiniAppManager.h
+	MiniAppManager.cpp
 	widgets/TerminalColorScheme.h
 	widgets/TerminalColorScheme.cpp
 	widgets/ScrollbackBuffer.h
@@ -415,6 +428,16 @@ elseif(APPLE)
 else()
     target_sources(NotepadAI PRIVATE ai/CredentialStore_Linux.cpp)
     # libsecret resolved at runtime via QLibrary("secret-1"); no build dep.
+endif()
+
+# Platform-conditional WebView widget for Mini Apps.
+if(WIN32)
+    target_sources(NotepadAI PRIVATE widgets/WebViewWidget_win.cpp)
+    target_link_libraries(NotepadAI PRIVATE webview2)
+elseif(APPLE)
+    enable_language(OBJCXX)
+    target_sources(NotepadAI PRIVATE widgets/WebViewWidget_mac.mm)
+    target_link_libraries(NotepadAI PRIVATE "-framework WebKit")
 endif()
 
 set_target_properties(NotepadAI PROPERTIES

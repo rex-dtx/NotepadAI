@@ -80,6 +80,9 @@
 #include "TerminalCwdResolver.h"
 #include "TerminalTaskRegistry.h"
 #include "EditTasksDialog.h"
+#include "MiniAppManager.h"
+#include "MiniAppRegistry.h"
+#include "EditMiniAppsDialog.h"
 
 #include "FindReplaceDialog.h"
 #include "MacroRunDialog.h"
@@ -1384,6 +1387,62 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         }
     });
 
+    // --- Mini Apps menu ---
+    m_miniAppRegistry = new MiniAppRegistry(app->getSettings());
+    m_miniAppManager = new MiniAppManager(app, m_miniAppRegistry, dockedEditor, this);
+
+    connect(ui->menuMiniApps, &QMenu::aboutToShow, this, [this]() {
+        // Clear dynamic items (keep only the static "Edit Mini Apps..." action)
+        while (ui->menuMiniApps->actions().size() > 1) {
+            delete ui->menuMiniApps->actions().first();
+        }
+
+        const QString workspaceRoot = currentWorkspaceRoot();
+        const QList<MiniAppDefinition> globalApps = m_miniAppRegistry->globalApps();
+        const QList<MiniAppDefinition> wsApps = workspaceRoot.isEmpty()
+            ? QList<MiniAppDefinition>()
+            : m_miniAppRegistry->workspaceApps(workspaceRoot);
+
+        QAction *beforeAction = ui->actionEditMiniApps;
+
+        // Global apps
+        for (const MiniAppDefinition &def : globalApps) {
+            QAction *a = new QAction(def.name, ui->menuMiniApps);
+            connect(a, &QAction::triggered, this, [this, def]() {
+                m_miniAppManager->launchApp(def);
+            });
+            ui->menuMiniApps->insertAction(beforeAction, a);
+        }
+
+        // Separator + workspace apps
+        if (!wsApps.isEmpty()) {
+            if (!globalApps.isEmpty())
+                ui->menuMiniApps->insertSeparator(beforeAction);
+            for (const MiniAppDefinition &def : wsApps) {
+                QAction *a = new QAction(def.name, ui->menuMiniApps);
+                connect(a, &QAction::triggered, this, [this, def]() {
+                    m_miniAppManager->launchApp(def);
+                });
+                ui->menuMiniApps->insertAction(beforeAction, a);
+            }
+        }
+
+        // Separator before Edit action (if any apps exist)
+        if (!globalApps.isEmpty() || !wsApps.isEmpty())
+            ui->menuMiniApps->insertSeparator(beforeAction);
+    });
+
+    connect(ui->actionEditMiniApps, &QAction::triggered, this, [this]() {
+        const QString workspaceRoot = currentWorkspaceRoot();
+        EditMiniAppsDialog dlg(m_miniAppRegistry, workspaceRoot, this);
+        dlg.exec();
+    });
+
+    connect(app, &QCoreApplication::aboutToQuit, this, [this]() {
+        if (m_miniAppManager)
+            m_miniAppManager->shutdown();
+    });
+
     connect(ui->menuAi, &QMenu::aboutToShow, this, [this]() {
         const QString workspaceRoot = currentWorkspaceRoot();
         QString activeFilePath;
@@ -1930,6 +1989,23 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
     connect(dock, &FolderAsWorkspaceDock::treeContextMenuRequested, this,
             [this](QMenu *menu, const QString &absPath, bool isDir) {
         const QString wsRoot = currentWorkspaceRoot();
+
+        // --- Preview (rendered preview for supported file types) ---
+        if (!isDir) {
+            auto *mgr = this->app->getPreviewTabManager();
+            if (mgr && mgr->canPreview(absPath)) {
+                QFileInfo fi(absPath);
+                if (fi.size() <= 10 * 1024 * 1024) {
+                    auto *previewAction = new QAction(tr("Preview"), menu);
+                    connect(previewAction, &QAction::triggered, this, [this, absPath]() {
+                        auto *mgr = this->app->getPreviewTabManager();
+                        if (mgr) mgr->openPreviewFromFile(absPath);
+                    });
+                    menu->addAction(previewAction);
+                    menu->addSeparator();
+                }
+            }
+        }
 
         // --- Copy Path / Copy Relative Path ---
         auto *copyPath = new QAction(tr("Copy Path"), menu);

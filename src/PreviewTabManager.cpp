@@ -4,11 +4,14 @@
 #include "NotepadNextApplication.h"
 #include "MarkdownRenderer.h"
 #include "MarkdownPreviewWidget.h"
+#include "HtmlPreviewWidget.h"
+#include "FileEncodingDetector.h"
 
 #include "DockWidget.h"
 #include "DockWidgetTab.h"
 #include "DockAreaWidget.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QPainter>
@@ -46,6 +49,13 @@ PreviewTabManager::PreviewTabManager(NotepadNextApplication *app, DockedEditor *
                 entry.widget->applyTheme(pal, isDark);
             if (entry.dockWidget && !entry.iconPath.isEmpty())
                 entry.dockWidget->tabWidget()->setIcon(tintIcon(entry.iconPath, iconColor));
+        }
+    });
+
+    connect(dockedEditor, &DockedEditor::previewEditorSet, this, [this]() {
+        if (m_transientPreviewTab) {
+            m_transientPreviewTab->closeDockWidget();
+            m_transientPreviewTab = nullptr;
         }
     });
 }
@@ -229,4 +239,65 @@ void PreviewTabManager::syncScroll(ScintillaNext *sourceEditor)
         int firstLine = static_cast<int>(sourceEditor->firstVisibleLine()) + 1;
         mdWidget->scrollToLine(firstLine);
     }
+}
+
+void PreviewTabManager::openPreviewFromFile(const QString &filePath)
+{
+    const TypeRegistration *reg = findRegistration(filePath);
+    if (!reg) return;
+
+    QFileInfo fi(filePath);
+    if (fi.size() > 10 * 1024 * 1024) return;
+
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    QByteArray raw = f.readAll();
+    f.close();
+
+    if (raw.left(512).contains('\0')) return;
+
+    // Close editor preview tab if one exists (shared transient slot)
+    if (m_dockedEditor->previewEditor())
+        m_dockedEditor->previewEditor()->close();
+
+    QString text;
+    FileEncodingDetector::decode(raw, text);
+
+    // Close existing transient preview tab (replaceable, like editor preview tab)
+    if (m_transientPreviewTab) {
+        m_transientPreviewTab->closeDockWidget();
+        m_transientPreviewTab = nullptr;
+    }
+
+    PreviewContentWidget *preview = reg->factory(nullptr);
+    if (!preview) return;
+
+    preview->applyTheme(m_app->palette(), m_app->isEffectiveThemeDark());
+
+    QString basePath = fi.absolutePath();
+    preview->setContent(text, basePath);
+
+    auto *htmlPreview = qobject_cast<HtmlPreviewWidget *>(preview);
+    if (htmlPreview)
+        htmlPreview->setFilePath(filePath);
+
+    QString title = fi.fileName();
+    QColor iconColor = m_app->palette().color(QPalette::ButtonText);
+    ads::CDockWidget *dockWidget = m_dockedEditor->addPreviewTab(
+        preview, title, tintIcon(reg->iconPath, iconColor));
+    dockWidget->tabWidget()->setToolTip(filePath);
+
+    // Italic style to indicate transient/preview state
+    QFont tabFont = dockWidget->tabWidget()->font();
+    tabFont.setItalic(true);
+    dockWidget->tabWidget()->setFont(tabFont);
+
+    m_transientPreviewTab = dockWidget;
+
+    connect(preview, &QObject::destroyed, this, [this, dockWidget]() {
+        if (m_transientPreviewTab == dockWidget)
+            m_transientPreviewTab = nullptr;
+    });
+
+    emit previewOpened(preview);
 }

@@ -30,6 +30,7 @@
 #include "AcpAgentManager.h"
 #include "PreviewTabManager.h"
 #include "MarkdownPreviewWidget.h"
+#include "HtmlPreviewWidget.h"
 #include "ai/CommitMessageGenerator.h"
 #include "ai/CredentialStore.h"
 #include "ThemeResolver.h"
@@ -279,6 +280,13 @@ bool NotepadNextApplication::init()
             QStringLiteral(":/icons/markdown-preview.svg"),
             [this](QWidget *parent) -> PreviewContentWidget * {
                 return new MarkdownPreviewWidget(this, parent);
+            }
+        });
+        previewTabManager->registerType(QStringLiteral("html"), {
+            {QStringLiteral("html"), QStringLiteral("htm")},
+            QStringLiteral(":/icons/html-preview.svg"),
+            [this](QWidget *parent) -> PreviewContentWidget * {
+                return new HtmlPreviewWidget(this, parent);
             }
         });
     }

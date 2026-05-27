@@ -51,4 +51,8 @@ add_subdirectory(libptyqt)
 add_subdirectory(xdiff)
 add_subdirectory(md4c)
 
+if(WIN32)
+    add_subdirectory(webview2)
+endif()
+
 target_link_libraries(lexilla PRIVATE scintilla)

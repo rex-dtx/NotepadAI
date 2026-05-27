@@ -143,6 +143,18 @@ public:
 public slots:
     void setWorkspaceTasksJson(const QString &json);
 
+    // Mini Apps persistence. Global apps stored as a JSON array; workspace
+    // apps stored as a JSON object keyed by normalized workspace path.
+public:
+    QString miniAppsGlobalJson() const;
+    QString miniAppsWorkspaceJson() const;
+public slots:
+    void setMiniAppsGlobalJson(const QString &json);
+    void setMiniAppsWorkspaceJson(const QString &json);
+signals:
+    void miniAppsGlobalJsonChanged(const QString &json);
+    void miniAppsWorkspaceJsonChanged(const QString &json);
+
     DEFINE_SETTING(SyntaxHighlightDiffEnabled, syntaxHighlightDiffEnabled, bool)
 
     // Files-tab git decoration master toggle. When false, the workspace

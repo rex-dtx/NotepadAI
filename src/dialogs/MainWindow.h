@@ -53,6 +53,8 @@ class FolderAsWorkspaceDock;
 class ConflictListDock;
 class ConflictMergeViewerDock;
 class GitOperationManager;
+class MiniAppManager;
+class MiniAppRegistry;
 struct ConflictEntry;
 struct GitStatusEntry;
 struct WorkspaceStateSnapshot;
@@ -251,6 +253,8 @@ private:
 
     TerminalManager *terminalManager = Q_NULLPTR;
     FileWatcher *fileWatcher = Q_NULLPTR;
+    MiniAppManager *m_miniAppManager = nullptr;
+    MiniAppRegistry *m_miniAppRegistry = nullptr;
 
     QAction *m_actionMarkdownPreview = nullptr;
 

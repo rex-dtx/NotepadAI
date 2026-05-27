@@ -30,6 +30,7 @@ public:
     void registerType(const QString &typeId, const TypeRegistration &reg);
     bool canPreview(const QString &filePath) const;
     void openOrFocusPreview(ScintillaNext *sourceEditor);
+    void openPreviewFromFile(const QString &filePath);
     void closePreview(ScintillaNext *sourceEditor);
     PreviewContentWidget *previewForEditor(ScintillaNext *sourceEditor) const;
 
@@ -55,6 +56,7 @@ private:
     DockedEditor *m_dockedEditor;
     QHash<QString, TypeRegistration> m_registry;
     QHash<ScintillaNext *, PreviewEntry> m_previews;
+    QPointer<ads::CDockWidget> m_transientPreviewTab;
 };
 
 #endif // PREVIEWTABMANAGER_H
