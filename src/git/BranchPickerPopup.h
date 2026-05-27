@@ -39,6 +39,8 @@ public:
                      bool detachedHead = false);
     void popupAt(const QPoint &globalPos);
 
+    void setHasRemote(bool has) { m_hasRemote = has; }
+
     // In select-only mode, clicking a branch emits branchSelected and closes
     // immediately — no context menu with Checkout/New Branch/Set Upstream.
     // Use for merge/rebase target selection.
@@ -51,6 +53,8 @@ signals:
     void branchSelected(const QString &name);
     void createBranchRequested(const QString &name, const QString &base, bool setUpstream);
     void setUpstreamRequested(const QString &remoteBranch);
+    void renameBranchRequested(const QString &oldName, const QString &newName, bool updateRemote);
+    void deleteBranchRequested(const QString &branchName, bool force);
 
 protected:
     bool eventFilter(QObject *o, QEvent *e) override;
@@ -62,6 +66,8 @@ private slots:
 private:
     void showItemMenu(const QModelIndex &index);
     void showNewBranchDialog(const QString &base);
+    void showRenameBranchDialog(const QString &branchName);
+    void showDeleteBranchDialog(const QString &branchName);
 
     QLineEdit *m_filter;
     QListView *m_list;
@@ -72,6 +78,7 @@ private:
     QStringList m_remote;
     bool m_detachedHead = false;
     bool m_selectOnly = false;
+    bool m_hasRemote = false;
 };
 
 #endif // BRANCH_PICKER_POPUP_H

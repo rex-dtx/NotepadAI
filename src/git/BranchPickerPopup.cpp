@@ -23,6 +23,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,6 +34,7 @@
 #include <QScreen>
 #include <QStandardItem>
 #include <QStandardItemModel>
+#include <QStyle>
 #include <QVBoxLayout>
 
 namespace {
@@ -234,6 +236,21 @@ void BranchPickerPopup::showItemMenu(const QModelIndex &index)
         });
     }
 
+    if (!isRemote) {
+        menu.addSeparator();
+        QAction *aRename = menu.addAction(tr("&Rename…"));
+        connect(aRename, &QAction::triggered, this, [this, payload]() {
+            showRenameBranchDialog(payload);
+        });
+
+        if (!isCurrent) {
+            QAction *aDelete = menu.addAction(tr("&Delete…"));
+            connect(aDelete, &QAction::triggered, this, [this, payload]() {
+                showDeleteBranchDialog(payload);
+            });
+        }
+    }
+
     const QRect itemRect = m_list->visualRect(index);
     const QPoint pos = m_list->mapToGlobal(itemRect.topRight());
     menu.exec(pos);
@@ -303,10 +320,134 @@ bool BranchPickerPopup::eventFilter(QObject *o, QEvent *e)
                 return true;
             }
         }
+        if (o == m_list) {
+            if (ke->key() == Qt::Key_F2) {
+                const QModelIndex idx = m_list->currentIndex();
+                if (idx.isValid()) {
+                    auto *it = m_model->itemFromIndex(idx);
+                    if (it && it->data(RoleKind).toInt() == 0) {
+                        showRenameBranchDialog(it->data(RolePayload).toString());
+                        return true;
+                    }
+                }
+            }
+            if (ke->key() == Qt::Key_Delete) {
+                const QModelIndex idx = m_list->currentIndex();
+                if (idx.isValid()) {
+                    auto *it = m_model->itemFromIndex(idx);
+                    if (it && it->data(RoleKind).toInt() == 0) {
+                        const QString payload = it->data(RolePayload).toString();
+                        if (payload != m_current) {
+                            showDeleteBranchDialog(payload);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
         if (ke->key() == Qt::Key_Escape) {
             close();
             return true;
         }
     }
     return QWidget::eventFilter(o, e);
+}
+
+void BranchPickerPopup::showRenameBranchDialog(const QString &branchName)
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Rename Branch '%1'").arg(branchName));
+    dlg.setMinimumWidth(320);
+
+    auto *layout = new QVBoxLayout(&dlg);
+
+    auto *nameEdit = new QLineEdit(&dlg);
+    nameEdit->setText(branchName);
+
+    auto *previewLabel = new QLabel(&dlg);
+    previewLabel->setStyleSheet(QStringLiteral("color: gray; font-size: 11px;"));
+
+    auto *remoteCheck = new QCheckBox(tr("Update remote tracking"), &dlg);
+    remoteCheck->setChecked(false);
+    remoteCheck->setVisible(m_hasRemote);
+
+    auto *remoteHint = new QLabel(tr("(deletes old remote ref, pushes new)"), &dlg);
+    remoteHint->setStyleSheet(QStringLiteral("color: gray; font-size: 10px;"));
+    remoteHint->setVisible(m_hasRemote);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Rename"));
+    buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+
+    layout->addWidget(new QLabel(tr("Rename branch '<b>%1</b>' to:").arg(branchName.toHtmlEscaped()), &dlg));
+    layout->addWidget(nameEdit);
+    layout->addWidget(previewLabel);
+    layout->addWidget(remoteCheck);
+    layout->addWidget(remoteHint);
+    layout->addWidget(buttons);
+
+    connect(nameEdit, &QLineEdit::textChanged, &dlg, [&](const QString &text) {
+        const QString sanitized = sanitizeBranchName(text);
+        if (sanitized.isEmpty() || sanitized == branchName) {
+            previewLabel->clear();
+            buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+        } else {
+            previewLabel->setText(tr("→ %1").arg(sanitized));
+            buttons->button(QDialogButtonBox::Ok)->setEnabled(!m_local.contains(sanitized));
+        }
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    // Smart selection: select after last '/' or all if no '/'
+    const int slashPos = branchName.lastIndexOf(QLatin1Char('/'));
+    if (slashPos >= 0) {
+        nameEdit->setSelection(slashPos + 1, branchName.length() - slashPos - 1);
+    } else {
+        nameEdit->selectAll();
+    }
+    nameEdit->setFocus();
+
+    if (dlg.exec() == QDialog::Accepted) {
+        const QString newName = sanitizeBranchName(nameEdit->text());
+        if (!newName.isEmpty() && newName != branchName) {
+            emit renameBranchRequested(branchName, newName, remoteCheck->isChecked());
+            close();
+        }
+    }
+}
+
+void BranchPickerPopup::showDeleteBranchDialog(const QString &branchName)
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Delete Branch"));
+    dlg.setMinimumWidth(320);
+
+    auto *layout = new QVBoxLayout(&dlg);
+
+    auto *topRow = new QHBoxLayout;
+    auto *icon = new QLabel(&dlg);
+    icon->setPixmap(style()->standardPixmap(QStyle::SP_MessageBoxWarning));
+    auto *msg = new QLabel(tr("Are you sure you want to delete branch '<b>%1</b>'?")
+                               .arg(branchName.toHtmlEscaped()), &dlg);
+    msg->setWordWrap(true);
+    topRow->addWidget(icon, 0, Qt::AlignTop);
+    topRow->addWidget(msg, 1);
+    layout->addLayout(topRow);
+
+    auto *forceCheck = new QCheckBox(tr("Force delete (even if not fully merged)"), &dlg);
+    forceCheck->setChecked(false);
+    layout->addWidget(forceCheck);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Delete"));
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() == QDialog::Accepted) {
+        emit deleteBranchRequested(branchName, forceCheck->isChecked());
+        close();
+    }
 }

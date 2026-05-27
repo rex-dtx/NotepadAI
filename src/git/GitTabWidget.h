@@ -115,6 +115,8 @@ private:
     void handleCheckoutRequested(const QString &name);
     void handleCreateBranch(const QString &name, const QString &base, bool setUpstream);
     void handleSetUpstream(const QString &remoteBranch);
+    void handleRenameBranch(const QString &oldName, const QString &newName, bool updateRemote);
+    void handleDeleteBranch(const QString &branchName, bool force);
     void restoreSettingsForWorkspace();
     void updateOpBanner();
 

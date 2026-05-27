@@ -473,6 +473,35 @@ void GitController::forcePush(const QString &remote)
     enqueue(op);
 }
 
+void GitController::renameBranch(const QString &oldName, const QString &newName, bool updateRemote)
+{
+    if (m_currentRepo.isEmpty() || oldName.isEmpty() || newName.isEmpty()) return;
+    Op op;
+    op.kind = OpKind::RenameBranch;
+    op.argv = { QStringLiteral("-C"), m_currentRepo, QStringLiteral("branch"), QStringLiteral("-m") };
+    if (oldName != m_currentBranch) op.argv.append(oldName);
+    op.argv.append(newName);
+    op.timeoutMs = kTimeoutNormal;
+    op.humanName = tr_("Renaming branch");
+    op.meta.insert(QStringLiteral("oldName"), oldName);
+    op.meta.insert(QStringLiteral("newName"), newName);
+    op.meta.insert(QStringLiteral("updateRemote"), updateRemote);
+    enqueue(op);
+}
+
+void GitController::deleteBranch(const QString &branchName, bool force)
+{
+    if (m_currentRepo.isEmpty() || branchName.isEmpty()) return;
+    Op op;
+    op.kind = OpKind::DeleteBranch;
+    op.argv = { QStringLiteral("-C"), m_currentRepo, QStringLiteral("branch"),
+                force ? QStringLiteral("-D") : QStringLiteral("-d"),
+                branchName };
+    op.timeoutMs = kTimeoutNormal;
+    op.humanName = tr_("Deleting branch");
+    enqueue(op);
+}
+
 void GitController::revertPaths(const QStringList &relPaths)
 {
     if (m_currentRepo.isEmpty() || relPaths.isEmpty()) return;
@@ -942,6 +971,8 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
         case OpKind::Commit:
         case OpKind::SwitchBranch:
         case OpKind::CreateBranch:
+        case OpKind::RenameBranch:
+        case OpKind::DeleteBranch:
         case OpKind::SetUpstream:
         case OpKind::ConfigTracking:
         case OpKind::Stash:
@@ -968,6 +999,38 @@ void GitController::onRunFinished(int exit, const QByteArray &out, const QByteAr
                             remote = m_remoteList.first();
                         configBranchTracking(newBranch, remote);
                     }
+                }
+            }
+            if (kind == OpKind::RenameBranch) {
+                const bool wantRemote = m_current.meta.value(QStringLiteral("updateRemote")).toBool();
+                if (wantRemote && !m_remoteList.isEmpty()) {
+                    const QString oldName = m_current.meta.value(QStringLiteral("oldName")).toString();
+                    const QString newName = m_current.meta.value(QStringLiteral("newName")).toString();
+                    QString remote = QStringLiteral("origin");
+                    if (!m_remoteList.contains(remote))
+                        remote = m_remoteList.first();
+
+                    Op del;
+                    del.kind = OpKind::Push;
+                    del.argv = { QStringLiteral("-C"), m_currentRepo, QStringLiteral("push"),
+                                 remote, QStringLiteral(":") + oldName,
+                                 QStringLiteral("--progress") };
+                    del.timeoutMs = kTimeoutRemote;
+                    del.readErrAsProgress = true;
+                    del.humanName = tr_("Deleting old remote branch");
+                    del.meta.insert(QStringLiteral("remoteRenamePhase"), QStringLiteral("delete-old"));
+                    enqueue(del);
+
+                    Op push;
+                    push.kind = OpKind::Push;
+                    push.argv = { QStringLiteral("-C"), m_currentRepo, QStringLiteral("push"),
+                                  QStringLiteral("-u"), remote, newName,
+                                  QStringLiteral("--progress") };
+                    push.timeoutMs = kTimeoutRemote;
+                    push.readErrAsProgress = true;
+                    push.humanName = tr_("Pushing renamed branch");
+                    push.meta.insert(QStringLiteral("remoteRenamePhase"), QStringLiteral("push-new"));
+                    enqueue(push);
                 }
             }
             if (kind == OpKind::Commit || kind == OpKind::Pull) {

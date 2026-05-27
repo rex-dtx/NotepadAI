@@ -93,6 +93,8 @@ public slots:
     void pull(bool rebase);
     void push(const QString &remote = {}, bool setUpstream = false);
     void forcePush(const QString &remote = {});
+    void renameBranch(const QString &oldName, const QString &newName, bool updateRemote);
+    void deleteBranch(const QString &branchName, bool force);
     void revertPaths(const QStringList &relPaths);
     void cancelCurrent();
 
@@ -152,7 +154,7 @@ private:
         CatFileBlob,
         Stage, Unstage, StageAll, UnstageAll,
         Commit,
-        SwitchBranch, CreateBranch, SetUpstream, ConfigTracking, Stash,
+        SwitchBranch, CreateBranch, RenameBranch, DeleteBranch, SetUpstream, ConfigTracking, Stash,
         Fetch, Pull, Push, ForcePush,
         Revert
     };

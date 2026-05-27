@@ -714,12 +714,17 @@ void GitTabWidget::onBranchButtonClicked()
                 this, &GitTabWidget::handleCreateBranch);
         connect(m_branchPicker, &BranchPickerPopup::setUpstreamRequested,
                 this, &GitTabWidget::handleSetUpstream);
+        connect(m_branchPicker, &BranchPickerPopup::renameBranchRequested,
+                this, &GitTabWidget::handleRenameBranch);
+        connect(m_branchPicker, &BranchPickerPopup::deleteBranchRequested,
+                this, &GitTabWidget::handleDeleteBranch);
     }
     m_branchPicker->setBranches(m_controller->branchesLocal(),
                                 m_controller->branchesRemote(),
                                 m_controller->currentBranch(),
                                 QStringLiteral("main"),
                                 m_controller->currentBranch().isEmpty());
+    m_branchPicker->setHasRemote(m_controller->hasRemote());
     const QPoint pos = m_branchBtn->mapToGlobal(m_branchBtn->rect().bottomLeft());
     m_branchPicker->popupAt(pos);
 }
@@ -775,6 +780,18 @@ void GitTabWidget::handleSetUpstream(const QString &remoteBranch)
 {
     if (!m_controller) return;
     m_controller->setUpstream(remoteBranch);
+}
+
+void GitTabWidget::handleRenameBranch(const QString &oldName, const QString &newName, bool updateRemote)
+{
+    if (!m_controller) return;
+    m_controller->renameBranch(oldName, newName, updateRemote);
+}
+
+void GitTabWidget::handleDeleteBranch(const QString &branchName, bool force)
+{
+    if (!m_controller) return;
+    m_controller->deleteBranch(branchName, force);
 }
 
 void GitTabWidget::onMenuButtonClicked()
