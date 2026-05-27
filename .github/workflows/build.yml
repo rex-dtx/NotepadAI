@@ -1,24 +1,55 @@
-name: Build NotepadAI
+name: Build & Release NotepadAI
 
 on:
   workflow_dispatch:
   push:
-    # branches:
-    #   - master
-    tags:
-      - '*'
-  # pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
-  QT_RELEASE_VER: 6.5
+  QT_VERSION: "6.8"
 
 jobs:
+  version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          # Find latest v0.0.* tag
+          LATEST=$(git tag -l 'v0.0.*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            # No v0.0.x tags exist yet — start from v0.0.1
+            NEW_PATCH=1
+          else
+            PATCH="${LATEST##*.}"
+            NEW_PATCH=$((PATCH + 1))
+          fi
+          VERSION="0.0.${NEW_PATCH}"
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Next version: ${TAG}"
+
   build:
+    needs: [version]
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2022, macos-latest]
-        qt_version: ["6.5", "6.8", "6.10"]
 
     runs-on: ${{ matrix.os }}
 
@@ -26,11 +57,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: Sync VERSION to tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Set VERSION in CMakeLists.txt
         shell: bash
         run: |
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${{ needs.version.outputs.version }}"
           if [[ "$OSTYPE" == darwin* ]]; then
             sed -i '' 's/^\([[:space:]]*VERSION[[:space:]]*\).*/\1'"$VER"'/' CMakeLists.txt
           else
@@ -41,7 +71,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ matrix.qt_version }}
+          version: ${{ env.QT_VERSION }}
           modules: 'qt5compat'
           cache: true
 
@@ -71,14 +101,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           echo "DISTRIBUTION=AppImage" >> "$GITHUB_ENV"
-
-          # Qt 6.10+ renamed wayland plugins
-          if [[ "${{ matrix.qt_version }}" == "6.10" ]]; then
-            echo "EXTRA_PLATFORM_PLUGINS=libqwayland.so" >> "$GITHUB_ENV"
-          else
-            echo "EXTRA_PLATFORM_PLUGINS=libqwayland-generic.so" >> "$GITHUB_ENV"
-          fi
-
+          echo "EXTRA_PLATFORM_PLUGINS=libqwayland-generic.so" >> "$GITHUB_ENV"
           sudo apt-get install libxkbcommon-dev libxkbcommon-x11-0 fuse libxcb-cursor-dev libcups2-dev
 
       - name: Configure
@@ -103,36 +126,34 @@ jobs:
         uses: actions/upload-artifact@v6
         if: runner.os == 'Windows'
         with:
-          name: NotepadAI-Windows-Qt${{ matrix.qt_version }}-Zip
+          name: NotepadAI-Windows-Zip
           path: ${{ github.workspace }}/build/package/
 
       - name: Upload Windows Installer
         uses: actions/upload-artifact@v6
         if: runner.os == 'Windows'
         with:
-          name: NotepadAI-Windows-Qt${{ matrix.qt_version }}-Installer
+          name: NotepadAI-Windows-Installer
           path: ${{ github.workspace }}/installer/NotepadAI*.exe
 
       - name: Upload MacOS dmg
         uses: actions/upload-artifact@v6
         if: runner.os == 'macOS'
         with:
-          name: NotepadAI-macOS-Qt${{ matrix.qt_version }}
+          name: NotepadAI-macOS
           path: ${{ github.workspace }}/build/NotepadAI*.dmg
 
       - name: Upload Linux AppImage
         uses: actions/upload-artifact@v6
         if: runner.os == 'Linux'
         with:
-          name: NotepadAI-Linux-Qt${{ matrix.qt_version }}-AppImage
+          name: NotepadAI-Linux-AppImage
           path: ${{ github.workspace }}/build/NotepadAI*.AppImage
 
-  github:
-    name: Draft GitHub Release
+  release:
+    name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build]
-
-    if: github.repository == 'nullmastermind/NotepadAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [version, build]
     permissions:
       contents: write
     env:
@@ -141,30 +162,43 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Create Draft Release
+      - name: Create and push tag
         run: |
-          gh release create ${{ github.ref_name }} --title ${{ github.ref_name }} --generate-notes --draft
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git tag ${{ needs.version.outputs.tag }}
+          git push origin ${{ needs.version.outputs.tag }}
+
+      - name: Create Release
+        run: |
+          gh release create ${{ needs.version.outputs.tag }} \
+            --title "${{ needs.version.outputs.tag }}" \
+            --generate-notes
 
       - name: Download all artifacts
         uses: actions/download-artifact@v7
 
       - name: Upload Windows Installer
         run: |
-          gh release upload ${{ github.ref_name }} NotepadAI-Windows-Qt$QT_RELEASE_VER-Installer/NotepadAI-${{ github.ref_name }}-Installer.exe
+          mv NotepadAI-Windows-Installer/NotepadAI*.exe "NotepadAI-${{ needs.version.outputs.tag }}-Installer.exe"
+          gh release upload ${{ needs.version.outputs.tag }} "NotepadAI-${{ needs.version.outputs.tag }}-Installer.exe"
 
-      # The artifact is unzipped, so need to zip it back up so it can be uploaded
       - name: Upload Windows Zip
         run: |
-          cd NotepadAI-Windows-Qt$QT_RELEASE_VER-Zip/
-          zip -r ../NotepadAI-${{ github.ref_name }}-win64.zip .
+          cd NotepadAI-Windows-Zip/
+          zip -r "../NotepadAI-${{ needs.version.outputs.tag }}-win64.zip" .
           cd ..
-          gh release upload ${{ github.ref_name }} NotepadAI-${{ github.ref_name }}-win64.zip
+          gh release upload ${{ needs.version.outputs.tag }} "NotepadAI-${{ needs.version.outputs.tag }}-win64.zip"
 
       - name: Upload Linux AppImage
         run: |
-          gh release upload ${{ github.ref_name }} NotepadAI-Linux-Qt$QT_RELEASE_VER-AppImage/NotepadAI-${{ github.ref_name }}-x86_64.AppImage
+          mv NotepadAI-Linux-AppImage/NotepadAI*.AppImage "NotepadAI-${{ needs.version.outputs.tag }}-x86_64.AppImage"
+          gh release upload ${{ needs.version.outputs.tag }} "NotepadAI-${{ needs.version.outputs.tag }}-x86_64.AppImage"
 
-      - name: Upload macOS App
+      - name: Upload macOS dmg
         run: |
-          gh release upload ${{ github.ref_name }} NotepadAI-macOS-Qt$QT_RELEASE_VER/NotepadAI-${{ github.ref_name }}.dmg
+          mv NotepadAI-macOS/NotepadAI*.dmg "NotepadAI-${{ needs.version.outputs.tag }}.dmg"
+          gh release upload ${{ needs.version.outputs.tag }} "NotepadAI-${{ needs.version.outputs.tag }}.dmg"
