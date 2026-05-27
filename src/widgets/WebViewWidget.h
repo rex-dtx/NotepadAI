@@ -34,7 +34,9 @@ public:
 
     // Factory: creates the platform-appropriate subclass.
     // Returns nullptr on Linux (caller should use xdg-open fallback).
-    static WebViewWidget *create(const QString &appId, const QUrl &url, int debugPort = 0, QWidget *parent = nullptr);
+    // If userDataFolder is non-empty, it overrides the default MiniApps/<appId> path.
+    static WebViewWidget *create(const QString &appId, const QUrl &url, int debugPort = 0,
+                                 QWidget *parent = nullptr, const QString &userDataFolder = QString());
 
     // CDP URL accessors
     QString cdpHttpUrl() const { return m_cdpHttpUrl; }
@@ -45,6 +47,7 @@ signals:
     void processFailed(const QString &description);
     void loadingStateChanged(bool loading);
     void cdpReady(const QString &httpUrl, const QString &wsUrl);
+    void titleChanged(const QString &title);
 
 public:
     void showCdpUrl(const QString &httpUrl);

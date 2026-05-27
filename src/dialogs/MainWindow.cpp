@@ -40,6 +40,9 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QLineEdit>
+#include <QLabel>
+#include <QCheckBox>
+#include <QVBoxLayout>
 #include <QPrintPreviewDialog>
 #include <QPrinter>
 #include <QDirIterator>
@@ -1391,10 +1394,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     m_miniAppRegistry = new MiniAppRegistry(app->getSettings());
     m_miniAppManager = new MiniAppManager(app, m_miniAppRegistry, dockedEditor, this);
 
-    connect(ui->menuMiniApps, &QMenu::aboutToShow, this, [this]() {
+    connect(ui->menuMiniAppsSub, &QMenu::aboutToShow, this, [this]() {
         // Clear dynamic items (keep only the static "Edit Mini Apps..." action)
-        while (ui->menuMiniApps->actions().size() > 1) {
-            delete ui->menuMiniApps->actions().first();
+        while (ui->menuMiniAppsSub->actions().size() > 1) {
+            delete ui->menuMiniAppsSub->actions().first();
         }
 
         const QString workspaceRoot = currentWorkspaceRoot();
@@ -1407,29 +1410,60 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
         // Global apps
         for (const MiniAppDefinition &def : globalApps) {
-            QAction *a = new QAction(def.name, ui->menuMiniApps);
+            QAction *a = new QAction(def.name, ui->menuMiniAppsSub);
             connect(a, &QAction::triggered, this, [this, def]() {
                 m_miniAppManager->launchApp(def);
             });
-            ui->menuMiniApps->insertAction(beforeAction, a);
+            ui->menuMiniAppsSub->insertAction(beforeAction, a);
         }
 
         // Separator + workspace apps
         if (!wsApps.isEmpty()) {
             if (!globalApps.isEmpty())
-                ui->menuMiniApps->insertSeparator(beforeAction);
+                ui->menuMiniAppsSub->insertSeparator(beforeAction);
             for (const MiniAppDefinition &def : wsApps) {
-                QAction *a = new QAction(def.name, ui->menuMiniApps);
+                QAction *a = new QAction(def.name, ui->menuMiniAppsSub);
                 connect(a, &QAction::triggered, this, [this, def]() {
                     m_miniAppManager->launchApp(def);
                 });
-                ui->menuMiniApps->insertAction(beforeAction, a);
+                ui->menuMiniAppsSub->insertAction(beforeAction, a);
             }
         }
 
         // Separator before Edit action (if any apps exist)
         if (!globalApps.isEmpty() || !wsApps.isEmpty())
-            ui->menuMiniApps->insertSeparator(beforeAction);
+            ui->menuMiniAppsSub->insertSeparator(beforeAction);
+    });
+
+    // Quick Browse action
+    ui->actionQuickBrowser->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+    connect(ui->actionQuickBrowser, &QAction::triggered, this, [this]() {
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("Quick Browse"));
+        auto *layout = new QVBoxLayout(&dlg);
+        layout->addWidget(new QLabel(tr("Enter URL:"), &dlg));
+        auto *urlEdit = new QLineEdit(&dlg);
+        urlEdit->setPlaceholderText(QStringLiteral("https://example.com"));
+        layout->addWidget(urlEdit);
+        auto *cdpCheck = new QCheckBox(tr("Enable CDP debugging"), &dlg);
+        cdpCheck->setChecked(true);
+        layout->addWidget(cdpCheck);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        layout->addWidget(buttons);
+        urlEdit->setFocus();
+        if (dlg.exec() != QDialog::Accepted)
+            return;
+        QString input = urlEdit->text().trimmed();
+        if (input.isEmpty())
+            return;
+        if (!input.contains(QStringLiteral("://")))
+            input = QStringLiteral("https://") + input;
+        QUrl url(input, QUrl::TolerantMode);
+        if (!url.isValid())
+            return;
+        m_miniAppManager->launchQuickBrowser(url, cdpCheck->isChecked());
     });
 
     connect(ui->actionEditMiniApps, &QAction::triggered, this, [this]() {

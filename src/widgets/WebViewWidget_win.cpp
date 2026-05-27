@@ -23,7 +23,7 @@
 #include <memory>
 
 #include <windows.h>
-#include <sddl.h>
+#include <aclapi.h>
 #include <WebView2.h>
 
 // Load CreateCoreWebView2EnvironmentWithOptions dynamically so we don't
@@ -37,16 +37,32 @@ static void ensureDirectoryWritable(const QString &path)
 {
     QDir().mkpath(path);
 
-    // Grant the current user full control so WebView2 can create EBWebView/ inside.
-    // SDDL: D:(A;OICI;GA;;;CU) = Allow, Object-Inherit + Container-Inherit,
-    //        Generic-All, to Creator/Owner mapped as Current User (CU).
-    PSECURITY_DESCRIPTOR sd = nullptr;
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"D:(A;OICI;GA;;;CU)", SDDL_REVISION_1, &sd, nullptr)) {
-        SetFileSecurityW(path.toStdWString().c_str(),
-                         DACL_SECURITY_INFORMATION, sd);
-        LocalFree(sd);
+    // Grant Everyone full control with inheritance so WebView2 can freely
+    // create EBWebView/ and its subtree. This is the user's own AppData.
+    EXPLICIT_ACCESS_W ea = {};
+    ea.grfAccessPermissions = GENERIC_ALL;
+    ea.grfAccessMode = SET_ACCESS;
+    ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    ea.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
+    ea.Trustee.ptstrName = const_cast<LPWSTR>(L"Everyone");
+
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(1, &ea, nullptr, &acl) == ERROR_SUCCESS) {
+        std::wstring wpath = path.toStdWString();
+        SetNamedSecurityInfoW(
+            wpath.data(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            nullptr, nullptr, acl, nullptr);
+        LocalFree(acl);
     }
+}
+
+static void nukeDirectory(const QString &path)
+{
+    QDir dir(path);
+    if (dir.exists())
+        dir.removeRecursively();
 }
 
 static CreateEnvironmentFn resolveCreateEnvironment()
@@ -66,9 +82,11 @@ class WebViewWidgetWin : public WebViewWidget
 {
 
 public:
-    WebViewWidgetWin(const QString &appId, const QUrl &url, int debugPort, QWidget *parent)
+    WebViewWidgetWin(const QString &appId, const QUrl &url, int debugPort, QWidget *parent,
+                     const QString &userDataFolder)
         : WebViewWidget(appId, url, parent)
         , m_debugPort(debugPort)
+        , m_customUserDataFolder(userDataFolder)
     {
         m_hostWidget = new QWidget(this);
         m_hostWidget->setAttribute(Qt::WA_NativeWindow);
@@ -180,8 +198,12 @@ private:
     void initWebView2()
     {
         const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        m_dbgUserDataFolder = QDir::toNativeSeparators(
-            appData + QStringLiteral("/MiniApps/") + appId());
+        if (m_customUserDataFolder.isEmpty()) {
+            m_dbgUserDataFolder = QDir::toNativeSeparators(
+                appData + QStringLiteral("/MiniApps/") + appId());
+        } else {
+            m_dbgUserDataFolder = QDir::toNativeSeparators(m_customUserDataFolder);
+        }
         ensureDirectoryWritable(m_dbgUserDataFolder);
 
         auto createEnv = resolveCreateEnvironment();
@@ -191,9 +213,14 @@ private:
             return;
         }
 
-        // Pass debug port via environment variable — more reliable than COM options
-        // object across different WebView2 runtime versions. The runtime reads this
-        // env var synchronously during CreateCoreWebView2EnvironmentWithOptions.
+        initWebView2Core();
+    }
+
+    void initWebView2Core()
+    {
+        auto createEnv = resolveCreateEnvironment();
+        if (!createEnv) return;
+
         QByteArray prevEnv;
         bool hadEnv = false;
         if (m_debugPort > 0) {
@@ -210,7 +237,6 @@ private:
             nullptr,
             new EnvironmentCompletedHandler(this));
 
-        // Restore environment immediately — the runtime has already read it
         if (m_debugPort > 0) {
             const QByteArray envName = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
             if (hadEnv)
@@ -221,6 +247,13 @@ private:
 
         m_dbgCreateEnvHr = hr;
         if (FAILED(hr)) {
+            if (!m_retried) {
+                m_retried = true;
+                nukeDirectory(m_dbgUserDataFolder);
+                ensureDirectoryWritable(m_dbgUserDataFolder);
+                initWebView2Core();
+                return;
+            }
             emit navigationCompleted(false, tr("Failed to create WebView2 environment (0x%1)")
                                                 .arg(static_cast<unsigned>(hr), 8, 16, QLatin1Char('0')));
         }
@@ -230,6 +263,13 @@ private:
     {
         m_dbgEnvCallbackHr = hr;
         if (FAILED(hr) || !env) {
+            if (!m_retried) {
+                m_retried = true;
+                nukeDirectory(m_dbgUserDataFolder);
+                ensureDirectoryWritable(m_dbgUserDataFolder);
+                initWebView2Core();
+                return;
+            }
             emit navigationCompleted(false, tr("WebView2 Runtime not available (0x%1)")
                                                 .arg(static_cast<unsigned>(hr), 8, 16, QLatin1Char('0')));
             return;
@@ -250,6 +290,14 @@ private:
     {
         m_dbgCtrlCallbackHr = hr;
         if (FAILED(hr) || !controller) {
+            if (!m_retried) {
+                m_retried = true;
+                if (m_environment) { m_environment->Release(); m_environment = nullptr; }
+                nukeDirectory(m_dbgUserDataFolder);
+                ensureDirectoryWritable(m_dbgUserDataFolder);
+                initWebView2Core();
+                return;
+            }
             emit navigationCompleted(false, tr("Failed to create WebView2 controller (0x%1)")
                                                 .arg(static_cast<unsigned>(hr), 8, 16, QLatin1Char('0')));
             return;
@@ -290,6 +338,11 @@ private:
         EventRegistrationToken procToken;
         m_webView->add_ProcessFailed(
             new ProcessFailedHandler(this), &procToken);
+
+        // Subscribe to DocumentTitleChanged
+        EventRegistrationToken titleToken;
+        m_webView->add_DocumentTitleChanged(
+            new DocumentTitleChangedHandler(this), &titleToken);
 
         // Navigate to initial URL
         setLoading(true);
@@ -400,6 +453,32 @@ private:
         }
     };
 
+    // DocumentTitleChangedHandler: fires when the page title changes.
+    struct DocumentTitleChangedHandler : ICoreWebView2DocumentTitleChangedEventHandler {
+        WebViewWidgetWin *owner;
+        std::shared_ptr<std::atomic<bool>> alive;
+        ULONG refCount = 1;
+        DocumentTitleChangedHandler(WebViewWidgetWin *o) : owner(o), alive(o->m_alive) {}
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+            if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ICoreWebView2DocumentTitleChangedEventHandler)) {
+                *ppv = this; AddRef(); return S_OK;
+            }
+            *ppv = nullptr; return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
+        ULONG STDMETHODCALLTYPE Release() override { if (--refCount == 0) { delete this; return 0; } return refCount; }
+        HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2 *sender, IUnknown *) override {
+            if (!alive->load(std::memory_order_acquire)) return S_OK;
+            LPWSTR title = nullptr;
+            if (sender && SUCCEEDED(sender->get_DocumentTitle(&title)) && title) {
+                QString qtTitle = QString::fromWCharArray(title);
+                CoTaskMemFree(title);
+                emit owner->titleChanged(qtTitle);
+            }
+            return S_OK;
+        }
+    };
+
     // --- CDP Discovery ---
 
     void startCdpDiscovery()
@@ -447,6 +526,7 @@ private:
     QWidget *m_hostWidget = nullptr;
     HWND m_hwnd = nullptr;
     bool m_initStarted = false;
+    bool m_retried = false;
     ICoreWebView2Environment *m_environment = nullptr;
     ICoreWebView2Controller *m_controller = nullptr;
     ICoreWebView2 *m_webView = nullptr;
@@ -468,13 +548,15 @@ private:
 
     // CDP debug port
     int m_debugPort = 0;
+    QString m_customUserDataFolder;
     QNetworkAccessManager *m_cdpNam = nullptr;
     QTimer *m_cdpPollTimer = nullptr;
     int m_cdpPollCount = 0;
 };
 
 // Factory: Windows implementation
-WebViewWidget *WebViewWidget::create(const QString &appId, const QUrl &url, int debugPort, QWidget *parent)
+WebViewWidget *WebViewWidget::create(const QString &appId, const QUrl &url, int debugPort,
+                                     QWidget *parent, const QString &userDataFolder)
 {
-    return new WebViewWidgetWin(appId, url, debugPort, parent);
+    return new WebViewWidgetWin(appId, url, debugPort, parent, userDataFolder);
 }

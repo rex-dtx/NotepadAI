@@ -18,13 +18,20 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QDir>
 #include <QFont>
+#include <QHostAddress>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QSet>
+#include <QStandardPaths>
+#include <QTcpSocket>
+#include <QTimer>
 #include <QUrl>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #include <DockWidget.h>
@@ -57,6 +64,8 @@ MiniAppManager::MiniAppManager(NotepadNextApplication *app,
     , m_dockedEditor(dockedEditor)
     , m_iconPath(QStringLiteral(":/icons/mini-app.svg"))
 {
+    sweepStaleQuickBrowserData();
+
     // Re-tint tab icons on theme change
     connect(app, &NotepadNextApplication::effectiveThemeChanged, this, &MiniAppManager::retintAllIcons);
 }
@@ -77,13 +86,14 @@ void MiniAppManager::launchApp(const MiniAppDefinition &def)
         }
     }
 
-    // Warning at 4th instance (3 already running)
-    if (m_instances.size() >= 3) {
+    // Warning at 4th instance (3 already running, counting quick browser tabs)
+    const int totalWebViews = m_instances.size() + m_quickBrowserTabs.size();
+    if (totalWebViews >= 3) {
         QMessageBox::StandardButton btn = QMessageBox::warning(
             nullptr,
             tr("Mini Apps"),
-            tr("Each Mini App uses ~100MB RAM. You have %1 running. Continue?")
-                .arg(m_instances.size()),
+            tr("Each Mini App uses ~100MB RAM. You have %1 WebView2 instances running. Continue?")
+                .arg(totalWebViews),
             QMessageBox::Yes | QMessageBox::Cancel,
             QMessageBox::Cancel);
         if (btn != QMessageBox::Yes)
@@ -199,6 +209,13 @@ void MiniAppManager::onInstanceFinished(MiniAppInstance *instance)
 
 void MiniAppManager::shutdown()
 {
+    // Destroy quick browser webviews
+    for (const QuickBrowserTab &tab : m_quickBrowserTabs) {
+        if (tab.webView)
+            tab.webView->destroy();
+    }
+    m_quickBrowserTabs.clear();
+
     for (MiniAppInstance *inst : m_instances) {
         inst->destroy();
     }
@@ -210,12 +227,166 @@ void MiniAppManager::shutdown()
     m_instances.clear();
 }
 
+void MiniAppManager::sweepStaleQuickBrowserData()
+{
+    const QString basePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/QuickBrowser");
+    QDir baseDir(basePath);
+    if (!baseDir.exists())
+        return;
+
+    const QStringList entries = baseDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &entry : entries) {
+        QDir subDir(baseDir.filePath(entry));
+        if (!subDir.removeRecursively()) {
+            qWarning("MiniAppManager: failed to sweep stale QuickBrowser data: %s",
+                     qUtf8Printable(subDir.path()));
+        }
+    }
+}
+
+void MiniAppManager::launchQuickBrowser(const QUrl &url, bool enableCdp)
+{
+#ifdef Q_OS_LINUX
+    QDesktopServices::openUrl(url);
+    return;
+#endif
+
+    // RAM warning at 4th total WebView2 instance
+    const int totalWebViews = m_instances.size() + m_quickBrowserTabs.size();
+    if (totalWebViews >= 3) {
+        QMessageBox::StandardButton btn = QMessageBox::warning(
+            nullptr,
+            tr("Quick Browser"),
+            tr("Each browser tab uses ~100MB RAM. You have %1 WebView2 instances running. Continue?")
+                .arg(totalWebViews),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (btn != QMessageBox::Yes)
+            return;
+    }
+
+    const QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString appId = QStringLiteral("qb-") + uuid;
+    const QString userDataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/QuickBrowser/") + uuid;
+
+    int debugPort = 0;
+    if (enableCdp) {
+        QSet<int> reserved;
+        for (const MiniAppDefinition &def : m_registry->globalApps()) {
+            if (def.debugPort > 0)
+                reserved.insert(def.debugPort);
+        }
+        for (const MiniAppInstance *inst : m_instances) {
+            if (inst->definition().debugPort > 0)
+                reserved.insert(inst->definition().debugPort);
+        }
+        QTcpSocket sock;
+        for (int port = 9222; port <= 9322; ++port) {
+            if (reserved.contains(port))
+                continue;
+            if (sock.bind(QHostAddress::LocalHost, port)) {
+                debugPort = port;
+                sock.close();
+                break;
+            }
+        }
+    }
+
+    auto *webView = WebViewWidget::create(appId, url, debugPort, nullptr, userDataPath);
+    if (!webView)
+        return;
+
+    ads::CDockWidget *dw = m_dockedEditor->addPreviewTab(
+        webView, url.host().isEmpty() ? url.toString() : url.host(), tintedGlobeIcon());
+
+    QuickBrowserTab tab;
+    tab.webView = webView;
+    tab.dockWidget = dw;
+    tab.userDataPath = userDataPath;
+    m_quickBrowserTabs.append(tab);
+
+    // Wire tab close → cleanup
+    connect(dw, &ads::CDockWidget::closed, this, [this, webView, dw, userDataPath]() {
+        webView->destroy();
+
+        // Remove from tracked list
+        for (int i = 0; i < m_quickBrowserTabs.size(); ++i) {
+            if (m_quickBrowserTabs[i].dockWidget == dw) {
+                m_quickBrowserTabs.removeAt(i);
+                break;
+            }
+        }
+
+        // Retry-delete user data folder
+        auto *timer = new QTimer(this);
+        timer->setInterval(1000);
+        int *attempts = new int(0);
+        connect(timer, &QTimer::timeout, this, [timer, attempts, userDataPath]() {
+            ++(*attempts);
+            QDir dir(userDataPath);
+            if (!dir.exists() || dir.removeRecursively()) {
+                timer->stop();
+                delete attempts;
+                timer->deleteLater();
+                return;
+            }
+            if (*attempts >= 5) {
+                qWarning("MiniAppManager: failed to delete QuickBrowser data after 5 attempts: %s",
+                         qUtf8Printable(userDataPath));
+                timer->stop();
+                delete attempts;
+                timer->deleteLater();
+            }
+        });
+        timer->start();
+    });
+
+    // Wire title changes → tab title update
+    connect(webView, &WebViewWidget::titleChanged, dw, [dw](const QString &title) {
+        if (!title.isEmpty())
+            dw->setWindowTitle(title);
+    });
+
+    dw->tabWidget()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(dw->tabWidget(), &QWidget::customContextMenuRequested, this, [this, webView, dw](const QPoint &pos) {
+        QMenu menu;
+        auto *mainWin = qobject_cast<MainWindow *>(parent());
+        AiAgentDock *aiDock = mainWin ? mainWin->activeAiDock() : nullptr;
+        if (aiDock && !webView->cdpHttpUrl().isEmpty()) {
+            menu.addAction(tr("Send to AI"), this, [webView, aiDock]() {
+                const QString msg = QStringLiteral(
+                    "{{ Connect to the browser via CDP at %1 "
+                    "(list available pages first, then interact only with the existing page — do not create new pages). }}\n\n")
+                    .arg(webView->cdpHttpUrl());
+                aiDock->insertTextToInput(msg);
+                aiDock->setVisible(true);
+                aiDock->raise();
+            });
+        }
+        QAction *cdpAction = menu.addAction(tr("Copy CDP URL"), this, [webView]() {
+            QApplication::clipboard()->setText(webView->cdpHttpUrl());
+        });
+        cdpAction->setEnabled(!webView->cdpHttpUrl().isEmpty());
+        menu.addSeparator();
+        menu.addAction(tr("Close"), dw, &ads::CDockWidget::closeDockWidget);
+        menu.exec(dw->tabWidget()->mapToGlobal(pos));
+    });
+
+    webView->initialize();
+}
+
 void MiniAppManager::retintAllIcons()
 {
     QIcon icon = tintedGlobeIcon();
     for (MiniAppInstance *inst : m_instances) {
         if (inst->dockWidget())
             inst->dockWidget()->tabWidget()->setIcon(icon);
+    }
+    for (const QuickBrowserTab &tab : m_quickBrowserTabs) {
+        if (tab.dockWidget)
+            tab.dockWidget->tabWidget()->setIcon(icon);
     }
 }
 

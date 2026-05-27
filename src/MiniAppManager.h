@@ -12,13 +12,21 @@
 #include <QIcon>
 #include <QList>
 #include <QObject>
+#include <QUrl>
 
 class DockedEditor;
 class MiniAppInstance;
 class MiniAppRegistry;
 class NotepadNextApplication;
+class WebViewWidget;
 
 namespace ads { class CDockWidget; }
+
+struct QuickBrowserTab {
+    WebViewWidget *webView = nullptr;
+    ads::CDockWidget *dockWidget = nullptr;
+    QString userDataPath;
+};
 
 class MiniAppManager : public QObject
 {
@@ -32,6 +40,7 @@ public:
     ~MiniAppManager() override;
 
     void launchApp(const MiniAppDefinition &def);
+    void launchQuickBrowser(const QUrl &url, bool enableCdp = true);
     void shutdown();
 
     int runningCount() const { return m_instances.size(); }
@@ -44,10 +53,12 @@ private:
     void onInstanceFinished(MiniAppInstance *instance);
     void retintAllIcons();
     QIcon tintedGlobeIcon() const;
+    void sweepStaleQuickBrowserData();
 
     NotepadNextApplication *m_app;
     MiniAppRegistry *m_registry;
     DockedEditor *m_dockedEditor;
     QList<MiniAppInstance *> m_instances;
+    QList<QuickBrowserTab> m_quickBrowserTabs;
     QString m_iconPath;
 };
