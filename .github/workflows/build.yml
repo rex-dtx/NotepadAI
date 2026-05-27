@@ -65,6 +65,7 @@ jobs:
           unzip -q -o webview2.nupkg -d webview2-sdk
           cp webview2-sdk/build/native/include/WebView2.h thirdparty/webview2/include/WebView2.h
           cp webview2-sdk/build/native/include/WebView2EnvironmentOptions.h thirdparty/webview2/include/WebView2EnvironmentOptions.h
+          cp webview2-sdk/runtimes/win-x64/native/WebView2Loader.dll deploy/windows/WebView2Loader.dll
 
       - name: Setup Linux
         if: runner.os == 'Linux'

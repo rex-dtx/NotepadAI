@@ -165,6 +165,7 @@ private:
         const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         m_dbgUserDataFolder = QDir::toNativeSeparators(
             appData + QStringLiteral("/MiniApps/") + appId());
+        QDir().mkpath(m_dbgUserDataFolder);
 
         auto createEnv = resolveCreateEnvironment();
         m_dbgLoaderResolved = (createEnv != nullptr);

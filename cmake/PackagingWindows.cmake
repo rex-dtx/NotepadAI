@@ -48,6 +48,10 @@ add_custom_target(package
 		"${CMAKE_SOURCE_DIR}/deploy/windows/libssl-1_1-x64.dll"
 		"${PACKAGE_DIR}/libssl-1_1-x64.dll"
 
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		"${CMAKE_SOURCE_DIR}/deploy/windows/WebView2Loader.dll"
+		"${PACKAGE_DIR}/WebView2Loader.dll"
+
 	# Run windeployqt with correct flags
 	COMMAND windeployqt ${WINDEPLOYQT_ARGS}
 )
