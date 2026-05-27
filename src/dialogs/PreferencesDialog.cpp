@@ -36,6 +36,7 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QSpinBox>
+#include <QStandardPaths>
 
 
 PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *parent) :
@@ -169,6 +170,78 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
         ui->txtHardCodedPath->setText(QString());
     }
 
+    // --- Shell setting UI ---
+#ifdef Q_OS_WIN
+    // Windows: combo box with detected shells + Custom option
+    struct ShellEntry { const char *name; const char *exe; };
+    static constexpr ShellEntry knownShells[] = {
+        {"PowerShell 7 (pwsh)", "pwsh.exe"},
+        {"Windows PowerShell",  "powershell.exe"},
+        {"Command Prompt",      "cmd.exe"},
+    };
+    for (const auto &entry : knownShells) {
+        if (!QStandardPaths::findExecutable(QString::fromLatin1(entry.exe)).isEmpty()) {
+            ui->comboBoxShell->addItem(QString::fromLatin1(entry.name), QString::fromLatin1(entry.exe));
+        }
+    }
+    ui->comboBoxShell->addItem(tr("Custom..."), QStringLiteral("__custom__"));
+
+    auto syncCustomRowVisibility = [=]() {
+        const bool isCustom = ui->comboBoxShell->currentData().toString() == QLatin1String("__custom__");
+        ui->labelCustomShell->setVisible(isCustom);
+        ui->lineEditShellCommand->setVisible(isCustom);
+        ui->btnBrowseShell->setVisible(isCustom);
+    };
+
+    const QString currentShell = settings->shellCommand();
+    int idx = ui->comboBoxShell->findData(currentShell);
+    if (idx == -1) {
+        idx = ui->comboBoxShell->findData(QStringLiteral("__custom__"));
+        ui->lineEditShellCommand->setText(currentShell);
+    }
+    ui->comboBoxShell->setCurrentIndex(idx);
+    syncCustomRowVisibility();
+
+    connect(ui->comboBoxShell, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [=](int) {
+        const QString data = ui->comboBoxShell->currentData().toString();
+        syncCustomRowVisibility();
+        if (data != QLatin1String("__custom__")) {
+            settings->setShellCommand(data);
+        }
+    });
+
+    connect(ui->lineEditShellCommand, &QLineEdit::editingFinished, this, [=]() {
+        if (ui->comboBoxShell->currentData().toString() == QLatin1String("__custom__")) {
+            settings->setShellCommand(ui->lineEditShellCommand->text());
+        }
+    });
+    connect(settings, &ApplicationSettings::shellCommandChanged, this, [=](const QString &s) {
+        int i = ui->comboBoxShell->findData(s);
+        if (i != -1) {
+            ui->comboBoxShell->setCurrentIndex(i);
+        } else {
+            ui->comboBoxShell->setCurrentIndex(ui->comboBoxShell->findData(QStringLiteral("__custom__")));
+            if (ui->lineEditShellCommand->text() != s) {
+                ui->lineEditShellCommand->setText(s);
+            }
+        }
+    });
+
+    connect(ui->btnBrowseShell, &QToolButton::clicked, this, [=]() {
+        const QString filter = tr("Executables (*.exe);;All files (*)");
+        const QString path = QFileDialog::getOpenFileName(this, tr("Choose Shell"), ui->lineEditShellCommand->text(), filter);
+        if (!path.isEmpty()) {
+            const QString native = QDir::toNativeSeparators(path);
+            ui->lineEditShellCommand->setText(native);
+            settings->setShellCommand(native);
+        }
+    });
+#else
+    // Non-Windows: hide combo, show only line edit + browse (old behavior)
+    ui->comboBoxShell->setVisible(false);
+    ui->labelShellCommand->setVisible(false);
+    ui->labelCustomShell->setText(tr("Shell command"));
+
     ui->lineEditShellCommand->setText(settings->shellCommand());
     connect(ui->lineEditShellCommand, &QLineEdit::editingFinished, this, [=]() {
         settings->setShellCommand(ui->lineEditShellCommand->text());
@@ -180,11 +253,7 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
     });
 
     connect(ui->btnBrowseShell, &QToolButton::clicked, this, [=]() {
-#ifdef Q_OS_WIN
-        const QString filter = tr("Executables (*.exe);;All files (*)");
-#else
         const QString filter = tr("All files (*)");
-#endif
         const QString path = QFileDialog::getOpenFileName(this, tr("Choose Shell"), ui->lineEditShellCommand->text(), filter);
         if (!path.isEmpty()) {
             const QString native = QDir::toNativeSeparators(path);
@@ -192,6 +261,7 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
             settings->setShellCommand(native);
         }
     });
+#endif
 
     connect(ui->btnChooseTerminalFont, &QPushButton::clicked, this, [=]() {
         QFont current;

@@ -167,6 +167,12 @@ bool NotepadNextApplication::init()
         settings->clear();
     }
 
+#ifdef Q_OS_WIN
+    if (!settings->contains(QStringLiteral("Terminal/ShellCommand"))) {
+        settings->setShellCommand(settings->shellCommand());
+    }
+#endif
+
     // Translation files are stored as a qresource
     translationManager = new TranslationManager(this, QStringLiteral(":/i18n/"));
 

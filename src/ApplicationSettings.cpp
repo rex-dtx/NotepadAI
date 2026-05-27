@@ -21,6 +21,7 @@
 #include <QApplication>
 #include <QFont>
 #include <QFontDatabase>
+#include <QStandardPaths>
 
 #define CREATE_SETTING(group, name, lname, type, default) \
 ApplicationSetting<type> name{#group "/" #name, default};\
@@ -83,7 +84,12 @@ CREATE_SETTING(Editor, ShowLineNumbers, showLineNumbers, bool, true)
 static QString defaultShellCommand()
 {
 #ifdef Q_OS_WIN
-    return qEnvironmentVariable("COMSPEC", QStringLiteral("cmd.exe"));
+    static const char *candidates[] = {"pwsh.exe", "powershell.exe", "cmd.exe"};
+    for (const char *name : candidates) {
+        if (!QStandardPaths::findExecutable(QString::fromLatin1(name)).isEmpty())
+            return QString::fromLatin1(name);
+    }
+    return QStringLiteral("cmd.exe");
 #else
     return qEnvironmentVariable("SHELL", QStringLiteral("/bin/sh"));
 #endif
