@@ -50,5 +50,10 @@
         <file>icons/markdown-preview.svg</file>
         <file>icons/html-preview.svg</file>
         <file>icons/mini-app.svg</file>
+        <file>icons/arrow-left.svg</file>
+        <file>icons/arrow-right.svg</file>
+        <file>icons/refresh-cw.svg</file>
+        <file>icons/send.svg</file>
+        <file>icons/circle-stop.svg</file>
     </qresource>
 </RCC>

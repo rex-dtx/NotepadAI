@@ -90,12 +90,15 @@ protected:
     QUrl initialUrl() const { return m_url; }
 
     void setLoading(bool loading);
+    void changeEvent(QEvent *event) override;
 
 private:
     void setupToolbar();
+    void rebuildToolbarIcons();
     void showCopilotInputDialog();
     void showCopilotResultDialog(bool success, const QString &data);
 
+private:
     QString m_appId;
     QUrl m_url;
     QVBoxLayout *m_mainLayout = nullptr;
@@ -103,6 +106,7 @@ private:
     QToolButton *m_backBtn = nullptr;
     QToolButton *m_forwardBtn = nullptr;
     QToolButton *m_reloadBtn = nullptr;
+    QToolButton *m_goBtn = nullptr;
     QLineEdit *m_urlEdit = nullptr;
     QToolButton *m_stopBtn = nullptr;
     QToolButton *m_cdpBtn = nullptr;

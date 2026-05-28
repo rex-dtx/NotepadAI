@@ -10,17 +10,40 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFile>
 #include <QFont>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPainter>
 #include <QPalette>
 #include <QPushButton>
 #include <QStyle>
 #include <QTextBrowser>
 #include <QTimer>
+
+namespace {
+
+QIcon tintedSvgIcon(const QString &svgPath, const QColor &color)
+{
+    QIcon source(svgPath);
+    if (source.isNull()) return source;
+    QIcon dst;
+    for (int sz : {14, 16, 20, 22, 24, 28, 32, 48}) {
+        QPixmap pm = source.pixmap(sz, sz);
+        if (pm.isNull()) continue;
+        QPainter p(&pm);
+        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        p.fillRect(pm.rect(), color);
+        p.end();
+        dst.addPixmap(pm);
+    }
+    return dst;
+}
+
+} // namespace
 
 void WebViewWidget::copilotLog(const QString &msg)
 {
@@ -82,6 +105,35 @@ WebViewWidget::WebViewWidget(const QString &appId, const QUrl &url, QWidget *par
     });
 }
 
+void WebViewWidget::rebuildToolbarIcons()
+{
+    const QColor color = palette().color(QPalette::WindowText);
+    if (m_backBtn)
+        m_backBtn->setIcon(tintedSvgIcon(QStringLiteral(":/icons/arrow-left.svg"), color));
+    if (m_forwardBtn)
+        m_forwardBtn->setIcon(tintedSvgIcon(QStringLiteral(":/icons/arrow-right.svg"), color));
+    if (m_reloadBtn)
+        m_reloadBtn->setIcon(tintedSvgIcon(QStringLiteral(":/icons/refresh-cw.svg"), color));
+    if (m_goBtn)
+        m_goBtn->setIcon(tintedSvgIcon(QStringLiteral(":/icons/send.svg"), color));
+    if (m_stopBtn)
+        m_stopBtn->setIcon(tintedSvgIcon(QStringLiteral(":/icons/circle-stop.svg"), color));
+}
+
+void WebViewWidget::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    switch (event->type()) {
+    case QEvent::PaletteChange:
+    case QEvent::StyleChange:
+    case QEvent::ApplicationPaletteChange:
+        rebuildToolbarIcons();
+        break;
+    default:
+        break;
+    }
+}
+
 void WebViewWidget::setupToolbar()
 {
     auto *toolbarWidget = new QWidget(this);
@@ -92,7 +144,6 @@ void WebViewWidget::setupToolbar()
 
     m_backBtn = new QToolButton(toolbarWidget);
     m_backBtn->setAutoRaise(true);
-    m_backBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
     m_backBtn->setToolTip(tr("Back"));
     m_backBtn->setIconSize(QSize(14, 14));
     connect(m_backBtn, &QToolButton::clicked, this, &WebViewWidget::goBack);
@@ -100,7 +151,6 @@ void WebViewWidget::setupToolbar()
 
     m_forwardBtn = new QToolButton(toolbarWidget);
     m_forwardBtn->setAutoRaise(true);
-    m_forwardBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
     m_forwardBtn->setToolTip(tr("Forward"));
     m_forwardBtn->setIconSize(QSize(14, 14));
     connect(m_forwardBtn, &QToolButton::clicked, this, &WebViewWidget::goForward);
@@ -108,7 +158,6 @@ void WebViewWidget::setupToolbar()
 
     m_reloadBtn = new QToolButton(toolbarWidget);
     m_reloadBtn->setAutoRaise(true);
-    m_reloadBtn->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
     m_reloadBtn->setToolTip(tr("Reload"));
     m_reloadBtn->setIconSize(QSize(14, 14));
     connect(m_reloadBtn, &QToolButton::clicked, this, &WebViewWidget::reload);
@@ -179,17 +228,15 @@ void WebViewWidget::setupToolbar()
     connect(m_urlEdit, &QLineEdit::returnPressed, this, navigateFromBar);
     m_toolbarLayout->addWidget(m_urlEdit, 1);
 
-    auto *goBtn = new QToolButton(toolbarWidget);
-    goBtn->setAutoRaise(true);
-    goBtn->setIcon(style()->standardIcon(QStyle::SP_CommandLink));
-    goBtn->setToolTip(tr("Go"));
-    goBtn->setIconSize(QSize(14, 14));
-    connect(goBtn, &QToolButton::clicked, this, navigateFromBar);
-    m_toolbarLayout->addWidget(goBtn);
+    m_goBtn = new QToolButton(toolbarWidget);
+    m_goBtn->setAutoRaise(true);
+    m_goBtn->setToolTip(tr("Go"));
+    m_goBtn->setIconSize(QSize(14, 14));
+    connect(m_goBtn, &QToolButton::clicked, this, navigateFromBar);
+    m_toolbarLayout->addWidget(m_goBtn);
 
     m_stopBtn = new QToolButton(toolbarWidget);
     m_stopBtn->setAutoRaise(true);
-    m_stopBtn->setIcon(style()->standardIcon(QStyle::SP_BrowserStop));
     m_stopBtn->setToolTip(tr("Stop"));
     m_stopBtn->setIconSize(QSize(14, 14));
     m_stopBtn->hide();
@@ -217,6 +264,7 @@ void WebViewWidget::setupToolbar()
     m_toolbarLayout->addWidget(m_cdpBtn);
 
     m_mainLayout->addWidget(toolbarWidget);
+    rebuildToolbarIcons();
 }
 
 void WebViewWidget::setLoading(bool loading)
