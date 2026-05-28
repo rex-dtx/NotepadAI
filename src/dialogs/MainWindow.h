@@ -206,7 +206,7 @@ private:
     bool checkFileForModification(ScintillaNext *editor);
     void showSaveErrorMessage(ScintillaNext *editor, QFileDevice::FileError error);
     void showEditorZoomLevelIndicator();
-    void attachAiAgentDock(AiAgentDock *dock);
+    void attachAiAgentDock(AiAgentDock *dock, bool raise = true);
     void registerWorkspaceDock(FolderAsWorkspaceDock *dock);
     void openFolderAsWorkspacePath(const QString &dir, bool showGitTab = false);
     void wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock);

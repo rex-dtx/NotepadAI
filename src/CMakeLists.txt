@@ -11,6 +11,7 @@ qt_add_executable(NotepadAI
 	AcpSessionModel.h
 	ActionUtils.h
 	ApplicationSettings.h
+	CronExpression.h
 	GoalActionParser.h
 	GoalAgent.h
 	GoalAgentSettings.h
@@ -64,6 +65,9 @@ qt_add_executable(NotepadAI
 	ScintillaCommenter.h
 	ScintillaEnums.h
 	ScintillaNext.h
+	ScheduledTaskDefinition.h
+	ScheduledTaskRegistry.h
+	ScheduledTaskRunner.h
 	SearchResultData.h
 	SearchResultHighlighterDelegate.h
 	SearchResultsCollector.h
@@ -88,6 +92,7 @@ qt_add_executable(NotepadAI
 	AcpHistoryStore.cpp
 	AcpProtocol.cpp
 	AcpSessionModel.cpp
+	CronExpression.cpp
 	GoalActionParser.cpp
 	GoalAgent.cpp
 	GoalAgentSettings.cpp
@@ -136,6 +141,8 @@ qt_add_executable(NotepadAI
 	SciIFaceTable.cpp
 	ScintillaCommenter.cpp
 	ScintillaNext.cpp
+	ScheduledTaskRegistry.cpp
+	ScheduledTaskRunner.cpp
 	SearchResultHighlighterDelegate.cpp
 	SearchResultsCollector.cpp
 	SelectionTracker.cpp
@@ -191,6 +198,10 @@ qt_add_executable(NotepadAI
 	dialogs/AcpAgentSettingsDialog.ui
 	dialogs/SendWithGoalDialog.cpp
 	dialogs/SendWithGoalDialog.h
+	dialogs/ScheduledTaskDialog.cpp
+	dialogs/ScheduledTaskDialog.h
+	dialogs/EditScheduledTaskDialog.cpp
+	dialogs/EditScheduledTaskDialog.h
 	dialogs/EditTasksDialog.cpp
 	dialogs/EditTasksDialog.h
 	dialogs/EditMiniAppsDialog.cpp
@@ -362,6 +373,8 @@ qt_add_executable(NotepadAI
 	widgets/EditorInfoStatusBar.h
 	widgets/EditorMinimap.cpp
 	widgets/EditorMinimap.h
+	widgets/GoalConfigWidget.cpp
+	widgets/GoalConfigWidget.h
 	widgets/MinimapMath.h
 	widgets/TaskRunnerGutter.cpp
 	widgets/TaskRunnerGutter.h
@@ -513,6 +526,7 @@ target_link_libraries(NotepadAI
         xxhash
         xdiff
         md4c
+        supertinycron
 )
 
 target_compile_definitions(NotepadAI

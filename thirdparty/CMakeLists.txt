@@ -50,6 +50,7 @@ add_subdirectory(libvterm)
 add_subdirectory(libptyqt)
 add_subdirectory(xdiff)
 add_subdirectory(md4c)
+add_subdirectory(supertinycron)
 
 if(WIN32)
     add_subdirectory(webview2)

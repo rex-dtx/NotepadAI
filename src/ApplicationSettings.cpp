@@ -178,6 +178,7 @@ static const char kAiDefaultAgentIdKey[]      = "Ai/DefaultAgentId";
 static const char kAiAutoApprovePolicyKey[]   = "Ai/AutoApprovePermissions";
 static const char kAiAgentsJsonKey[]          = "Ai/Agents";
 static const char kAiAgentPreferencesJsonKey[] = "Ai/AgentPreferences";
+static const char kScheduledTasksJsonKey[]    = "Ai/ScheduledTasksJson";
 static const char kWorkspaceTasksJsonKey[]    = "Terminal/WorkspaceTasks";
 
 QString ApplicationSettings::defaultAiAgentId() const
@@ -223,6 +224,17 @@ void ApplicationSettings::setAiAgentPreferencesJson(const QString &json)
 {
     setValue(QLatin1String(kAiAgentPreferencesJsonKey), json);
     emit aiAgentPreferencesJsonChanged(json);
+}
+
+QString ApplicationSettings::scheduledTasksJson() const
+{
+    return value(QLatin1String(kScheduledTasksJsonKey), QString()).toString();
+}
+
+void ApplicationSettings::setScheduledTasksJson(const QString &json)
+{
+    setValue(QLatin1String(kScheduledTasksJsonKey), json);
+    emit scheduledTasksJsonChanged(json);
 }
 
 QString ApplicationSettings::workspaceTasksJson() const

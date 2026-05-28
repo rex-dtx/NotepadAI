@@ -66,10 +66,17 @@ public:
     QString workingDirectory() const { return m_workingDirectory; }
     const QStringList &goalDebugLog() const { return m_goalDebugLog; }
     void insertTextToInput(const QString &text);
+    void setActivityIndicator(bool active);
+    bool isBusy() const;
 
     // Open the Send with Goal dialog and start a goal on this session.
     // No-op if a goal is already active.
     void sendWithGoal();
+
+    // Attach an externally-created GoalAgent and wire its signals for UI
+    // feedback (system messages, status bar, debug log). Takes ownership.
+    // Returns false if a goal is already active.
+    bool attachGoalAgent(GoalAgent *goal);
 
     // Replace the dock's inner session model + connection without destroying
     // the dock itself. The dock widget, its dock area, and its on-screen
@@ -121,6 +128,7 @@ private:
     class AcpSessionView *m_view = nullptr; // owned via setWidget
     bool m_agentExited = false;
     bool m_restartDialogShowing = false;
+    bool m_hasActivity = false;
     QStringList m_goalDebugLog;
 };
 

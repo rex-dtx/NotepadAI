@@ -722,3 +722,26 @@ target_sources(test_browser_proxy_args PRIVATE
     ${CMAKE_SOURCE_DIR}/src/BrowserProxyArgs.h
 )
 add_test(NAME BrowserProxyArgs COMMAND test_browser_proxy_args)
+
+# --- CronExpression: parse, nextFireTime, nextFireTimes ---
+qt_add_executable(test_cron_expression test_cron_expression.cpp)
+target_include_directories(test_cron_expression PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_cron_expression PRIVATE Qt6::Core Qt6::Test supertinycron)
+target_sources(test_cron_expression PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/CronExpression.cpp
+    ${CMAKE_SOURCE_DIR}/src/CronExpression.h
+)
+add_test(NAME CronExpression COMMAND test_cron_expression)
+
+# --- ScheduledTaskRegistry: add/update/remove roundtrip, persistence, enable/disable ---
+qt_add_executable(test_scheduled_task_registry test_scheduled_task_registry.cpp)
+target_include_directories(test_scheduled_task_registry PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_scheduled_task_registry PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+target_sources(test_scheduled_task_registry PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.h
+    ${CMAKE_SOURCE_DIR}/src/ScheduledTaskDefinition.h
+    ${CMAKE_SOURCE_DIR}/src/ScheduledTaskRegistry.cpp
+    ${CMAKE_SOURCE_DIR}/src/ScheduledTaskRegistry.h
+)
+add_test(NAME ScheduledTaskRegistry COMMAND test_scheduled_task_registry)

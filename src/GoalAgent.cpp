@@ -97,6 +97,11 @@ bool GoalAgent::start(const StartRequest &req)
     // Spawn the judge agent for criterion 0.
     spawnJudgeForCriterion(0);
 
+    if (m_status != Idle) {
+        logDebug(QStringLiteral("start: spawnJudge failed (status=%1)").arg(m_status));
+        return false;
+    }
+
     setStatus(Active);
     m_lastSeenTargetMessageCount = m_targetModel->messages().size();
     logDebug(QStringLiteral("start: OK, %1 criteria, agent=%2, maxIter=%3")

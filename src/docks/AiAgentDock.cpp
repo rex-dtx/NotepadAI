@@ -30,6 +30,8 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
 #include <Qt>
 
 AiAgentDock::AiAgentDock(QString sessionId,
@@ -200,6 +202,36 @@ AiAgentDock::~AiAgentDock()
     }
 }
 
+void AiAgentDock::setActivityIndicator(bool active)
+{
+    if (m_hasActivity == active) {
+        return;
+    }
+    m_hasActivity = active;
+    if (active) {
+        QPixmap px(8, 8);
+        px.fill(Qt::transparent);
+        QPainter painter(&px);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().color(QPalette::Highlight));
+        painter.drawEllipse(0, 0, 8, 8);
+        painter.end();
+        setWindowIcon(QIcon(px));
+    } else {
+        setWindowIcon(QIcon());
+    }
+}
+
+bool AiAgentDock::isBusy() const
+{
+    if (m_model && m_model->isProcessing())
+        return true;
+    if (m_goalAgent && m_goalAgent->status() == GoalAgent::Active)
+        return true;
+    return false;
+}
+
 QSize AiAgentDock::sizeHint() const
 {
     return QSize(600, 400);
@@ -266,44 +298,20 @@ void AiAgentDock::insertTextToInput(const QString &text)
     }
 }
 
-void AiAgentDock::sendWithGoal()
+bool AiAgentDock::attachGoalAgent(GoalAgent *goal)
 {
-    if (m_goalAgent && m_goalAgent->status() == GoalAgent::Active) {
-        QMessageBox::information(this, tr("Send with Goal"),
-                                 tr("A goal is already active on this session. "
-                                    "Stop the current goal before starting a new one."));
-        return;
-    }
-
-    SendWithGoalDialog dlg(m_registry, m_appSettings, this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    const auto res = dlg.result();
-    if (res.successCriteriaList.isEmpty())
-        return;
+    if (!goal) return false;
+    if (m_goalAgent && m_goalAgent->status() == GoalAgent::Active)
+        return false;
 
     if (m_goalAgent) {
         m_goalAgent->deleteLater();
         m_goalAgent = nullptr;
     }
 
-    // Capture composer text BEFORE starting the goal — if empty, abort early
-    // without spawning the judge process.
-    QString composerText;
-    QVector<QPair<QByteArray, QString>> composerImages;
-    if (m_view) {
-        composerText = m_view->takeInputText();
-        composerImages = m_view->takeInputImages();
-    }
-    if (composerText.isEmpty() && composerImages.isEmpty()) {
-        QMessageBox::information(this, tr("Send with Goal"),
-                                 tr("Type a message before sending with a goal."));
-        return;
-    }
+    m_goalAgent = goal;
+    goal->setParent(this);
 
-    m_goalAgent = new GoalAgent(m_agentManager, m_appSettings, this);
-    m_goalAgent->setTargetSession(m_connection, m_model);
     connect(m_goalAgent, &GoalAgent::debugLogEntry, this, [this](const QString &entry) {
         m_goalDebugLog.append(entry);
         emit goalDebugLogAppended(entry);
@@ -359,6 +367,43 @@ void AiAgentDock::sendWithGoal()
                 0, m_goalAgent->maxIterations());
         }
     });
+    return true;
+}
+
+void AiAgentDock::sendWithGoal()
+{
+    if (m_goalAgent && m_goalAgent->status() == GoalAgent::Active) {
+        QMessageBox::information(this, tr("Send with Goal"),
+                                 tr("A goal is already active on this session. "
+                                    "Stop the current goal before starting a new one."));
+        return;
+    }
+
+    SendWithGoalDialog dlg(m_registry, m_appSettings, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    const auto res = dlg.result();
+    if (res.successCriteriaList.isEmpty())
+        return;
+
+    // Capture composer text BEFORE starting the goal — if empty, abort early
+    // without spawning the judge process.
+    QString composerText;
+    QVector<QPair<QByteArray, QString>> composerImages;
+    if (m_view) {
+        composerText = m_view->takeInputText();
+        composerImages = m_view->takeInputImages();
+    }
+    if (composerText.isEmpty() && composerImages.isEmpty()) {
+        QMessageBox::information(this, tr("Send with Goal"),
+                                 tr("Type a message before sending with a goal."));
+        return;
+    }
+
+    auto *goal = new GoalAgent(m_agentManager, m_appSettings, this);
+    goal->setTargetSession(m_connection, m_model);
+    attachGoalAgent(goal);
 
     GoalAgent::StartRequest req;
     req.targetSessionId = m_sessionId;

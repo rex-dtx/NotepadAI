@@ -2,21 +2,13 @@
 #define SEND_WITH_GOAL_DIALOG_H
 
 #include <QDialog>
-#include <QList>
-#include <QString>
 #include <QStringList>
 
 class AcpAgentRegistry;
 class ApplicationSettings;
-class QComboBox;
+class GoalConfigWidget;
 class QLabel;
-class QLineEdit;
-class QMenu;
-class QPlainTextEdit;
 class QPushButton;
-class QScrollArea;
-class QSpinBox;
-class QVBoxLayout;
 
 struct SendWithGoalResult
 {
@@ -39,46 +31,14 @@ public:
     SendWithGoalResult result() const;
 
 private slots:
-    void onAddCriterion();
-    void onRemoveCriterion();
-    void onSavePreset();
-    void onTemplateNew();
-    void onTemplateRename();
-    void onTemplateEdit();
-    void onTemplateDelete();
     void onStart();
 
 private:
-    void buildUi();
-    void populateAgents();
-    void populateTemplates();
-    void populatePresets();
-    void updateRowCount();
-    void updateTemplateButtons();
     bool validate();
-    QPlainTextEdit *createCriterionEdit(const QString &text = QString());
 
-    AcpAgentRegistry *m_registry;
-    ApplicationSettings *m_settings;
-
-    QScrollArea *m_criteriaScroll = nullptr;
-    QVBoxLayout *m_criteriaLayout = nullptr;
-    QList<QPlainTextEdit *> m_criteriaEdits;
-    QPushButton *m_addBtn = nullptr;
-    QPushButton *m_removeBtn = nullptr;
-    QLabel *m_rowCountLabel = nullptr;
-    QComboBox *m_agentCombo = nullptr;
-    QComboBox *m_templateCombo = nullptr;
-    QPushButton *m_tplRenameBtn = nullptr;
-    QPushButton *m_tplEditBtn = nullptr;
-    QPushButton *m_tplDeleteBtn = nullptr;
-    QSpinBox *m_maxIterSpin = nullptr;
-    QPushButton *m_loadPresetBtn = nullptr;
-    QPushButton *m_savePresetBtn = nullptr;
-    QMenu *m_presetMenu = nullptr;
-    QPushButton *m_startBtn = nullptr;
-    QPushButton *m_cancelBtn = nullptr;
+    GoalConfigWidget *m_goalConfig = nullptr;
     QLabel *m_errorLabel = nullptr;
+    QPushButton *m_startBtn = nullptr;
 };
 
 #endif // SEND_WITH_GOAL_DIALOG_H

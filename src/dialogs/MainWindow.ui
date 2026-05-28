@@ -378,6 +378,7 @@
     <addaction name="menuOpenAiAgentInWorkspace"/>
     <addaction name="menuOpenAiAgentInFolder"/>
     <addaction name="separator"/>
+    <addaction name="actionScheduleTasks"/>
     <addaction name="actionAiAgents"/>
    </widget>
    <widget class="QMenu" name="menuBrowser">
@@ -1081,6 +1082,11 @@
   <action name="actionAiAgents">
    <property name="text">
     <string>AI Agents…</string>
+   </property>
+  </action>
+  <action name="actionScheduleTasks">
+   <property name="text">
+    <string>Scheduled Tasks…</string>
    </property>
   </action>
   <action name="actionOpenTerminalInWorkspace">

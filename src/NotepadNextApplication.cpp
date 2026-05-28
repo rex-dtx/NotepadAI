@@ -33,6 +33,8 @@
 #include "HtmlPreviewWidget.h"
 #include "ai/CommitMessageGenerator.h"
 #include "ai/CredentialStore.h"
+#include "ScheduledTaskRegistry.h"
+#include "ScheduledTaskRunner.h"
 #include "ThemeResolver.h"
 
 #include "LuaState.h"
@@ -206,6 +208,10 @@ bool NotepadNextApplication::init()
         credentialStore_ = new ai::CredentialStore(this);
         commitMessageGenerator_ = new ai::CommitMessageGenerator(settings, credentialStore_, this);
         sessionManager = new SessionManager(this);
+
+        auto *scheduledTaskRegistry = new ScheduledTaskRegistry(settings, this);
+        scheduledTaskRunner_ = new ScheduledTaskRunner(scheduledTaskRegistry, aiAgentManager_, settings, this);
+        scheduledTaskRunner_->start();
     }
 
     connect(editorManager, &EditorManager::editorCreated, recentFilesListManager, [this](ScintillaNext *editor) {
@@ -241,6 +247,9 @@ bool NotepadNextApplication::init()
     connect(this, &NotepadNextApplication::aboutToQuit, this, &NotepadNextApplication::saveSettings);
     connect(this, &NotepadNextApplication::aboutToQuit, this, [this]() {
         PROFILE_SCOPE("NotepadNextApplication::aboutToQuit::acpShutdown");
+        if (scheduledTaskRunner_) {
+            scheduledTaskRunner_->stop();
+        }
         if (aiAgentManager_) {
             aiAgentManager_->shutdown();
         }

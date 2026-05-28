@@ -100,6 +100,9 @@
 #include "AcpAgentRegistry.h"
 #include "AcpAgentManager.h"
 #include "AiAgentDock.h"
+#include "ScheduledTaskDialog.h"
+#include "ScheduledTaskRegistry.h"
+#include "ScheduledTaskRunner.h"
 #include "ColumnEditorDialog.h"
 #include "ConflictListDock.h"
 #include "ConflictMergeViewerDock.h"
@@ -1055,6 +1058,38 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         dlg->raise();
         dlg->activateWindow();
     });
+
+    connect(ui->actionScheduleTasks, &QAction::triggered, this, [=] {
+        ScheduledTaskDialog *dlg = findChild<ScheduledTaskDialog *>(QString(), Qt::FindDirectChildrenOnly);
+
+        if (dlg == Q_NULLPTR) {
+            AcpAgentRegistry *registry = app->getAiAgentManager()
+                ? app->getAiAgentManager()->registry()
+                : new AcpAgentRegistry(app->getSettings(), this);
+            ScheduledTaskRunner *runner = app->getScheduledTaskRunner();
+            ScheduledTaskRegistry *taskRegistry = runner ? runner->registry() : nullptr;
+            dlg = new ScheduledTaskDialog(
+                taskRegistry,
+                runner,
+                registry,
+                app->getSettings(),
+                this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+        }
+
+        dlg->setDefaultWorkspace(TerminalCwdResolver::resolveWorkspace(currentWorkspaceRoot()));
+        dlg->setRecentWorkspaces(app->getRecentWorkspacesListManager()->fileList());
+        dlg->show();
+        dlg->raise();
+        dlg->activateWindow();
+    });
+
+    if (app->getScheduledTaskRunner()) {
+        connect(app->getScheduledTaskRunner(), &ScheduledTaskRunner::taskFired, this, [this](AiAgentDock *dock) {
+            attachAiAgentDock(dock, false);
+            dock->setActivityIndicator(true);
+        });
+    }
 
     // The macro manager has already loaded any saved macros, so it might have some already
     ui->actionRunMacroMultipleTimes->setEnabled(macroManager.availableMacros().size() > 0);
@@ -3809,7 +3844,7 @@ QMenu *MainWindow::buildMenu(const QStringList &actionNames)
     return menu;
 }
 
-void MainWindow::attachAiAgentDock(AiAgentDock *dock)
+void MainWindow::attachAiAgentDock(AiAgentDock *dock, bool raise)
 {
     AiAgentDock *existing = nullptr;
     const auto children = findChildren<AiAgentDock *>();
@@ -3838,6 +3873,7 @@ void MainWindow::attachAiAgentDock(AiAgentDock *dock)
     connect(dock, &QDockWidget::visibilityChanged, this, [this, dock, syncWorkspaceForDock](bool visible) {
         if (visible) {
             m_activeAiDock = dock;
+            dock->setActivityIndicator(false);
             syncWorkspaceForDock();
         }
     });
@@ -3852,8 +3888,10 @@ void MainWindow::attachAiAgentDock(AiAgentDock *dock)
         resizeDocks({dock}, {600}, Qt::Horizontal);
     }
     dock->setVisible(true);
-    dock->raise();
-    m_activeAiDock = dock;
+    if (raise) {
+        dock->raise();
+        m_activeAiDock = dock;
+    }
 }
 
 AiAgentDock *MainWindow::activeAiDock() const

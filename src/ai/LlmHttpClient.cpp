@@ -160,6 +160,7 @@ void LlmHttpClient::onReadyRead()
     const QByteArray bytes = m_reply->readAll();
     m_parser.feed(QByteArrayView(bytes),
                   [this](const SsePartialParser::Event &ev) {
+        if (!m_reply) return;
         switch (ev.kind) {
         case SsePartialParser::EventKind::Token:
             m_anyTokenSeen = true;

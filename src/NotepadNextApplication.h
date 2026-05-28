@@ -38,6 +38,7 @@ class ScintillaNext;
 class SessionManager;
 class TranslationManager;
 class AcpAgentManager;
+class ScheduledTaskRunner;
 namespace ai { class CommitMessageGenerator; class CredentialStore; }
 
 
@@ -57,6 +58,7 @@ public:
     SessionManager *getSessionManager() const;
     TranslationManager *getTranslationManager() const { return translationManager; };
     AcpAgentManager *getAiAgentManager() const { return aiAgentManager_; }
+    ScheduledTaskRunner *getScheduledTaskRunner() const { return scheduledTaskRunner_; }
     ai::CommitMessageGenerator *getCommitMessageGenerator() const { return commitMessageGenerator_; }
     ai::CredentialStore *getCredentialStore() const { return credentialStore_; }
 
@@ -119,6 +121,7 @@ private:
     SessionManager *sessionManager;
     TranslationManager *translationManager;
     AcpAgentManager *aiAgentManager_ = nullptr;
+    ScheduledTaskRunner *scheduledTaskRunner_ = nullptr;
     ai::CommitMessageGenerator *commitMessageGenerator_ = nullptr;
     ai::CredentialStore *credentialStore_ = nullptr;
 
