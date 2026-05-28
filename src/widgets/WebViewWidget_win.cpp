@@ -99,6 +99,7 @@ public:
         m_hostWidget = new QWidget(this);
         m_hostWidget->setAttribute(Qt::WA_NativeWindow);
         m_hostWidget->setAttribute(Qt::WA_DontCreateNativeAncestors, false);
+        m_hostWidget->setFocusPolicy(Qt::ClickFocus);
         mainLayout()->addWidget(m_hostWidget, 1);
     }
 
@@ -232,10 +233,18 @@ public:
         hideCdpUrl();
     }
 
-    void notifyFocusLost() override
+    void notifyFocusLost(QWidget *newFocusWidget) override
     {
-        if (m_controller)
-            m_controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+        if (!m_controller) return;
+        HWND focused = GetFocus();
+        if (!focused) return;
+        if (focused == m_hwnd || IsChild(m_hwnd, focused)) {
+            HWND target = newFocusWidget
+                ? GetAncestor(reinterpret_cast<HWND>(newFocusWidget->effectiveWinId()), GA_ROOT)
+                : GetAncestor(m_hwnd, GA_ROOT);
+            if (target)
+                SetFocus(target);
+        }
     }
 
 protected:
@@ -443,6 +452,13 @@ private:
         EventRegistrationToken msgToken;
         m_webView->add_WebMessageReceived(
             new WebMessageReceivedHandler(this), &msgToken);
+
+        // Sync Qt focus state when WebView2 grabs native focus. Without this,
+        // Qt doesn't know focus left the previously focused widget, so clicking
+        // back on that widget won't fire focusChanged (Qt thinks it already has
+        // focus there).
+        EventRegistrationToken gotFocusToken;
+        m_controller->add_GotFocus(new GotFocusHandler(this), &gotFocusToken);
 
         // Navigate to initial URL
         setLoading(true);
@@ -652,6 +668,29 @@ private:
                 owner->handleCopilotMessage(QString::fromWCharArray(msg));
                 CoTaskMemFree(msg);
             }
+            return S_OK;
+        }
+    };
+
+    // GotFocusHandler: fires when WebView2 acquires native focus. Sets Qt focus
+    // to the host widget so Qt's focus tracking stays in sync with Win32.
+    struct GotFocusHandler : ICoreWebView2FocusChangedEventHandler {
+        WebViewWidgetWin *owner;
+        std::shared_ptr<std::atomic<bool>> alive;
+        ULONG refCount = 1;
+        GotFocusHandler(WebViewWidgetWin *o) : owner(o), alive(o->m_alive) {}
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+            if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ICoreWebView2FocusChangedEventHandler)) {
+                *ppv = this; AddRef(); return S_OK;
+            }
+            *ppv = nullptr; return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
+        ULONG STDMETHODCALLTYPE Release() override { if (--refCount == 0) { delete this; return 0; } return refCount; }
+        HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2Controller *, IUnknown *) override {
+            if (!alive->load(std::memory_order_acquire)) return S_OK;
+            if (owner->m_hostWidget)
+                owner->m_hostWidget->setFocus(Qt::OtherFocusReason);
             return S_OK;
         }
     };
