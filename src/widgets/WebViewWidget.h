@@ -41,6 +41,10 @@ public:
     virtual void destroy() = 0;
     virtual QString debugInfo() const { return QString(); }
 
+    // Called when Qt focus leaves this WebView widget. Platform implementations
+    // use this to release native keyboard focus (e.g. WebView2 on Windows).
+    virtual void notifyFocusLost() {}
+
     virtual void executeScript(const QString &js, std::function<void(const QString &)> callback = nullptr) = 0;
     virtual QString nativePostMessage() const = 0;
 

@@ -99,6 +99,21 @@ MiniAppManager::MiniAppManager(NotepadNextApplication *app,
 
     // Re-tint tab icons on theme change
     connect(app, &NotepadNextApplication::effectiveThemeChanged, this, &MiniAppManager::retintAllIcons);
+
+    // When Qt focus leaves a WebView2 widget, tell it to release Win32 keyboard
+    // focus so keystrokes go to the newly focused Qt widget (e.g. AI chat input).
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget *old, QWidget * /*now*/) {
+        if (!old) return;
+        auto checkAndNotify = [old](WebViewWidget *wv) {
+            if (!wv) return;
+            if (old == wv || wv->isAncestorOf(old))
+                wv->notifyFocusLost();
+        };
+        for (MiniAppInstance *inst : m_instances)
+            checkAndNotify(inst->webViewWidget());
+        for (const QuickBrowserTab &tab : m_quickBrowserTabs)
+            checkAndNotify(tab.webView);
+    });
 }
 
 MiniAppManager::~MiniAppManager()

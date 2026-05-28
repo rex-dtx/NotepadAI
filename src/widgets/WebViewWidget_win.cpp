@@ -232,6 +232,12 @@ public:
         hideCdpUrl();
     }
 
+    void notifyFocusLost() override
+    {
+        if (m_controller)
+            m_controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    }
+
 protected:
     void resizeEvent(QResizeEvent *event) override
     {
