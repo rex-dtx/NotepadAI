@@ -70,6 +70,7 @@ WebViewWidget::WebViewWidget(const QString &appId, const QUrl &url, QWidget *par
             m_copilotExecuting = false;
             m_copilotNavRetries = 0;
             m_copilotRetryTimer->stop();
+            if (m_aiStopBtn) m_aiStopBtn->hide();
             showCopilotResultDialog(false, tr("Stopped after %1 page navigations").arg(kMaxNavRetries));
             return;
         }
@@ -123,6 +124,28 @@ void WebViewWidget::setupToolbar()
     m_aiBtn->setFont(aiFont);
     connect(m_aiBtn, &QToolButton::clicked, this, &WebViewWidget::showCopilotInputDialog);
     m_toolbarLayout->addWidget(m_aiBtn);
+
+    // Stop AI button — red label, hidden by default, shown during execution
+    m_aiStopBtn = new QToolButton(toolbarWidget);
+    m_aiStopBtn->setAutoRaise(true);
+    m_aiStopBtn->setText(QStringLiteral("Stop AI"));
+    m_aiStopBtn->setToolTip(tr("Stop the running AI Copilot"));
+    m_aiStopBtn->setStyleSheet(QStringLiteral("QToolButton { color: #e03030; font-weight: bold; }"));
+    m_aiStopBtn->hide();
+    connect(m_aiStopBtn, &QToolButton::clicked, this, [this]() {
+        if (!m_copilotExecuting) return;
+        copilotLog(QStringLiteral("[stop] user requested stop"));
+        executeScript(QStringLiteral("if(window.__nai_pa)window.__nai_pa.stop()"), nullptr);
+        m_copilotExecuting = false;
+        m_copilotNavRetries = 0;
+        m_copilotLastCmd.clear();
+        m_copilotRetryTimer->stop();
+        m_aiStopBtn->hide();
+        if (m_aiBtn) m_aiBtn->setStyleSheet(QString());
+        if (m_aiBlinkTimer) m_aiBlinkTimer->start();
+        emit copilotResult(false, tr("Stopped by user"));
+    });
+    m_toolbarLayout->addWidget(m_aiStopBtn);
 
     // Blink animation for AI button
     m_aiBlinkTimer = new QTimer(this);
@@ -318,6 +341,7 @@ void WebViewWidget::executeCopilotCommand(const QString &command, const QString 
 {
     if (m_copilotExecuting) return;
     m_copilotExecuting = true;
+    if (m_aiStopBtn) m_aiStopBtn->show();
 
     // Stop blink while executing
     if (m_aiBlinkTimer) m_aiBlinkTimer->stop();
@@ -420,6 +444,7 @@ void WebViewWidget::executeCopilotCommand(const QString &command, const QString 
                          "        maxSteps: 15\n"
                          "      });\n"
                          "      if (pa.panel) { pa.panel.dispose(); pa.panel = null; }\n"
+                         "      window.__nai_pa = pa;\n"
                          "      var _paObserver = new MutationObserver(function(muts){\n"
                          "        for(var m of muts) for(var n of m.addedNodes){\n"
                          "          if(n.nodeType===1 && n.style && parseInt(n.style.zIndex)>2147483600) n.remove();\n"
@@ -464,10 +489,13 @@ void WebViewWidget::handleCopilotMessage(const QString &json)
     }
     if (type != QStringLiteral("pa-result")) return;
 
+    if (!m_copilotExecuting) return;
+
     m_copilotExecuting = false;
     m_copilotNavRetries = 0;
     m_copilotLastCmd.clear();
     m_copilotRetryTimer->stop();
+    if (m_aiStopBtn) m_aiStopBtn->hide();
 
     // Restore blink
     if (m_aiBtn) m_aiBtn->setStyleSheet(QString());
