@@ -28,7 +28,11 @@
 class QFileSystemWatcher;
 class QTimer;
 
-// Watches a repo's .git/ control files plus the working tree top level.
+#ifdef Q_OS_WIN
+class RecursiveTreeWatcher;
+#endif
+
+// Watches a repo's .git/ control files plus the working tree (recursively).
 // Coalesces flurries of events into one of four debounced signals.
 class GitWatcher : public QObject
 {
@@ -58,6 +62,10 @@ private:
     QString m_repoRoot;
     QString m_gitDir;
     int m_pending = 0;
+
+#ifdef Q_OS_WIN
+    RecursiveTreeWatcher *m_treeWatcher = nullptr;
+#endif
 
     enum Pending : std::uint8_t { PHead = 1, PIndex = 2, PRefs = 4, PTree = 8, POpState = 16 };
 

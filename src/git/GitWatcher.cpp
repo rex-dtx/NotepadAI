@@ -24,6 +24,10 @@
 #include <QFileSystemWatcher>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#include "RecursiveTreeWatcher.h"
+#endif
+
 GitWatcher::GitWatcher(QObject *parent) : QObject(parent)
 {
     m_fs = new QFileSystemWatcher(this);
@@ -34,6 +38,15 @@ GitWatcher::GitWatcher(QObject *parent) : QObject(parent)
     connect(m_fs, &QFileSystemWatcher::fileChanged, this, &GitWatcher::onFileChanged);
     connect(m_fs, &QFileSystemWatcher::directoryChanged, this, &GitWatcher::onDirChanged);
     connect(m_debounce, &QTimer::timeout, this, &GitWatcher::onDebounce);
+
+#ifdef Q_OS_WIN
+    m_treeWatcher = new RecursiveTreeWatcher(this);
+    connect(m_treeWatcher, &RecursiveTreeWatcher::changed, this, [this]() {
+        m_treeWatcher->ackNotify();
+        m_pending |= PTree;
+        m_debounce->start();
+    });
+#endif
 }
 
 GitWatcher::~GitWatcher() = default;
@@ -42,6 +55,9 @@ void GitWatcher::clear()
 {
     if (!m_fs->files().isEmpty()) m_fs->removePaths(m_fs->files());
     if (!m_fs->directories().isEmpty()) m_fs->removePaths(m_fs->directories());
+#ifdef Q_OS_WIN
+    m_treeWatcher->stop();
+#endif
     m_repoRoot.clear();
     m_gitDir.clear();
     m_pending = 0;
@@ -101,7 +117,10 @@ QStringList GitWatcher::currentWatchedDirs() const
     dirs.append(m_gitDir + QStringLiteral("/refs/remotes"));
     dirs.append(m_gitDir + QStringLiteral("/rebase-merge"));
     dirs.append(m_gitDir + QStringLiteral("/rebase-apply"));
+#ifndef Q_OS_WIN
+    // On non-Windows, fall back to watching the repo root (non-recursive).
     dirs.append(m_repoRoot);
+#endif
     QStringList existing;
     for (const QString &d : dirs)
         if (QFileInfo(d).isDir()) existing.append(d);
@@ -114,6 +133,10 @@ void GitWatcher::rewatch()
     const QStringList dirs = currentWatchedDirs();
     if (!files.isEmpty()) m_fs->addPaths(files);
     if (!dirs.isEmpty()) m_fs->addPaths(dirs);
+#ifdef Q_OS_WIN
+    if (!m_repoRoot.isEmpty())
+        m_treeWatcher->start(m_repoRoot);
+#endif
 }
 
 void GitWatcher::onFileChanged(const QString &path)

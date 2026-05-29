@@ -336,6 +336,8 @@ qt_add_executable(NotepadAI
 	git/GitTypes.cpp
 	git/GitWatcher.cpp
 	git/GitWatcher.h
+	git/RecursiveTreeWatcher.cpp
+	git/RecursiveTreeWatcher.h
 	git/ConflictEntry.h
 	git/GitOperationManager.cpp
 	git/GitOperationManager.h

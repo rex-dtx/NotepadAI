@@ -286,6 +286,16 @@ bool NotepadNextApplication::init()
         createNewWindow();
     }
     connect(editorManager, &EditorManager::editorCreated, window, &MainWindow::addEditor);
+    connect(editorManager, &EditorManager::editorCreated, this, [this](ScintillaNext *editor) {
+        connect(editor, &ScintillaNext::saved, this, [this, editor]() {
+            if (editor->isFile())
+                // getFilePath() returns native separators (backslashes on
+                // Windows); the consumer (GitController) prefix-matches against
+                // a QDir::cleanPath'd repo root (forward slashes), so normalize
+                // here or the startsWith() check never matches on Windows.
+                emit gitWorkingTreeDirtied(QDir::cleanPath(editor->getFilePath()));
+        });
+    });
 
     {
         previewTabManager = new PreviewTabManager(this, window->getDockedEditor(), this);
