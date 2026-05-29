@@ -646,6 +646,136 @@ void FolderAsWorkspaceDock::showGitTab()
     }
 }
 
+void FolderAsWorkspaceDock::revealAndSelectPath(const QString &absolutePath)
+{
+    const QString cleaned = QDir::cleanPath(absolutePath);
+    if (cleaned.isEmpty()) return;
+
+    const QString root = QDir::cleanPath(rootPath());
+    if (root.isEmpty()) return;
+
+#ifdef Q_OS_WIN
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    // Defensive: caller already verified membership, bail if the path isn't
+    // under this dock's root (cleanPath yields forward-slash form on all OSes).
+    const bool within = (cleaned.compare(root, cs) == 0) ||
+                        cleaned.startsWith(root + QLatin1Char('/'), cs);
+    if (!within) return;
+
+    // Make the Files tab visible so the tree is on screen. Guarded by
+    // m_programmaticToggle so the currentChanged emission doesn't dirty
+    // workspace state — this is a programmatic reveal, not a user tab switch.
+    if (ui->tabs->currentIndex() != 0) {
+        m_programmaticToggle = true;
+        ui->tabs->setCurrentIndex(0);
+        m_programmaticToggle = false;
+    }
+
+    // Build the ancestor chain top-down: [root, level1, ..., fileParent].
+    QStringList ancestorsDesc;
+    {
+        QString cur = QFileInfo(cleaned).absolutePath(); // file's parent dir (cleaned)
+        while (!cur.isEmpty()) {
+            ancestorsDesc.prepend(cur);
+            if (cur.compare(root, cs) == 0) break;
+            const QString parent = QFileInfo(cur).absolutePath();
+            if (parent == cur) break; // filesystem-root guard
+            cur = parent;
+        }
+    }
+
+    // Reveal-vs-restore collision handling:
+    //  - m_pendingExpansion is a QMultiHash; insert() is ADDITIVE, so reveal
+    //    entries coexist with any in-flight session-restore entries and both
+    //    drain in onDirectoryLoaded — neither clobbers the other.
+    //  - pendingCurrentItem has a single slot. A reveal is an explicit, later
+    //    user action and SHOULD supersede a stale restore's saved current item,
+    //    so we overwrite it (set below).
+    //  - We do NOT clear m_userVetoed wholesale (that would fight the user's own
+    //    collapses elsewhere in the tree). But a reveal is an explicit request
+    //    to show THIS path, so we drop any veto sitting on the reveal target's
+    //    own ancestor chain — otherwise ancestorVetoed() in onDirectoryLoaded
+    //    would block re-expansion of a previously-collapsed ancestor.
+    for (const QString &dir : ancestorsDesc) {
+        m_userVetoed.remove(dir);
+    }
+
+    // Drive the descent synchronously as far as the model has already loaded.
+    // model->index(dir) is valid once dir's PARENT has loaded (its row exists);
+    // expanding a not-yet-loaded dir kicks off its async child-load, after which
+    // directoryLoaded(dir) fires. We stop at the first dir whose parent hasn't
+    // finished loading. Track the deepest dir we actually expanded — it is, by
+    // construction, freshly loading (if it were already loaded, its child's
+    // index would be valid and the loop would have continued), so its
+    // directoryLoaded is guaranteed to fire and can drain a seeded tail.
+    int deepestExpandedIdx = -1;
+    for (int i = 0; i < ancestorsDesc.size(); ++i) {
+        const QString &dir = ancestorsDesc[i];
+        if (dir.compare(root, cs) == 0) continue; // root is the view's rootIndex, not a row
+        const QModelIndex idx = model->index(dir);
+        if (!idx.isValid() || !model->isDir(idx)) break;
+        m_programmaticToggle = true;
+        ui->treeView->setExpanded(idx, true);
+        m_programmaticToggle = false;
+        deepestExpandedIdx = i;
+    }
+
+    // If the whole chain was already loaded the leaf is reachable now — select it
+    // immediately and return WITHOUT seeding anything. This is the steady-state
+    // path for repeated reveals of an already-navigated subtree, so
+    // m_pendingExpansion stays empty across consecutive reveals (no accumulation).
+    const QModelIndex leafIdx = model->index(cleaned);
+    if (leafIdx.isValid()) {
+        // Cancel any still-pending select from an earlier reveal/restore whose
+        // parent hasn't loaded yet — this newer explicit reveal must win, and a
+        // stale pendingCurrentItem would otherwise steal the selection back when
+        // its directoryLoaded eventually fires.
+        setProperty("pendingCurrentItem", QVariant());
+        m_programmaticToggle = true;
+        ui->treeView->setCurrentIndex(leafIdx);
+        ui->treeView->scrollTo(leafIdx, QAbstractItemView::PositionAtCenter);
+        m_programmaticToggle = false;
+        ui->treeView->setFocus();
+        return;
+    }
+
+    // Leaf not reachable yet → seed only the UNDRAINED tail so onDirectoryLoaded
+    // cascades the rest of the expansion. The pair we seed first must have a
+    // parent whose directoryLoaded is still PENDING — otherwise it never re-fires
+    // and the entry lingers forever (that was the per-reveal stale-entry leak).
+    //  - deepestExpandedIdx >= 0: we just expanded ancestorsDesc[deepestExpandedIdx],
+    //    which is freshly loading (its child's index was invalid, which is why the
+    //    descent stopped) → seed from there down.
+    //  - deepestExpandedIdx == -1: even the first level under root wasn't loaded,
+    //    i.e. root's own directoryLoaded hasn't fired yet (reveal raced workspace
+    //    open) → seed from root (index 0); directoryLoaded(root) is still pending
+    //    and will start the cascade.
+    // Everything ABOVE seedStart was expanded against already-loaded dirs, so
+    // seeding those pairs would leak. We deliberately skip them.
+    const int seedStart = deepestExpandedIdx >= 0 ? deepestExpandedIdx : 0;
+    for (int i = seedStart; i + 1 < ancestorsDesc.size(); ++i) {
+        m_pendingExpansion.insert(ancestorsDesc[i], ancestorsDesc[i + 1]);
+    }
+
+    // Leaf select target. onDirectoryLoaded's existing section-2 pickup realises
+    // it once directoryLoaded fires for the leaf's parent (matches
+    // QFileInfo(pendingItem).absolutePath() == loadedKey). Overwrites any stale
+    // restore target (a reveal is an explicit, later user action).
+    setProperty("pendingCurrentItem", cleaned);
+
+    // Edge: if a seeded dir never finishes loading (deleted/inaccessible mid-load)
+    // its m_pendingExpansion entry + pendingCurrentItem linger until the next
+    // reveal/restore overwrites them or the dock is destroyed. Bounded to one
+    // chain and harmless — no timers, matching the restore path's behavior.
+
+    // Mirror "switch focus to the dock": focus the tree so the selection is
+    // visibly active. Raising/showing the dock is the caller's job.
+    ui->treeView->setFocus();
+}
+
 void FolderAsWorkspaceDock::applySavedTreeState(const WorkspaceStateSnapshot &snapshot)
 {
     // Pre-populate the parentDir → child map. directoryLoaded handler drains

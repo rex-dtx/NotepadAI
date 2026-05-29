@@ -1259,6 +1259,23 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
 #endif
 
+    // "Show in Workspace" / "Show in Folder" — cross-platform (NOT inside the
+    // Q_OS_WIN block). tabBarRightClicked switches to the clicked editor before
+    // the menu opens, so currentEditor() here IS the editor the menu was built
+    // for — same as actionShowInExplorer's handler. The resolvers below are the
+    // exact ones the gating in tabBarRightClicked uses, so gate == handler.
+    connect(ui->actionShowInWorkspace, &QAction::triggered, this, [this]() {
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        const QString filePath = editor->isFile() ? editor->getFilePath() : QString();
+        FolderAsWorkspaceDock *dock = resolveShowInWorkspaceDock(filePath, editor->isFile());
+        if (!dock) return;            // no silent fallback
+        dock->setVisible(true);
+        dock->raise();
+        setActiveWorkspace(dock);
+        dock->revealAndSelectPath(filePath);
+    });
+
     } // MainWindow::ctor.actionWiring
 
     {
@@ -2634,6 +2651,69 @@ QString MainWindow::currentWorkspaceRoot() const
     return dock ? dock->rootPath() : QString();
 }
 
+namespace {
+
+// Normalize a path for boundary-safe containment comparison: resolve symlinks
+// + ".." via canonicalFilePath when the path exists on disk, else fall back to
+// cleanPath (the path may legitimately not exist, e.g. a just-deleted file).
+// Both forms yield forward-slash separators on every OS.
+QString normalizeForContainment(const QString &p)
+{
+    if (p.isEmpty()) return QString();
+    const QString canonical = QFileInfo(p).canonicalFilePath();
+    return canonical.isEmpty() ? QDir::cleanPath(p) : canonical;
+}
+
+// True if `childNorm` is `rootNorm` itself or lives beneath it. Both inputs
+// must already be normalized (see normalizeForContainment). Case-insensitive
+// on Windows, case-sensitive elsewhere.
+bool pathContains(const QString &rootNorm, const QString &childNorm)
+{
+    if (rootNorm.isEmpty() || childNorm.isEmpty()) return false;
+#ifdef Q_OS_WIN
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    return (childNorm.compare(rootNorm, cs) == 0) ||
+           childNorm.startsWith(rootNorm + QLatin1Char('/'), cs);
+}
+
+} // namespace
+
+FolderAsWorkspaceDock *MainWindow::resolveShowInWorkspaceDock(const QString &filePath, bool isFile) const
+{
+    // An unsaved file (no path) has nothing to locate in a tree.
+    if (!isFile || filePath.isEmpty()) return nullptr;
+
+    const QString fileNorm = normalizeForContainment(filePath);
+    if (fileNorm.isEmpty()) return nullptr;
+
+    // Prefer the active workspace when it contains the file.
+    if (FolderAsWorkspaceDock *active = activeWorkspaceDock()) {
+        const QString root = active->rootPath();
+        if (!root.isEmpty() && pathContains(normalizeForContainment(root), fileNorm)) {
+            return active;
+        }
+    }
+
+    // Else pick the dock with the LONGEST matching root (most specific, so a
+    // nested workspace wins over its parent workspace).
+    FolderAsWorkspaceDock *best = nullptr;
+    int bestRootLen = -1;
+    const auto docks = findChildren<FolderAsWorkspaceDock *>();
+    for (FolderAsWorkspaceDock *d : docks) {
+        const QString root = d->rootPath();
+        if (root.isEmpty()) continue;
+        const QString rootNorm = normalizeForContainment(root);
+        if (pathContains(rootNorm, fileNorm) && rootNorm.length() > bestRootLen) {
+            best = d;
+            bestRootLen = rootNorm.length();
+        }
+    }
+    return best;
+}
+
 void MainWindow::reloadFile()
 {
     auto editor = currentEditor();
@@ -3924,9 +4004,14 @@ void MainWindow::tabBarRightClicked(ScintillaNext *editor)
         "",
 #ifdef Q_OS_WIN
         "ShowInExplorer",
-        "OpenTerminalInFolder",
-        "",
 #endif
+        // Directly below "Show in Explorer" per the feature request. Cross-platform,
+        // so outside the Q_OS_WIN block; on Windows "Open Terminal in Folder" follows.
+        "ShowInWorkspace",
+#ifdef Q_OS_WIN
+        "OpenTerminalInFolder",
+#endif
+        "",
         "CopyFullPath",
         "CopyFileName",
         "CopyFileDirectory"
@@ -3936,6 +4021,15 @@ void MainWindow::tabBarRightClicked(ScintillaNext *editor)
     ApplicationSettings *settings = app->getSettings();
     if (settings->contains("Gui/TabBarContextMenu")) {
         actionNames = settings->value("Gui/TabBarContextMenu").toStringList();
+    }
+
+    // Gate the workspace-reveal action using the SAME resolver the triggered
+    // handler uses (gate == handler). `editor` is the clicked tab's editor; the
+    // switchToEditor above already made it the currentEditor() the handler reads.
+    {
+        const QString filePath = editor->isFile() ? editor->getFilePath() : QString();
+        const bool isFile = editor->isFile();
+        ui->actionShowInWorkspace->setEnabled(resolveShowInWorkspaceDock(filePath, isFile) != nullptr);
     }
 
     auto *menu = buildMenu(actionNames);

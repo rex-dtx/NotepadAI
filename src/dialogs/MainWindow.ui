@@ -1288,6 +1288,18 @@
     <string>Show in Explorer</string>
    </property>
   </action>
+  <action name="actionShowInWorkspace">
+   <property name="icon">
+    <iconset resource="../resources.qrc">
+     <normaloff>:/icons/folder_go.png</normaloff>:/icons/folder_go.png</iconset>
+   </property>
+   <property name="text">
+    <string>Show in Workspace</string>
+   </property>
+   <property name="toolTip">
+    <string>Show in Workspace</string>
+   </property>
+  </action>
   <action name="actionOpenTerminalHere">
    <property name="icon">
     <iconset resource="../resources.qrc">

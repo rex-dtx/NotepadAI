@@ -87,6 +87,16 @@ public:
     // (e.g. clicking a submodule in another workspace's Git status tree).
     void showGitTab();
 
+    // Reveal an absolute path in the file tree (JetBrains "Select in Project
+    // Tree"): switch the inner tab to Files, expand the ancestor chain from the
+    // workspace root down to the file's parent, then select + scroll to the
+    // leaf. Reuses the async-restore plumbing (m_pendingExpansion +
+    // pendingCurrentItem + onDirectoryLoaded) so it works even while the model
+    // is still lazily loading directories. Caller is responsible for raising /
+    // showing the dock first; this method focuses the tree so the selection is
+    // active. No-op if the path is empty or not under this dock's root.
+    void revealAndSelectPath(const QString &absolutePath);
+
     // Apply a saved snapshot just BEFORE setRootPath() fires the model load.
     // Caller (MainWindow) must call this between dock construction and setRootPath,
     // so the directoryLoaded handler has the pending-expansion map populated

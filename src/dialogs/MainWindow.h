@@ -213,6 +213,15 @@ private:
     FolderAsWorkspaceDock *activeWorkspaceDock() const;
     QString currentWorkspaceRoot() const;
 
+    // Resolve which open workspace dock should host a "Show in Workspace"
+    // reveal of the given file. Walks all open workspace docks (findChildren)
+    // with boundary-safe, normalized containment and picks the LONGEST matching
+    // root (most specific, for nested workspaces). Prefers the active dock if it
+    // contains the file; never resolves for an unsaved file (nothing to locate
+    // in a tree). Returns nullptr → action disabled. Used by both the tab-menu
+    // gating and the triggered handler so the gate and the action agree.
+    FolderAsWorkspaceDock *resolveShowInWorkspaceDock(const QString &filePath, bool isFile) const;
+
     // Centralized active-workspace setter: assigns m_activeWorkspace, syncs
     // CrashContext, and emits activeWorkspaceChanged(new, old). All five sites
     // that previously assigned m_activeWorkspace directly route through this
