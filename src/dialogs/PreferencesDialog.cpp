@@ -130,6 +130,41 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
     MapSettingToCheckBox(ui->checkBoxShowLineNumbers, &ApplicationSettings::showLineNumbers, &ApplicationSettings::setShowLineNumbers, &ApplicationSettings::showLineNumbersChanged);
     MapSettingToCheckBox(ui->checkBoxFontHinting, &ApplicationSettings::fontHinting, &ApplicationSettings::setFontHinting, &ApplicationSettings::fontHintingChanged);
 
+    // --- Chat Font section -----------------------------------------------------
+    // Mirrors the Default Font wiring above. "Use default font" (checked by
+    // default) makes the AI chat follow the editor's Default Font; unchecking it
+    // enables a separate family/size/sharpen for the chat only.
+    MapSettingToCheckBox(ui->checkBoxChatUseDefaultFont, &ApplicationSettings::chatFontUseDefault, &ApplicationSettings::setChatFontUseDefault, &ApplicationSettings::chatFontUseDefaultChanged);
+
+    ui->fcbChatFont->setCurrentFont(QFont(settings->chatFontFamily()));
+    connect(ui->fcbChatFont, &QFontComboBox::currentFontChanged, this, [=](const QFont &f) {
+        settings->setChatFontFamily(f.family());
+    });
+    connect(settings, &ApplicationSettings::chatFontFamilyChanged, this, [=](QString name) {
+        ui->fcbChatFont->setCurrentFont(QFont(name));
+    });
+
+    ui->spbChatFontSize->setValue(settings->chatFontSizePt());
+    connect(ui->spbChatFontSize, QOverload<int>::of(&QSpinBox::valueChanged), settings, &ApplicationSettings::setChatFontSizePt);
+    connect(settings, &ApplicationSettings::chatFontSizePtChanged, ui->spbChatFontSize, &QSpinBox::setValue);
+
+    MapSettingToCheckBox(ui->checkBoxChatFontHinting, &ApplicationSettings::chatFontSharpen, &ApplicationSettings::setChatFontSharpen, &ApplicationSettings::chatFontSharpenChanged);
+
+    // The 3 custom controls (+ their labels) are only meaningful when NOT
+    // following the editor font. Keep them in sync from both sides (the checkbox
+    // itself and any external settings change) so the enabled state never drifts.
+    auto syncChatFontEnabled = [=]() {
+        const bool custom = !ui->checkBoxChatUseDefaultFont->isChecked();
+        ui->fcbChatFont->setEnabled(custom);
+        ui->spbChatFontSize->setEnabled(custom);
+        ui->checkBoxChatFontHinting->setEnabled(custom);
+        ui->labelChatFont->setEnabled(custom);
+        ui->labelChatFontSize->setEnabled(custom);
+    };
+    syncChatFontEnabled();
+    connect(ui->checkBoxChatUseDefaultFont, &QCheckBox::toggled, this, syncChatFontEnabled);
+    connect(settings, &ApplicationSettings::chatFontUseDefaultChanged, this, syncChatFontEnabled);
+
 
     QButtonGroup *buttonGroup = new QButtonGroup(this);
     buttonGroup->addButton(ui->radioFollowCurrentDirectory, ApplicationSettings::FollowCurrentDocument);

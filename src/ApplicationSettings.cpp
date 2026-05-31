@@ -18,6 +18,7 @@
 
 #include "ApplicationSettings.h"
 
+#include <QApplication>
 #include <QFont>
 #include <QFontDatabase>
 #include <QStandardPaths>
@@ -84,6 +85,20 @@ CREATE_SETTING(Editor, AdditionalWordChars, additionalWordChars, QString, QStrin
 CREATE_SETTING(Editor, DefaultEOLMode, defaultEOLMode, QString, QStringLiteral(""))
 CREATE_SETTING(Editor, URLHighlighting, urlHighlighting, bool, true)
 CREATE_SETTING(Editor, ShowLineNumbers, showLineNumbers, bool, true)
+
+// AI chat-view font. UseDefault=true follows the editor's Default Font (current
+// behavior); when false the chat uses its own Family/SizePt/Sharpen. The
+// Family/SizePt fallbacks are the application's default UI font (what the picker
+// shows the first time the user unchecks "Use default font") — NOT the editor
+// font. See AcpSessionView::chatFont().
+CREATE_SETTING(ChatFont, ChatFontUseDefault, chatFontUseDefault, bool, true)
+CREATE_SETTING(ChatFont, ChatFontFamily, chatFontFamily, QString, []() {
+    return QApplication::font().family();
+})
+CREATE_SETTING(ChatFont, ChatFontSizePt, chatFontSizePt, int, []() {
+    return QApplication::font().pointSize();
+})
+CREATE_SETTING(ChatFont, ChatFontSharpen, chatFontSharpen, bool, true)
 
 static QString defaultShellCommand()
 {

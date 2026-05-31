@@ -133,6 +133,16 @@ public:
     DEFINE_SETTING(URLHighlighting, urlHighlighting, bool)
     DEFINE_SETTING(ShowLineNumbers, showLineNumbers, bool)
 
+    // AI chat-view font. UseDefault=true (the default) means the chat follows
+    // the editor's Default Font (FontName/FontSize/FontHinting) and tracks it
+    // live — the historical behavior. When false, the chat uses its own
+    // Family/SizePt/Sharpen instead. Plumbed into AcpSessionView::chatFont();
+    // Sharpen maps to the same QFont hinting policy as the editor's FontHinting.
+    DEFINE_SETTING(ChatFontUseDefault, chatFontUseDefault, bool);
+    DEFINE_SETTING(ChatFontFamily, chatFontFamily, QString);
+    DEFINE_SETTING(ChatFontSizePt, chatFontSizePt, int);
+    DEFINE_SETTING(ChatFontSharpen, chatFontSharpen, bool);
+
     DEFINE_SETTING(ShellCommand, shellCommand, QString)
     DEFINE_SETTING(TerminalFont, terminalFont, QString)
 

@@ -627,15 +627,26 @@ void AcpSessionView::buildUi()
     connect(m_effortCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &AcpSessionView::onEffortComboChanged);
 
-    // Apply the Default Font preference to transcript + input, and follow
-    // live preference edits. Chrome (banner, selectors, buttons) keeps the
-    // system font.
+    // Apply the chat font preference to transcript + input, and follow live
+    // preference edits. The chat font may be independent of the editor font:
+    // when "Use default font" is on it tracks the editor's Default Font (the
+    // first three signals); when off it uses the ChatFont/* settings (the last
+    // four). Connecting all of them keeps the view live either way. Chrome
+    // (banner, selectors, buttons) keeps the system font.
     if (auto *settings = appSettings()) {
         connect(settings, &ApplicationSettings::fontNameChanged,
                 this, &AcpSessionView::applyChatFont);
         connect(settings, &ApplicationSettings::fontSizeChanged,
                 this, &AcpSessionView::applyChatFont);
         connect(settings, &ApplicationSettings::fontHintingChanged,
+                this, &AcpSessionView::applyChatFont);
+        connect(settings, &ApplicationSettings::chatFontUseDefaultChanged,
+                this, &AcpSessionView::applyChatFont);
+        connect(settings, &ApplicationSettings::chatFontFamilyChanged,
+                this, &AcpSessionView::applyChatFont);
+        connect(settings, &ApplicationSettings::chatFontSizePtChanged,
+                this, &AcpSessionView::applyChatFont);
+        connect(settings, &ApplicationSettings::chatFontSharpenChanged,
                 this, &AcpSessionView::applyChatFont);
     }
     applyChatFont();
@@ -1873,13 +1884,25 @@ void AcpSessionView::rebuildAttachIcon()
 QFont AcpSessionView::chatFont() const
 {
     auto *settings = appSettings();
-    QFont f = settings ? QFont(settings->fontName(), settings->fontSize())
-                       : QFont();
-    // Mirror the editor's glyph-hinting policy: these are plain Qt widgets, so
-    // Scintilla's platform-layer flag doesn't reach them — set it on the QFont
-    // directly. Without it, thin fonts (e.g. Lilex) look blurry here while the
-    // Scintilla editor looks sharp. See EditorManager / PlatQt for the editor side.
-    f.setHintingPreference(settings && !settings->fontHinting()
+    if (!settings) return QFont();
+
+    // Two modes (see ApplicationSettings ChatFont group). The hinting policy is
+    // set on the QFont directly in BOTH branches: these are plain Qt widgets, so
+    // Scintilla's platform-layer flag doesn't reach them — without it, thin fonts
+    // (e.g. Lilex) look blurry here while the Scintilla editor looks sharp. See
+    // EditorManager / PlatQt for the editor side.
+    if (settings->chatFontUseDefault()) {
+        // Default mode: follow the editor's Default Font (historical behavior).
+        QFont f(settings->fontName(), settings->fontSize());
+        f.setHintingPreference(!settings->fontHinting()
+            ? QFont::PreferNoHinting
+            : QFont::PreferFullHinting);
+        return f;
+    }
+
+    // Custom mode: a chat-specific family/size/sharpen, independent of the editor.
+    QFont f(settings->chatFontFamily(), settings->chatFontSizePt());
+    f.setHintingPreference(!settings->chatFontSharpen()
         ? QFont::PreferNoHinting
         : QFont::PreferFullHinting);
     return f;

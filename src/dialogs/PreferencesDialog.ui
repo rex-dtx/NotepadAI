@@ -229,6 +229,65 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="groupBoxChatFont">
+         <property name="title">
+          <string>Chat Font</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutChatFont">
+          <item row="0" column="0" colspan="2">
+           <widget class="QCheckBox" name="checkBoxChatUseDefaultFont">
+            <property name="toolTip">
+             <string>When enabled, the AI chat uses the editor's Default Font. Disable to choose a separate font for the chat.</string>
+            </property>
+            <property name="text">
+             <string>Use default font</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelChatFont">
+            <property name="text">
+             <string>Font</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QFontComboBox" name="fcbChatFont"/>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelChatFontSize">
+            <property name="text">
+             <string>Font Size</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QSpinBox" name="spbChatFontSize">
+            <property name="suffix">
+             <string>pt</string>
+            </property>
+            <property name="minimum">
+             <number>2</number>
+            </property>
+            <property name="maximum">
+             <number>48</number>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0" colspan="2">
+           <widget class="QCheckBox" name="checkBoxChatFontHinting">
+            <property name="toolTip">
+             <string>Snap glyphs to the pixel grid for sharper text. Disable to keep the font's exact outline. Affects the AI chat.</string>
+            </property>
+            <property name="text">
+             <string>Sharpen fonts (hinting)</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="groupBox_2">
          <property name="title">
           <string>Default Directory</string>
