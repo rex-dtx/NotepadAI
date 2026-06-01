@@ -696,6 +696,9 @@ bool ScintillaNext::rename(const QString &newFilePath)
 
 ScintillaNext::FileStateChange ScintillaNext::checkFileForStateChange()
 {
+    // Remote path doesn't exist locally — QFileInfo would wrongly flip bufferType to FileMissing.
+    if (isRemote()) return FileStateChange::NoChange;
+
     if (bufferType == BufferType::New) {
         return FileStateChange::NoChange;
     }
