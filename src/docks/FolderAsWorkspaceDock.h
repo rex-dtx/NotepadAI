@@ -322,6 +322,14 @@ private:
     // itself receives only the POSIX path for SFTP operations.
     QString m_sshWorkspaceUri;
 
+    // Convert a POSIX path from the remote model to an ssh:// URI when this dock
+    // is an SSH workspace, so open/preview consumers receive the correct identity.
+    // For local workspaces (m_sshWorkspaceUri empty) returns posixPath unchanged.
+    // Index-based overload for click handlers; path-based overload for git-tab
+    // paths that arrive as pre-built absolute strings (onGitTabFileActivated).
+    QString resolvedFilePath(const QModelIndex &proxyIdx) const;
+    QString resolvedPath(const QString &posixPath) const;
+
     void ensureGitTab();
     GitDiffViewController *ensureGitDiffViewController();
     GitCommitView         *ensureGitCommitView();

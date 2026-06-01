@@ -98,13 +98,13 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(QWidget *parent) :
 
     connect(ui->treeView, &QTreeView::doubleClicked, this, [=](const QModelIndex &index) {
         if (!proxy->isDir(index)) {
-            emit fileDoubleClicked(proxy->filePath(index));
+            emit fileDoubleClicked(resolvedFilePath(index));
         }
     });
 
     connect(ui->treeView, &QTreeView::clicked, this, [=](const QModelIndex &index) {
         if (!proxy->isDir(index)) {
-            emit fileClicked(proxy->filePath(index));
+            emit fileClicked(resolvedFilePath(index));
         }
     });
 
@@ -168,13 +168,13 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget
 
     connect(ui->treeView, &QTreeView::doubleClicked, this, [=](const QModelIndex &index) {
         if (!proxy->isDir(index)) {
-            emit fileDoubleClicked(proxy->filePath(index));
+            emit fileDoubleClicked(resolvedFilePath(index));
         }
     });
 
     connect(ui->treeView, &QTreeView::clicked, this, [=](const QModelIndex &index) {
         if (!proxy->isDir(index)) {
-            emit fileClicked(proxy->filePath(index));
+            emit fileClicked(resolvedFilePath(index));
         }
     });
 
@@ -714,6 +714,21 @@ void FolderAsWorkspaceDock::setRootPath(const QString &dir)
     maybeScheduleGitTabForDecoration();
 }
 
+QString FolderAsWorkspaceDock::resolvedPath(const QString &posixPath) const
+{
+    if (!m_sshWorkspaceUri.isEmpty() && !posixPath.isEmpty()) {
+        const remote::SshUri uri = remote::parseSshUri(m_sshWorkspaceUri);
+        if (uri.valid)
+            return remote::formatSshUri(uri.profileId, posixPath);
+    }
+    return posixPath;
+}
+
+QString FolderAsWorkspaceDock::resolvedFilePath(const QModelIndex &proxyIdx) const
+{
+    return resolvedPath(proxy->filePath(proxyIdx));
+}
+
 QString FolderAsWorkspaceDock::rootPath() const
 {
     // SSH workspaces store their identity as an ssh:// URI (D5a). Return it for
@@ -1011,10 +1026,10 @@ void FolderAsWorkspaceDock::onGitTabFileActivated(const QString &absPath)
     // before the double-click), defer the editor open so it activates AFTER
     // the diff tab. Otherwise fire it now.
     if (m_diffRenderPending) {
-        m_pendingEditorOpenPath = absPath;
+        m_pendingEditorOpenPath = resolvedPath(absPath);
         return;
     }
-    emit fileDoubleClicked(absPath);
+    emit fileDoubleClicked(resolvedPath(absPath));
 }
 
 void FolderAsWorkspaceDock::onGitDiffPreviewRendered(ScintillaNext *editor)

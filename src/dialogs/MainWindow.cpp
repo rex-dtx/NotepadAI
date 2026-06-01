@@ -2490,16 +2490,30 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
         if (!isDir) {
             auto *mgr = this->app->getPreviewTabManager();
             if (mgr && mgr->canPreview(absPath)) {
+                // For SSH workspaces absPath is a POSIX path — QFileInfo::size()
+                // returns 0 (no local file). Skip the 10 MB decoded-text guard and
+                // route through previewFile(uri) which has the proper remote branch
+                // (createEditorFromRemote). For local workspaces the existing size
+                // guard and openPreviewFromFile path are unchanged.
+                const bool isSshWorkspace = remote::isSshUri(wsRoot);
                 // The 10 MB cap only applies to the decoded-text route. File-path
                 // types (CSV/TSV) mmap the file and enforce their own multi-GB cap
                 // in loadFromFile — don't suppress their Preview entry here.
                 QFileInfo fi(absPath);
-                if (mgr->previewWantsFilePath(absPath) || fi.size() <= 10 * 1024 * 1024) {
+                if (isSshWorkspace || mgr->previewWantsFilePath(absPath) || fi.size() <= 10 * 1024 * 1024) {
                     auto *previewAction = new QAction(tr("Preview"), menu);
-                    connect(previewAction, &QAction::triggered, this, [this, absPath]() {
-                        auto *mgr = this->app->getPreviewTabManager();
-                        if (mgr) mgr->openPreviewFromFile(absPath);
-                    });
+                    if (isSshWorkspace) {
+                        const QString uri = remote::formatSshUri(
+                            remote::parseSshUri(wsRoot).profileId, absPath);
+                        connect(previewAction, &QAction::triggered, this, [this, uri]() {
+                            previewFile(uri);
+                        });
+                    } else {
+                        connect(previewAction, &QAction::triggered, this, [this, absPath]() {
+                            auto *mgr = this->app->getPreviewTabManager();
+                            if (mgr) mgr->openPreviewFromFile(absPath);
+                        });
+                    }
                     menu->addAction(previewAction);
                     menu->addSeparator();
                 }
@@ -2516,8 +2530,13 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
         auto *copyRelPath = new QAction(tr("Copy Relative Path"), menu);
         connect(copyRelPath, &QAction::triggered, this, [absPath, wsRoot]() {
             QString rel = absPath;
-            if (!wsRoot.isEmpty() && rel.startsWith(wsRoot)) {
-                rel = rel.mid(wsRoot.length());
+            // For SSH workspaces wsRoot is an ssh:// URI; strip the POSIX prefix
+            // from the POSIX absPath instead of the URI.
+            const QString prefix = remote::isSshUri(wsRoot)
+                ? remote::parseSshUri(wsRoot).remotePath
+                : wsRoot;
+            if (!prefix.isEmpty() && rel.startsWith(prefix)) {
+                rel = rel.mid(prefix.length());
                 if (rel.startsWith(QLatin1Char('/')) || rel.startsWith(QLatin1Char('\\')))
                     rel = rel.mid(1);
             }
@@ -2762,9 +2781,14 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
             connect(sendToAi, &QAction::triggered, this, [this, absPath, isDir, wsRoot]() {
                 AiAgentDock *dock = activeAiDock();
                 if (!dock) return;
+                // For SSH workspaces wsRoot is an ssh:// URI; strip the POSIX
+                // prefix from the POSIX absPath to get the workspace-relative path.
+                const QString prefix = remote::isSshUri(wsRoot)
+                    ? remote::parseSshUri(wsRoot).remotePath
+                    : wsRoot;
                 QString relPath = absPath;
-                if (!wsRoot.isEmpty() && relPath.startsWith(wsRoot)) {
-                    relPath = relPath.mid(wsRoot.length());
+                if (!prefix.isEmpty() && relPath.startsWith(prefix)) {
+                    relPath = relPath.mid(prefix.length());
                     if (relPath.startsWith(QLatin1Char('/')) || relPath.startsWith(QLatin1Char('\\')))
                         relPath = relPath.mid(1);
                 }
