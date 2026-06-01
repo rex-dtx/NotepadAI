@@ -98,10 +98,13 @@
 #include "remote/IFileSystemBackend.h"
 #include "remote/LocalExecutionContext.h"
 #include "remote/RemoteExecutionContext.h"
+#include "remote/RemoteFsBackend.h"
+#include "remote/SshConnection.h"
 #include "remote/SshProfile.h"
 #include "remote/SshProfileRegistry.h"
 #include "SshConnectionManagerDialog.h"
 #include "SshConnectDialog.h"
+#include "SshRemoteFolderPickerDialog.h"
 
 #include "FindReplaceDialog.h"
 #include "MacroRunDialog.h"
@@ -421,18 +424,73 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
         if (!hasRecents) return;
 
-        // Static head of the submenu = "Open New Folder..." + separator (2 actions).
+        // Static head of the submenu = "Open Remote Folder via SSH..." + separator +
+        // "Open New Folder..." + separator (4 actions).
         // Strip any previously-built recent entries before rebuilding.
-        while (ui->menuOpenFolderAsWorkspace->actions().size() > 2) {
+        while (ui->menuOpenFolderAsWorkspace->actions().size() > 4) {
             delete ui->menuOpenFolderAsWorkspace->actions().takeLast();
         }
 
         int i = 0;
         for (const QString &path : recents->fileList()) {
             ++i;
+            const QString prefix = QString("%1%2: ").arg(i < 10 ? "&" : "").arg(i);
+
+            if (remote::isSshUri(path)) {
+                // SSH recent entry: badge + "user@host:path" + live status read
+                // at render time from the execution context (NOT persisted).
+                const remote::SshUri uri = remote::parseSshUri(path);
+                QString display = path; // fallback if profile is gone
+                if (uri.valid) {
+                    remote::SshProfileRegistry *profiles =
+                        app ? app->getSshProfileRegistry() : nullptr;
+                    if (profiles && profiles->contains(uri.profileId)) {
+                        const remote::SshProfile p = profiles->profile(uri.profileId);
+                        const QString userHost = p.username.isEmpty()
+                            ? p.host
+                            : (p.username + QLatin1Char('@') + p.host);
+                        display = userHost + QLatin1Char(':') + uri.remotePath;
+                    }
+                }
+
+                // Live status from the context state — never a stale persisted value.
+                QString status = tr("disconnected");
+                remote::ExecutionContextRegistry *contexts =
+                    app ? app->getExecutionContextRegistry() : nullptr;
+                if (contexts && uri.valid) {
+                    if (auto *ctx = contexts->remoteContext(uri.profileId)) {
+                        switch (ctx->state()) {
+                        case remote::ExecutionContext::State::Connected:
+                            status = tr("connected"); break;
+                        case remote::ExecutionContext::State::Connecting:
+                            status = tr("connecting"); break;
+                        case remote::ExecutionContext::State::Reconnecting:
+                            status = tr("reconnecting"); break;
+                        case remote::ExecutionContext::State::Failed:
+                        case remote::ExecutionContext::State::Disconnected:
+                            status = tr("disconnected"); break;
+                        }
+                    }
+                }
+
+                QAction *action = new QAction(
+                    QString("%1%2  (%3)").arg(prefix, display, status),
+                    ui->menuOpenFolderAsWorkspace);
+                // SSH badge — tinted to the palette so it follows light/dark theme.
+                action->setIcon(makeTintedIcon(QStringLiteral(":/icons/ssh-badge.svg"),
+                                               palette().color(QPalette::ButtonText)));
+                action->setData(path);
+                connect(action, &QAction::triggered, this, [this, path]() {
+                    openFolderAsWorkspacePath(path);
+                });
+                ui->menuOpenFolderAsWorkspace->addAction(action);
+                continue;
+            }
+
+            // Local entry — rendered exactly as before (no badge, just the path).
             const QString native = QDir::toNativeSeparators(path);
             QAction *action = new QAction(
-                QString("%1%2: %3").arg(i < 10 ? "&" : "").arg(i).arg(native),
+                QString("%1%2").arg(prefix, native),
                 ui->menuOpenFolderAsWorkspace);
             action->setData(path);
             connect(action, &QAction::triggered, this, [this, path]() {
@@ -2272,20 +2330,25 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
 {
     if (dir.isEmpty()) return;
 
+    const bool isSsh = remote::isSshUri(dir);
+
     // Single chokepoint for every workspace entry — CLI --workspace, recent
     // list, session restore, dialog, gitOpenSubmoduleRequested. Resolving here
     // means a relative input like "." can never leak into the recent list, the
     // dock title, the persisted Workspaces list, or QFileSystemModel's root.
-    const QString resolved = QDir(dir).absolutePath();
+    // SSH URIs are already absolute and must NOT be mangled by QDir.
+    const QString resolved = isSsh ? dir : QDir(dir).absolutePath();
 
     app->getRecentWorkspacesListManager()->addFile(resolved);
 
     // If this workspace is already open in some dock, just focus it rather
     // than spawning a duplicate tab.
-    const QString cleaned = QDir::cleanPath(resolved);
+    const QString cleaned = isSsh ? resolved : QDir::cleanPath(resolved);
     const auto existing = findChildren<FolderAsWorkspaceDock *>();
     for (FolderAsWorkspaceDock *d : existing) {
-        if (QDir::cleanPath(d->rootPath()) == cleaned) {
+        const QString dRoot = d->rootPath();
+        const QString dCleaned = remote::isSshUri(dRoot) ? dRoot : QDir::cleanPath(dRoot);
+        if (dCleaned == cleaned) {
             d->setVisible(true);
             d->raise();
             setActiveWorkspace(d);
@@ -2311,14 +2374,6 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
     // that bakes setRootPath in) so applySavedTreeState lands between them.
     auto *dock = new FolderAsWorkspaceDock(this);
     static int extraIdx = 0;
-    // Counter-based name is stable across sessions for the steady-state spawn order:
-    // restoreOpenWorkspaces walks the saved path list in order, so docks take
-    // FolderAsWorkspaceDock_extra_1..N matching saved Workspaces[0..N-1]. Known
-    // limitation: closing a non-last workspace mid-session then restarting shifts the
-    // counter relative to the saved layout, which causes the remaining workspaces' tab
-    // positions to drift. The active workspace is still raised correctly because
-    // raiseSavedActiveWorkspace() re-raises by path after restoreWindowState. If this
-    // drift ever becomes a real user complaint, switch to qHash(rootPath)-based names.
     dock->setObjectName(QStringLiteral("FolderAsWorkspaceDock_extra_%1").arg(++extraIdx));
     dock->setAttribute(Qt::WA_DeleteOnClose, true);
 
@@ -2334,8 +2389,59 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
         tabifyDockWidget(anchor, dock);
     }
 
-    dock->applySavedTreeState(savedState);
-    dock->setRootPath(resolved);
+    if (isSsh) {
+        // --- SSH workspace: wire the remote backend and set the URI identity ---
+        const remote::SshUri uri = remote::parseSshUri(resolved);
+        dock->setSshWorkspaceUri(resolved);
+
+        remote::ExecutionContextRegistry *contexts =
+            app ? app->getExecutionContextRegistry() : nullptr;
+        remote::SshProfileRegistry *profiles =
+            app ? app->getSshProfileRegistry() : nullptr;
+
+        // Derive the "SSH: user@host" title from the profile.
+        QString userHost;
+        if (profiles && uri.valid && profiles->contains(uri.profileId)) {
+            const remote::SshProfile p = profiles->profile(uri.profileId);
+            userHost = p.username.isEmpty() ? p.host
+                                            : (p.username + QLatin1Char('@') + p.host);
+        }
+        dock->setWindowTitle(userHost.isEmpty() ? QStringLiteral("SSH")
+                                                : (QStringLiteral("SSH: ") + userHost));
+
+        // Pre-populate the pending-expansion map BEFORE the model loads (the
+        // backend swap + setRootPath inside wireSshDockToContext fire the first
+        // directoryLoaded). Same ordering contract as the local path.
+        dock->applySavedTreeState(savedState);
+
+        // Wire the reconnect signal so clicking Reconnect re-runs the connect.
+        // wireSshDockToContext is idempotent (guarded); reconnectSshWorkspace
+        // re-triggers connectToHost on the existing (dropped) connection —
+        // registry->connect() returns an existing context without re-dialing.
+        connect(dock, &FolderAsWorkspaceDock::reconnectRequested, this,
+                &MainWindow::reconnectSshWorkspace);
+
+        // Wire the dock to its context if one already exists (mid-session open
+        // after the connect dialog succeeded). wireSshDockToContext drives the
+        // current state immediately — Connected → useRemoteBackend + setRootPath,
+        // Connecting → spinner. If no context exists yet (startup restore), the
+        // caller (restoreOpenWorkspaces) creates + wires it after registry->connect;
+        // until then show the connecting placeholder so the dock isn't blank.
+        remote::ExecutionContext *ctx = nullptr;
+        if (contexts && uri.valid) {
+            ctx = contexts->remoteContext(uri.profileId);
+        }
+        if (ctx) {
+            wireSshDockToContext(dock, ctx);
+        } else {
+            dock->showConnectingState(userHost);
+        }
+    } else {
+        // --- Local workspace: existing path ---
+        dock->applySavedTreeState(savedState);
+        dock->setRootPath(resolved);
+    }
+
     dock->setVisible(true);
     dock->raise();
     setActiveWorkspace(dock);
@@ -2820,6 +2926,46 @@ void MainWindow::restoreOpenWorkspaces()
 
     for (const QString &path : savedWorkspaces) {
         if (path.isEmpty()) continue;
+
+        if (remote::isSshUri(path)) {
+            // --- SSH workspace: 4-step non-blocking auto-reconnect (D10) ---
+            // (1) Create the dock immediately in Connecting state so layout
+            //     restores correctly (the dock exists before the connection is up).
+            // (2) Parse the URI → look up Ssh/Profiles by profileId.
+            // (3) registry->connect(profileId) (worker thread; secret fetch on
+            //     worker; UI never blocks).
+            // (4) The dock subscribes to stateChanged: Connecting → spinner;
+            //     Connected → populate tree; Failed → inline Reconnect (NO modal).
+            const remote::SshUri uri = remote::parseSshUri(path);
+            if (!uri.valid) continue;
+
+            remote::SshProfileRegistry *profiles =
+                app ? app->getSshProfileRegistry() : nullptr;
+            remote::ExecutionContextRegistry *contexts =
+                app ? app->getExecutionContextRegistry() : nullptr;
+            if (!profiles || !contexts) continue;
+            if (!profiles->contains(uri.profileId)) continue;
+
+            // openFolderAsWorkspacePath handles the dock creation, dedup, and
+            // SSH-specific wiring (setSshWorkspaceUri, title, connecting state).
+            openFolderAsWorkspacePath(path);
+
+            // Now find the dock we just created and wire it to the context.
+            FolderAsWorkspaceDock *dock = nullptr;
+            for (FolderAsWorkspaceDock *d : findChildren<FolderAsWorkspaceDock *>()) {
+                if (d->sshWorkspaceUri() == path) { dock = d; break; }
+            }
+            if (!dock) continue;
+
+            // (3) Start the background connect (worker thread; UI never blocks).
+            auto *ctx = contexts->connect(uri.profileId);
+            if (!ctx) continue;
+
+            // (4) Wire the dock to the context's stateChanged for the lifecycle.
+            wireSshDockToContext(dock, ctx);
+            continue;
+        }
+
         // Defense in depth against stale "." or relative entries written by
         // older builds. openFolderAsWorkspacePath would resolve them to the
         // current cwd and silently open it as a workspace — which is exactly
@@ -2845,9 +2991,12 @@ void MainWindow::raiseSavedActiveWorkspace()
     const QString activePath = settings->value("FolderAsWorkspace/ActiveWorkspace").toString();
     if (activePath.isEmpty()) return;
 
-    const QString cleanedActive = QDir::cleanPath(activePath);
+    const bool isSsh = remote::isSshUri(activePath);
+    const QString cleanedActive = isSsh ? activePath : QDir::cleanPath(activePath);
     for (FolderAsWorkspaceDock *d : findChildren<FolderAsWorkspaceDock *>()) {
-        if (QDir::cleanPath(d->rootPath()) == cleanedActive) {
+        const QString dRoot = d->rootPath();
+        const QString dCleaned = remote::isSshUri(dRoot) ? dRoot : QDir::cleanPath(dRoot);
+        if (dCleaned == cleanedActive) {
             setActiveWorkspace(d);
             d->setVisible(true);
             d->raise();
@@ -4719,6 +4868,218 @@ void MainWindow::setupSshMenu()
     // these, but wire explicitly to be robust to ordering).
     wireActionForCrashContext(ui->actionSshConnectionManager);
     wireActionForCrashContext(ui->actionOpenRemoteTerminal);
+
+    // "Open Remote Folder via SSH…" — the first item of the Open Folder as
+    // Workspace submenu (D10). Profile pick → staged connect → folder picker →
+    // open the remote workspace dock.
+    connect(ui->actionOpenRemoteFolderSsh, &QAction::triggered, this,
+            &MainWindow::openRemoteFolderViaSshFlow);
+    wireActionForCrashContext(ui->actionOpenRemoteFolderSsh);
+}
+
+void MainWindow::openRemoteFolderViaSshFlow()
+{
+    remote::SshProfileRegistry *profiles = app ? app->getSshProfileRegistry() : nullptr;
+    remote::ExecutionContextRegistry *contexts =
+        app ? app->getExecutionContextRegistry() : nullptr;
+    if (!profiles || !contexts) return;
+
+    // Step 1: profile selection (reuse the P1 CRUD/connection manager dialog).
+    // Stack-allocated modal, mirroring the actionSshConnectionManager handler.
+    SshConnectionManagerDialog dlg(profiles,
+                                   app ? app->getCredentialStore() : nullptr, this);
+
+    // The committed ssh:// URI to open once the manager dialog closes. Opening
+    // the workspace AFTER dlg.exec() returns keeps the dialog stack unwound.
+    QString committedUri;
+
+    connect(&dlg, &SshConnectionManagerDialog::connectRequested, this,
+            [this, contexts, profiles, &dlg, &committedUri](const QString &profileId) {
+        // Step 2: staged connect (reuse the P1 SshConnectDialog: Connecting →
+        // Authenticating → Ready, with Cancel + error/Retry at each stage).
+        remote::RemoteExecutionContext *ctx = contexts->connect(profileId);
+        if (!ctx) return;
+        SshConnectDialog connectDlg(ctx, &dlg);
+        if (connectDlg.exec() != QDialog::Accepted
+            || ctx->state() != remote::ExecutionContext::State::Connected) {
+            // Cancel / failure: SshConnectDialog already showed the staged error +
+            // Retry. Nothing opened; leave the manager up so the user can retry.
+            return;
+        }
+        m_lastConnectedRemote = ctx;
+
+        // Step 3: remote folder picker (SFTP readdir tree). Start at the remote
+        // root so the whole filesystem is navigable; the user drills down and
+        // selects a directory as the workspace root.
+        auto *backend = qobject_cast<remote::RemoteFsBackend *>(ctx->fsBackend());
+        if (!backend) return;
+        SshRemoteFolderPickerDialog picker(backend, QStringLiteral("/"), &dlg);
+        if (picker.exec() != QDialog::Accepted) {
+            return; // cancelled — nothing opened
+        }
+        const QString remotePath = picker.selectedPath();
+        if (remotePath.isEmpty()) return;
+
+        // Commit and dismiss the manager. The workspace is opened after exec()
+        // returns (below) so the modal stack is fully unwound first.
+        committedUri = remote::formatSshUri(profileId, remotePath);
+        dlg.accept();
+    });
+
+    dlg.exec();
+
+    // Step 4: open the remote workspace dock. openFolderAsWorkspacePath detects
+    // the ssh:// prefix, wires useRemoteBackend, and persists the URI.
+    if (!committedUri.isEmpty()) {
+        openFolderAsWorkspacePath(committedUri);
+    }
+}
+
+void MainWindow::wireSshDockToContext(FolderAsWorkspaceDock *dock,
+                                      remote::ExecutionContext *ctx)
+{
+    if (!dock || !ctx) return;
+
+    // Idempotency: only wire a given (dock, ctx) pair once. The connect/reconnect
+    // paths can both reach here, and the reconnect button can fire repeatedly.
+    // Store the wired context pointer (as an integer) in a dynamic property; bail
+    // on the duplicate-connect work if it matches, but still re-sync the visual.
+    const char *wiredKey = "sshWiredContext";
+    const quintptr ctxId = reinterpret_cast<quintptr>(ctx);
+    const bool alreadyWired =
+        dock->property(wiredKey).toULongLong() == static_cast<qulonglong>(ctxId);
+    if (!alreadyWired) {
+        dock->setProperty(wiredKey, static_cast<qulonglong>(ctxId));
+
+        const QString wsUri = dock->sshWorkspaceUri();
+        const remote::SshUri uri = remote::parseSshUri(wsUri);
+
+        // Derive "user@host" for the inline status text.
+        QString userHost;
+        remote::SshProfileRegistry *profiles = app ? app->getSshProfileRegistry() : nullptr;
+        if (profiles && uri.valid && profiles->contains(uri.profileId)) {
+            const remote::SshProfile p = profiles->profile(uri.profileId);
+            userHost = p.username.isEmpty() ? p.host : (p.username + QLatin1Char('@') + p.host);
+        }
+
+        QPointer<FolderAsWorkspaceDock> dockGuard(dock);
+        QPointer<remote::ExecutionContext> ctxGuard(ctx);
+
+        // stateChanged drives the dock's inline banner. Connected → wire the
+        // backend + populate tree. Failed → inline Reconnect (never a modal).
+        connect(ctx, &remote::ExecutionContext::stateChanged, dock,
+                [this, dockGuard, ctxGuard, userHost, uri](remote::ExecutionContext::State state) {
+            if (!dockGuard || !ctxGuard) return;
+            switch (state) {
+            case remote::ExecutionContext::State::Connecting:
+            case remote::ExecutionContext::State::Reconnecting:
+                dockGuard->showConnectingState(userHost);
+                break;
+            case remote::ExecutionContext::State::Connected: {
+                auto *rctx = qobject_cast<remote::RemoteExecutionContext *>(ctxGuard.data());
+                auto *backend = rctx ? qobject_cast<remote::RemoteFsBackend *>(rctx->fsBackend())
+                                     : nullptr;
+                if (backend) {
+                    dockGuard->useRemoteBackend(backend);
+                    dockGuard->setRootPath(uri.remotePath);
+                }
+                dockGuard->showConnectedState();
+                break;
+            }
+            case remote::ExecutionContext::State::Failed:
+                dockGuard->showFailedState(tr("Could not reach the remote host."));
+                break;
+            case remote::ExecutionContext::State::Disconnected:
+                // No-op visual; a deliberate disconnect (workspace closed) tears
+                // the dock down anyway. A mid-session drop comes through
+                // connectionLost.
+                break;
+            }
+        });
+
+        // Mid-session drop → "Connection lost — Reconnect" banner (D10).
+        connect(ctx, &remote::ExecutionContext::connectionLost, dock,
+                [dockGuard](const QString &reason) {
+            if (dockGuard) dockGuard->showConnectionLostState(reason);
+        });
+
+        // FIX-2 back-pressure indicator: surface channelQueued / channelReady from
+        // the underlying SshConnection while a channel open is queued.
+        if (auto *rctx = qobject_cast<remote::RemoteExecutionContext *>(ctx)) {
+            if (remote::SshConnection *conn = rctx->connection()) {
+                connect(conn, &remote::SshConnection::channelQueued, dock,
+                        [dockGuard](int) { if (dockGuard) dockGuard->showChannelQueuedState(); });
+                connect(conn, &remote::SshConnection::channelReady, dock,
+                        [dockGuard](int) { if (dockGuard) dockGuard->clearChannelQueuedState(); });
+            }
+        }
+    }
+
+    // Drive the CURRENT state immediately — stateChanged may already have fired
+    // before we connected (e.g. the context connected synchronously, or we are
+    // re-wiring an already-Connected context). This makes the banner reflect
+    // reality without waiting for the next transition.
+    const QString wsUri = dock->sshWorkspaceUri();
+    const remote::SshUri uri = remote::parseSshUri(wsUri);
+    switch (ctx->state()) {
+    case remote::ExecutionContext::State::Connected: {
+        auto *rctx = qobject_cast<remote::RemoteExecutionContext *>(ctx);
+        auto *backend = rctx ? qobject_cast<remote::RemoteFsBackend *>(rctx->fsBackend())
+                             : nullptr;
+        if (backend) {
+            dock->useRemoteBackend(backend);
+            dock->setRootPath(uri.remotePath);
+        }
+        dock->showConnectedState();
+        break;
+    }
+    case remote::ExecutionContext::State::Connecting:
+    case remote::ExecutionContext::State::Reconnecting: {
+        QString userHost;
+        remote::SshProfileRegistry *profiles = app ? app->getSshProfileRegistry() : nullptr;
+        if (profiles && uri.valid && profiles->contains(uri.profileId)) {
+            const remote::SshProfile p = profiles->profile(uri.profileId);
+            userHost = p.username.isEmpty() ? p.host : (p.username + QLatin1Char('@') + p.host);
+        }
+        dock->showConnectingState(userHost);
+        break;
+    }
+    case remote::ExecutionContext::State::Failed:
+        dock->showFailedState(tr("Could not reach the remote host."));
+        break;
+    case remote::ExecutionContext::State::Disconnected:
+        break;
+    }
+}
+
+void MainWindow::reconnectSshWorkspace(FolderAsWorkspaceDock *dock)
+{
+    if (!dock) return;
+    const QString wsUri = dock->sshWorkspaceUri();
+    if (wsUri.isEmpty()) return;
+    const remote::SshUri uri = remote::parseSshUri(wsUri);
+    if (!uri.valid) return;
+
+    remote::ExecutionContextRegistry *contexts =
+        app ? app->getExecutionContextRegistry() : nullptr;
+    if (!contexts) return;
+
+    // registry->connect() returns the EXISTING context without re-dialing the
+    // socket if one is already present (e.g. after a mid-session drop), so we
+    // explicitly re-trigger connectToHost on its connection. For a never-created
+    // context, connect() builds it and starts the dial itself.
+    const bool existed = (contexts->remoteContext(uri.profileId) != nullptr);
+    auto *ctx = contexts->connect(uri.profileId);
+    if (!ctx) return;
+
+    if (existed) {
+        if (auto *rctx = qobject_cast<remote::RemoteExecutionContext *>(ctx)) {
+            if (remote::SshConnection *conn = rctx->connection()) {
+                conn->connectToHost();
+            }
+        }
+    }
+    wireSshDockToContext(dock, ctx);
 }
 
 void MainWindow::setupGitOperationMenu()

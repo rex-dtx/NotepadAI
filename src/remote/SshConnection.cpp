@@ -82,6 +82,10 @@ void SshConnection::init(std::unique_ptr<ISshTransport> transport)
                 }
                 emit channelOpenFailed(logicalId, reason);
             });
+    // FIX-2: relay the worker's channelQueued signal (queued: cross-thread) so
+    // the UI can raise the "Waiting for an available channel…" banner.
+    connect(m_worker, &SshSessionWorker::channelQueued, this,
+            &SshConnection::channelQueued);
     connect(m_worker, &SshSessionWorker::dataReady, this,
             [this](int logicalId, const QByteArray &bytes) {
                 if (auto *ch = m_channels.value(logicalId, nullptr)) {
@@ -272,10 +276,18 @@ void SshConnection::sftpReaddir(quint64 reqId, const QString &path)
 
 quint64 SshConnection::execStart(const QString &command, const QByteArray &stdinPayload)
 {
+    // Backward-compat overload: git-exec is the common case → ShortLived.
+    return execStart(command, stdinPayload, ExecKind::ShortLived);
+}
+
+quint64 SshConnection::execStart(const QString &command, const QByteArray &stdinPayload,
+                                 remote::ExecKind kind)
+{
     const quint64 reqId = ++m_nextExecReqId;
     QMetaObject::invokeMethod(m_worker, "requestExec", Qt::QueuedConnection,
                               Q_ARG(quint64, reqId), Q_ARG(QString, command),
-                              Q_ARG(QByteArray, stdinPayload));
+                              Q_ARG(QByteArray, stdinPayload),
+                              Q_ARG(remote::ExecKind, kind));
     return reqId;
 }
 

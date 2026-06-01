@@ -40,10 +40,17 @@ public:
     // Per-step outcome for the connect/auth/channel-setup state machine.
     enum class Step
     {
-        Ok,     // completed
-        Again,  // EAGAIN — retry on next socket activity
-        Error,  // fatal — connection cannot proceed
+        Ok,          // completed
+        Again,       // EAGAIN — retry on next socket activity
+        Error,       // fatal — connection cannot proceed
+        ChannelBusy, // server denied channel (MaxSessions) — transient back-pressure
     };
+
+    // D1a: identifies which of the two long-lived SFTP channels an op targets.
+    // Bulk = file read/write (editor open/save); Meta = readdir/stat/poll-watch.
+    // Each lane opens its own LIBSSH2_SFTP session so a large bulk transfer never
+    // blocks latency-sensitive metadata ops.
+    enum class SftpLane { Bulk, Meta };
 
     // openChannel outcome: Ok carries a transport channel id.
     struct OpenResult
@@ -66,13 +73,18 @@ public:
     static constexpr qint64 kWriteAgain = -1; // EAGAIN: send buffer full
     static constexpr qint64 kWriteError = -2; // fatal socket error
 
-    // --- SFTP (D1) -----------------------------------------------------------
-    // The SFTP layer is itself a channel multiplexed on the live session. The
-    // worker opens ONE SFTP session (sftpInit) and reuses it for every
-    // file/dir op — never a session-per-request. File and directory handles are
-    // identified by an opaque int the transport assigns (mirrors openChannel's
-    // channelId), so this interface never leaks a libssh2 pointer to its
-    // callers. Every method is non-blocking and may return Again.
+    // --- SFTP (D1a) ----------------------------------------------------------
+    // The SFTP layer is itself a channel multiplexed on the live session. D1a
+    // mandates TWO independent long-lived SFTP sessions — a Bulk lane (file
+    // read/write) and a Meta lane (readdir/stat/poll-watch) — each opened once
+    // (sftpInit(lane)) and reused for every op on that lane, so a 100 MB bulk
+    // read can never block a latency-sensitive metadata op behind it. The `lane`
+    // arg on every session-dependent method selects which LIBSSH2_SFTP handle the
+    // op runs against. File and directory handles are identified by an opaque int
+    // the transport assigns (mirrors openChannel's channelId), so this interface
+    // never leaks a libssh2 pointer to its callers. Each handle belongs to the
+    // lane it was opened on; read/write/close on a handle must pass the same lane
+    // that opened it. Every method is non-blocking and may return Again.
 
     // Decoded subset of LIBSSH2_SFTP_ATTRIBUTES the file tree + editor need.
     // The has* flags are false when the SFTP attrs did not carry that field;
@@ -149,29 +161,39 @@ public:
     virtual int chExitStatus(int channelId) = 0;
     virtual void closeChannel(int channelId) = 0;
 
-    // --- SFTP ops (D1) -------------------------------------------------------
-    // Open the single reused SFTP session over the live connection. handleId in
-    // the result is unused (the session is a singleton owned by the transport);
+    // --- SFTP ops (D1a) ------------------------------------------------------
+    // Open the SFTP session for `lane` over the live connection (D1a opens one
+    // per lane — Bulk and Meta — so the two never block each other). handleId in
+    // the result is unused (the session is owned by the transport, one per lane);
     // a non-Ok step means it could not be established yet (Again) or at all.
-    virtual SftpOpenResult sftpInit() = 0;
-    // Tear the SFTP session down (frees any dangling file/dir handles first).
-    // Idempotent; safe to call even if sftpInit never succeeded.
+    virtual SftpOpenResult sftpInit(SftpLane lane) = 0;
+    // Tear BOTH SFTP sessions down (frees any dangling file/dir handles first).
+    // Idempotent; safe to call even if sftpInit never succeeded on either lane.
     virtual void sftpShutdown() = 0;
 
     // File ops. sftpOpen: forWrite=false → O_RDONLY; forWrite=true →
     // O_WRONLY|O_CREAT|O_TRUNC with mode 0644. Returns a file handle id on Ok.
-    virtual SftpOpenResult sftpOpen(const QString &path, bool forWrite) = 0;
-    virtual ReadResult sftpRead(int handleId) = 0;
-    virtual qint64 sftpWrite(int handleId, const QByteArray &bytes) = 0;
-    virtual void sftpClose(int handleId) = 0;
+    // `lane` selects the SFTP session; the returned handle belongs to that lane
+    // and must be passed back to sftpRead/sftpWrite/sftpClose with the same lane.
+    virtual SftpOpenResult sftpOpen(SftpLane lane, const QString &path, bool forWrite) = 0;
+    virtual ReadResult sftpRead(SftpLane lane, int handleId) = 0;
+    virtual qint64 sftpWrite(SftpLane lane, int handleId, const QByteArray &bytes) = 0;
+    virtual void sftpClose(SftpLane lane, int handleId) = 0;
 
     // Directory ops. sftpReaddir returns one entry per call until Done.
-    virtual SftpOpenResult sftpOpendir(const QString &path) = 0;
-    virtual SftpDirEntry sftpReaddir(int handleId) = 0;
-    virtual void sftpClosedir(int handleId) = 0;
+    virtual SftpOpenResult sftpOpendir(SftpLane lane, const QString &path) = 0;
+    virtual SftpDirEntry sftpReaddir(SftpLane lane, int handleId) = 0;
+    virtual void sftpClosedir(SftpLane lane, int handleId) = 0;
 
-    // Stat a path (follows symlinks — LIBSSH2_SFTP_STAT).
-    virtual SftpStatResult sftpStat(const QString &path) = 0;
+    // Stat a path (follows symlinks — LIBSSH2_SFTP_STAT) on `lane`'s session.
+    virtual SftpStatResult sftpStat(SftpLane lane, const QString &path) = 0;
+
+    // --- keepalive (FIX-3) -------------------------------------------------------
+    // Send a keepalive probe. Returns seconds-to-next on success (>= 0), or -1 on
+    // a fatal socket error (the connection is dead). EAGAIN is non-fatal and
+    // returns 0 (the caller retries on the next edge). Production calls
+    // libssh2_keepalive_send; the fake returns a scripted value.
+    virtual int sendKeepalive() = 0;
 
     // Underlying socket fd, for the QSocketNotifier pump. -1 until connected.
     virtual qintptr socketFd() const = 0;

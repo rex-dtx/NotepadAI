@@ -55,7 +55,7 @@ public:
 
     // --- remote::IWorkspaceFsModel ------------------------------------------
     // Thin forwarders to the QFileSystemModel originals. setRootPath() and
-    // rootPath() intentionally re-declare names also present on QFileSystemModel:
+    // rootPath() intentionally redeclare names also present on QFileSystemModel:
     // the interface overrides win through the IWorkspaceFsModel vtable while the
     // base implementations stay reachable via QFileSystemModel:: inside the .cpp.
     // setRootPath returns void here (the dock ignores the base's QModelIndex).

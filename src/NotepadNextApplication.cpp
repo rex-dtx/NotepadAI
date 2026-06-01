@@ -221,7 +221,7 @@ bool NotepadNextApplication::init()
         sessionManager = new SessionManager(this);
 
         auto *scheduledTaskRegistry = new ScheduledTaskRegistry(settings, this);
-        scheduledTaskRunner_ = new ScheduledTaskRunner(scheduledTaskRegistry, aiAgentManager_, settings, this);
+        scheduledTaskRunner_ = new ScheduledTaskRunner(scheduledTaskRegistry, aiAgentManager_, settings, executionContextRegistry_, this);
         scheduledTaskRunner_->start();
 
         // Inject the SSH exec-channel transport factory (D8) so a remote-workspace

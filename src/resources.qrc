@@ -58,5 +58,6 @@
         <file>icons/send.svg</file>
         <file>icons/circle-stop.svg</file>
         <file>icons/copy.svg</file>
+        <file>icons/ssh-badge.svg</file>
     </qresource>
 </RCC>

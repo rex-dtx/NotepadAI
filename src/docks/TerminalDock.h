@@ -38,6 +38,9 @@ public:
     // Remote terminal: the execution context is CAPTURED AT SPAWN into this dock
     // and never re-resolved (a workspace switch must not rebase a live session).
     TerminalDock(remote::ExecutionContext *ctx, const QString &shell, const QString &cwd, QWidget *parent = nullptr);
+    // Remote task terminal: run a task command on the remote host via SSH PTY.
+    TerminalDock(remote::ExecutionContext *ctx, const QString &remoteCwd,
+                 const QString &taskCommand, const QString &taskName, QWidget *parent = nullptr);
     ~TerminalDock() override;
 
     TerminalWidget *terminalWidget() const { return m_terminal; }

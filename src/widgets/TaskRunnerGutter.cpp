@@ -24,6 +24,9 @@
 #include "TerminalManager.h"
 #include "TerminalTaskRegistry.h"
 #include "TerminalWidget.h"
+#include "remote/ExecutionContext.h"
+#include "remote/ExecutionContextRegistry.h"
+#include "remote/SshProfile.h"
 
 #include <QApplication>
 #include <QDir>
@@ -452,21 +455,55 @@ void TaskRunnerGutter::onMarginClick(int margin, int line)
     if (!found) return;
     if (!m_termMgr) return;
 
-    const QString cwd = QFileInfo(m_editor->getFilePath()).absolutePath();
+    // Resolve execution context: if the editor is remote, route through the
+    // remote terminal path; otherwise use the local terminal as before.
+    remote::ExecutionContext *context = nullptr;
+    QString cwd;
+
+    if (m_editor->isRemote()) {
+        // Remote file: extract profileId from the editor's URI, look up the
+        // remote context from the registry, and use the remote file's parent
+        // directory as the working directory.
+        const remote::SshUri parsed = remote::parseSshUri(m_editor->remoteUri());
+        if (parsed.valid) {
+            if (auto *app = qobject_cast<NotepadNextApplication *>(qApp)) {
+                if (auto *registry = app->getExecutionContextRegistry()) {
+                    context = registry->remoteContext(parsed.profileId);
+                }
+            }
+        }
+        // Remote cwd = parent directory of the remote POSIX path
+        const QString remotePath = m_editor->remotePath();
+        const int lastSlash = remotePath.lastIndexOf(QLatin1Char('/'));
+        cwd = (lastSlash > 0) ? remotePath.left(lastSlash) : QStringLiteral("/");
+    } else {
+        cwd = QFileInfo(m_editor->getFilePath()).absolutePath();
+    }
 
     if (found->hasRequiredParams) {
-        // For recipes with required params, open a plain terminal and inject
-        // the command with a trailing space but WITHOUT pressing Enter, so the
-        // user can complete the arguments manually.
-        m_termMgr->openTerminal(cwd);
-        // The terminal just opened has focus. Find its TerminalWidget and
-        // inject the command text (without \r) after the shell prompt appears.
-        const QByteArray cmd = (found->command + QLatin1Char(' ')).toUtf8();
-        if (auto *focused = qApp->focusWidget()) {
-            if (auto *tw = qobject_cast<TerminalWidget *>(focused)) {
-                connect(tw, &TerminalWidget::firstOutputReceived, this,
-                        [tw, cmd]() { tw->writeToPty(cmd); },
-                        Qt::SingleShotConnection);
+        if (context && context->isRemote()) {
+            // For remote tasks with required params, open a remote terminal and
+            // inject the command with a trailing space (no Enter) so the user
+            // can complete the arguments.
+            m_termMgr->openRemoteTerminal(context, cwd, QString());
+            const QByteArray cmd = (found->command + QLatin1Char(' ')).toUtf8();
+            if (auto *focused = qApp->focusWidget()) {
+                if (auto *tw = qobject_cast<TerminalWidget *>(focused)) {
+                    connect(tw, &TerminalWidget::firstOutputReceived, this,
+                            [tw, cmd]() { tw->writeToPty(cmd); },
+                            Qt::SingleShotConnection);
+                }
+            }
+        } else {
+            // Local: open a plain terminal and inject the command text
+            m_termMgr->openTerminal(cwd);
+            const QByteArray cmd = (found->command + QLatin1Char(' ')).toUtf8();
+            if (auto *focused = qApp->focusWidget()) {
+                if (auto *tw = qobject_cast<TerminalWidget *>(focused)) {
+                    connect(tw, &TerminalWidget::firstOutputReceived, this,
+                            [tw, cmd]() { tw->writeToPty(cmd); },
+                            Qt::SingleShotConnection);
+                }
             }
         }
         return;
@@ -475,7 +512,7 @@ void TaskRunnerGutter::onMarginClick(int margin, int line)
     TerminalTask task;
     task.name = found->name;
     task.command = found->command;
-    m_termMgr->runOrRestartTask(cwd, task);
+    m_termMgr->runOrRestartTask(cwd, task, context);
 }
 
 bool TaskRunnerGutter::eventFilter(QObject *watched, QEvent *event)

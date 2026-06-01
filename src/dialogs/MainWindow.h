@@ -349,6 +349,16 @@ private:
     // the Phase-2 remote workspace tree resolves it via activeExecutionContext.
     void setupSshMenu();
     QPointer<remote::ExecutionContext> m_lastConnectedRemote;
+    // "Open Remote Folder via SSH…" flow (D10 Batch H): profile pick → staged
+    // connect → folder picker → open the remote workspace dock.
+    void openRemoteFolderViaSshFlow();
+    // Wire a workspace dock to a RemoteExecutionContext's stateChanged signal so
+    // the dock's inline banner tracks the connection lifecycle (D10 Batch H).
+    // Idempotent — safe to call multiple times for the same dock.
+    void wireSshDockToContext(FolderAsWorkspaceDock *dock, remote::ExecutionContext *ctx);
+    // Reconnect handler for the dock's Reconnect button: retrieves or creates the
+    // context, re-triggers connectToHost, and (re-)wires the dock.
+    void reconnectSshWorkspace(FolderAsWorkspaceDock *dock);
     void showConflictListDock(const QString &repoPath);
     void openConflictMergeViewer(const ConflictEntry &entry);
 };

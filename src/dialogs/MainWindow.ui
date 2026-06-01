@@ -75,6 +75,8 @@
      <property name="title">
       <string>Open Folder as Workspace...</string>
      </property>
+     <addaction name="actionOpenRemoteFolderSsh"/>
+     <addaction name="separator"/>
      <addaction name="actionOpenFolderAsWorkspaceNew"/>
      <addaction name="separator"/>
     </widget>
@@ -1194,6 +1196,11 @@
   <action name="actionOpenFolderAsWorkspaceNew">
    <property name="text">
     <string>Open New Folder...</string>
+   </property>
+  </action>
+  <action name="actionOpenRemoteFolderSsh">
+   <property name="text">
+    <string>Open Remote Folder via SSH...</string>
    </property>
   </action>
   <action name="actionToggleSingleLineComment">

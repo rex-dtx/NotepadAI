@@ -32,8 +32,19 @@
 #include "SshProfile.h"
 
 class QSocketNotifier;
+class QTimer;
 
 namespace remote {
+
+// --- ExecKind (FIX-2) --------------------------------------------------------
+// Classifies an exec channel for the admission budget. ShortLived (git-exec) may
+// use the reserved dynamic slot; LongLived (acp-exec) may not, preventing
+// starvation of short-lived work under heavy long-lived load.
+enum class ExecKind
+{
+    ShortLived, // git-exec: opens, runs, closes quickly
+    LongLived,  // acp-exec: holds the channel for the session's lifetime
+};
 
 // One decoded remote directory entry, delivered to the UI thread for the file
 // tree / readdir callback. Decoded from ISshTransport::SftpDirEntry on the
@@ -54,7 +65,11 @@ struct RemoteDirEntry
 //   - the round-robin read pump (D3),
 //   - the write path with the write-notifier invariant (D4),
 //   - the FIFO channel-open queue with a cap (D5),
-//   - connection-loss detection + ordered cleanup (D8).
+//   - connection-loss detection + ordered cleanup (D8),
+//   - FIX-1 ChannelBusy exponential backoff,
+//   - FIX-2 unified channel counter + budget + 2 sub-queues + reserve,
+//   - FIX-3 keepalive timer + miss detection,
+//   - FIX-4 non-blocking connect re-poll timer.
 //
 // The UI-thread facade (SshConnection) talks to it ONLY via queued
 // signals/slots — no locks. Tests construct it directly on the test thread,
@@ -92,9 +107,9 @@ public:
         std::function<QString()> passphraseProvider;
     };
 
-    // Takes ownership of the transport. Default cap = 10 concurrent channels.
+    // Takes ownership of the transport. Default cap = 8 concurrent channels (FIX-2).
     explicit SshSessionWorker(std::unique_ptr<ISshTransport> transport,
-                              int channelCap = 10,
+                              int channelCap = 8,
                               QObject *parent = nullptr);
     ~SshSessionWorker() override;
 
@@ -106,17 +121,31 @@ public:
     // signals + the accessors below.
     void pumpForTest() { pump(); }
     // Drive exactly one bounded SFTP service sweep (mirrors pumpForTest for the
-    // D1 SFTP engine): advance the head SFTP op as far as it can go this pass,
-    // emitting its *Done signal on completion. Tests script the fake transport
-    // then call this to step partial-read / EAGAIN reassembly deterministically.
+    // D1a SFTP engine): advance the head op of BOTH lanes (metadata then bulk) as
+    // far as each can go this pass, emitting their *Done signals on completion.
+    // Tests script the fake transport then call this to step partial-read / EAGAIN
+    // reassembly deterministically. Servicing metadata before bulk guarantees a
+    // stalled bulk op never holds back a ready metadata op (D1a non-blocking).
     void serviceSftpForTest() { serviceSftp(); }
     // Drive exactly one bounded exec service sweep (mirrors serviceSftpForTest
     // for the D6 exec engine): advance every in-flight exec channel as far as
     // it can go this pass, emitting exec*Chunk / execDone as streams progress.
     void serviceExecForTest() { serviceExec(); }
     bool writeNotifierEnabledForTest() const { return m_writeNotifierWanted; }
-    int liveChannelCountForTest() const { return liveChannelCount(); }
-    int queuedChannelCountForTest() const { return m_openQueue.size(); }
+    // Legacy test hook: counts PTY/shell channels in Opening..Open phase only
+    // (does NOT include exec or SFTP). Kept for backward compat with existing
+    // Batch-A tests that assert against a PTY-only cap.
+    int liveChannelCountForTest() const { return livePtyChannelCount(); }
+    int queuedChannelCountForTest() const { return static_cast<int>(m_shortQueue.size() + m_longQueue.size()); }
+    // FIX-2: the single source of truth — PTY + exec + SFTP live channels.
+    int unifiedChannelCountForTest() const { return unifiedLiveCount(); }
+    // FIX-1: fire the maintenance timer slot (backoff retries + connect poll).
+    void tickMaintenanceForTest() { onMaintenanceTick(); }
+    // FIX-3: fire the keepalive timer slot.
+    void tickKeepaliveForTest() { onKeepaliveTick(); }
+    // FIX-3: simulate inbound activity (for tests that cannot trigger a real
+    // socket-readable edge). Resets the keepalive miss counter.
+    void markInboundActivityForTest() { m_sawInboundSinceKeepalive = true; }
 
 public slots:
     // All posted from the UI thread (queued) in production; called directly in
@@ -136,13 +165,16 @@ public slots:
     void requestCloseChannel(int logicalId);
     void requestDisconnect();
 
-    // --- SFTP request slots (D1) ---------------------------------------------
+    // --- SFTP request slots (D1a) --------------------------------------------
     // Posted from the UI thread (queued) by SshConnection on behalf of
     // RemoteFsBackend; called directly in tests. reqId is minted UI-side and is
     // echoed back in the matching *Done signal so the backend can resolve the
-    // right callback. All four enqueue an op on the single reused SFTP session
-    // (one sftpInit, never per-op) and drive it as far as it can go now; EAGAIN
-    // re-arms on the next socket edge (production) or serviceSftpForTest (tests).
+    // right callback. Routing by kind (D1a): Read/Write enqueue on the BULK lane
+    // (its own SFTP channel + FIFO), Stat/Readdir on the METADATA lane (its own
+    // SFTP channel + FIFO), so a large bulk transfer never blocks a metadata op.
+    // Each lane opens its channel once (sftpInit per lane, never per-op) and
+    // drives as far as it can now; EAGAIN re-arms on the next socket edge
+    // (production) or serviceSftpForTest (tests).
     void requestSftpRead(quint64 reqId, const QString &path);
     void requestSftpWrite(quint64 reqId, const QString &path, const QByteArray &data);
     void requestSftpStat(quint64 reqId, const QString &path);
@@ -158,6 +190,13 @@ public slots:
     // independent of and concurrent with other exec ops and the PTY channels.
     // requestExecCancel closes the channel for an in-flight op without emitting
     // a result (the runner already resolved its callback).
+    //
+    // FIX-2: `kind` classifies the exec op for the admission budget. Default is
+    // ShortLived (git-exec); ACP passes LongLived. The 3-arg overload (no kind)
+    // is kept for backward compat with existing QMetaObject::invokeMethod calls.
+    void requestExec(quint64 reqId, const QString &command,
+                     const QByteArray &stdinPayload,
+                     remote::ExecKind kind);
     void requestExec(quint64 reqId, const QString &command, const QByteArray &stdinPayload);
     void requestExecCancel(quint64 reqId);
     // Append bytes to an in-flight exec op's stdin (D8). The one-shot
@@ -177,14 +216,15 @@ signals:
     void channelOpenFailed(int logicalId, const QString &reason);
     void dataReady(int logicalId, const QByteArray &bytes);
     void channelClosed(int logicalId, int exitStatus);
+    // FIX-2: emitted when a channel open cannot be admitted immediately because
+    // the dynamic budget is full. The opener waits in its sub-queue; the normal
+    // channelOpened/channelReady path fires once a slot frees. SshConnection
+    // relays this to the UI for the "Waiting for an available channel" banner.
+    void channelQueued(int logicalId);
     // Connection lost / disconnected with a human reason.
     void disconnected(const QString &reason);
 
     // --- SFTP result signals (D1) --------------------------------------------
-    // Emitted on the worker thread; relayed queued to the UI thread by
-    // SshConnection. `ok` is the I/O-success flag; `error` is a human reason on
-    // failure. statDone's `exists` is false (with ok=true) for an absent path —
-    // a missing file is not an I/O error, matching the local QFileInfo backend.
     void sftpReadDone(quint64 reqId, bool ok, const QByteArray &data, const QString &error);
     void sftpWriteDone(quint64 reqId, bool ok, const QString &error);
     void sftpStatDone(quint64 reqId, bool ok, bool exists, bool isDir,
@@ -193,16 +233,14 @@ signals:
                          const QList<remote::RemoteDirEntry> &entries, const QString &error);
 
     // --- exec result signals (D6/D8) -----------------------------------------
-    // Emitted on the worker thread; relayed queued to the UI thread by
-    // SshConnection. stdout/stderr chunks arrive as they are read off the
-    // channel (the runner accumulates them); execDone carries the channel exit
-    // status once the command's streams hit EOF (or -1 on connection loss).
     void execStdoutChunk(quint64 reqId, const QByteArray &chunk);
     void execStderrChunk(quint64 reqId, const QByteArray &chunk);
     void execDone(quint64 reqId, int exitStatus);
 
 private slots:
     void onSocketActivity();
+    void onMaintenanceTick();  // FIX-1 backoff retries + FIX-4 connect re-poll
+    void onKeepaliveTick();    // FIX-3 keepalive send + miss detection
 
 private:
     enum class ChPhase
@@ -224,30 +262,88 @@ private:
         QByteArray term;
         int cols = 80;
         int rows = 24;
-        QString command;     // empty → interactive shell
+        QString command;     // empty -> interactive shell
         QByteArray pending;  // unsent write bytes (move-appended; no per-byte alloc)
+        // FIX-1: backoff state for ChannelBusy retries.
+        int backoffMs = 250;         // current backoff interval (doubles to max 2000)
+        qint64 nextRetryMs = 0;      // monotonic msec timestamp for next retry (0 = ready now)
+        // FIX-2: channelQueued emitted once when this opener first could not be
+        // admitted (the signal is edge-triggered, not level-triggered, so the UI
+        // banner is raised exactly once per waiting channel).
+        bool queuedSignalled = false;
+    };
+
+    // --- FIX-2: admission budget constants -----------------------------------
+    // Total cap (configurable per-profile): PTY + exec + SFTP combined.
+    // Default 8 leaves 2 headroom under OpenSSH MaxSessions 10.
+    static constexpr int kDefaultCap = 8;
+    // Reserved for SFTP (bulk + metadata, both long-lived). The D1a two-SFTP
+    // split fills both reserved slots — the bulk and metadata lanes each open
+    // their own SFTP channel lazily on first use and hold it for the session.
+    static constexpr int kSftpReserved = 2;
+    // Within the dynamic budget (cap - sftpReserved):
+    //   max kMaxLongLived long-lived (PTY + acp-exec)
+    //   1 short-lived reserve (git-exec) — always available for short-lived.
+    // For the default cap=8: dynamic=6, maxLong=5, shortReserve=1.
+    static constexpr int kMaxLongLived = 5;
+    // For small caps (e.g. tests with cap=2 where sftpReserved would exceed the
+    // cap), the budget degrades gracefully — see admitPending() for the formula:
+    // every dynamic slot is then usable by either kind (no reserve), preserving
+    // the original FIFO-at-cap behavior the Batch-A tests assert.
+
+    // --- FIX-2: pending-open entry (unified sub-queue item) ------------------
+    // Represents a channel or exec op waiting for admission. Tagged by kind so
+    // the admission pass can prioritize short-lived over long-lived.
+    enum class OpenerSource { PtyChannel, ExecOp };
+    struct PendingOpen
+    {
+        OpenerSource source = OpenerSource::PtyChannel;
+        int logicalId = -1;    // for PtyChannel
+        quint64 execReqId = 0; // for ExecOp
+        ExecKind kind = ExecKind::ShortLived; // PTY is always LongLived
     };
 
     void setState(State s);
     void pump();                 // single bounded sweep (D3 + D4 + setup)
-    void advanceConnect();       // socket→handshake→hostkey→auth→ready
+    void advanceConnect();       // socket->handshake->hostkey->auth->ready
     void advanceChannelSetup();  // open/pty/exec for not-yet-Open channels
     void readSweep();            // round-robin reads (D3)
     void flushPendingWrites();   // write path + notifier invariant (D4)
-    void tryStartQueued();       // FIFO dequeue while under cap (D5)
+    void admitPending();         // FIX-2: dequeue while budget allows (replaces tryStartQueued)
     void enterConnectionLost(const QString &reason); // D8
     void finishChannel(int logicalId, int exitStatus);
 
-    int liveChannelCount() const;        // Opening..Open (counts against cap)
+    // FIX-2: unified live count (PTY Opening..Open + exec NeedOpen..Streaming + SFTP).
+    int unifiedLiveCount() const;
+    // Count of live dynamic channels (excludes SFTP reserved).
+    int liveDynamicCount() const;
+    // Count of live long-lived dynamic channels (PTY + acp-exec).
+    int liveLongLivedCount() const;
+    // Legacy: PTY/shell channels in Opening..Open only (for backward-compat test hook).
+    int livePtyChannelCount() const;
     Channel *channelByTransportId(int transportId);
 
     void setupNotifiers();       // production only (real fd)
     void teardownNotifiers();
     void setWriteNotifierEnabled(bool on);
+    void ensureTimers();         // lazy-create timers on the worker thread
+    void armMaintenanceTimer();  // start/restart the short maintenance timer
+    void stopMaintenanceTimer();
 
-    // --- SFTP engine (D1): one reused session, serialized FIFO ops -----------
+    // FIX-1: check if any opener is past its backoff deadline and ready to retry.
+    bool hasBackoffReady() const;
+
+    // --- SFTP engine (D1a): two independent lanes (bulk + metadata) -----------
+    // Bulk lane: file read/write (editor open/save), where a single transfer can
+    // be 100 MB+. Metadata lane: readdir/stat/poll-watch listings, all small and
+    // latency-sensitive. Each lane has its own sftpInit (opening its own SFTP
+    // channel on the multiplexed connection), its own FIFO queue, and its own
+    // service function. Both are driven from onSocketActivity (after pump). Both
+    // count toward the unified cap's 2-SFTP-reserved budget (FIX-2). A large bulk
+    // read can never block tree-poll/readdir behind it.
     enum class SftpKind { Read, Write, Stat, Readdir };
     enum class SftpPhase { NeedOpen, Transfer, NeedClose };
+    enum class SftpLane { Bulk, Meta };
 
     struct SftpOp
     {
@@ -261,24 +357,23 @@ private:
         QList<RemoteDirEntry> entries;   // readdir accumulator
     };
 
-    void serviceSftp();          // advance the head op as far as possible now
-    // Open the single SFTP session once (D1). Returns Ok when usable (latched),
-    // Again while still establishing, Error when it cannot be opened.
-    ISshTransport::Step ensureSftpInited();
-    bool advanceSftpOp(SftpOp &op); // true = finished (signal emitted), false = wait
-    void enqueueSftpOp(SftpOp op); // append + kick the engine
-    void failSftpOp(const SftpOp &op, const QString &reason); // emit failure signal
-    void failAllSftp(const QString &reason); // fail active + queued on loss
+    static SftpLane laneForKind(SftpKind kind);
+    // Map the worker's lane enum to the transport's lane enum (1:1).
+    static ISshTransport::SftpLane transportLane(SftpLane lane);
+
+    void serviceSftp();              // services both lanes (meta first, then bulk)
+    void serviceSftpLane(SftpLane lane, QList<SftpOp> &queue, bool &inited);
+    ISshTransport::Step ensureSftpLaneInited(SftpLane lane, bool &inited);
+    bool advanceSftpOp(SftpLane lane, SftpOp &op);
+    void enqueueSftpOp(SftpOp op);
+    void failSftpOp(const SftpOp &op, const QString &reason);
+    void failAllSftp(const QString &reason);
 
     // --- exec engine (D6): independent non-PTY channels, run concurrently -----
-    // Unlike SFTP (one serialized session), each exec op owns its own channel
-    // and they advance concurrently — git fetchers must not block each other.
-    // The ops live OUTSIDE m_channels / m_rotation (they are not interactive PTY
-    // channels): serviceExec drives them directly off their transportId so the
-    // round-robin read pump never touches them.
     enum class ExecPhase
     {
-        NeedOpen,   // openChannel in flight
+        Queued,     // FIX-2: waiting for admission (budget full)
+        NeedOpen,   // admitted; openChannel in flight
         NeedExec,   // channel open; channel_exec(command) pending
         Streaming,  // exec started; draining stdout/stderr to EOF
         Done,       // terminal; pending removal
@@ -287,22 +382,23 @@ private:
     {
         quint64    reqId = 0;
         int        transportId = -1;
-        ExecPhase  phase = ExecPhase::NeedOpen;
+        ExecPhase  phase = ExecPhase::Queued; // FIX-2: starts Queued, not NeedOpen
+        ExecKind   kind = ExecKind::ShortLived; // FIX-2
         QString    command;
         QByteArray stdinPayload;   // fed once at Streaming start
         qint64     stdinOffset = 0;
         bool       stdinSent = false;
-        // Streamed stdin (D8): bytes appended after start via requestExecWrite
-        // (the ACP agent session keeps writing frames). Drained front-to-back on
-        // each Streaming pass; never EOF'd while the op lives.
         QByteArray streamStdin;
         qint64     streamStdinOffset = 0;
         bool       stdoutEof = false;
         bool       stderrEof = false;
+        // FIX-1: backoff state for ChannelBusy retries during NeedOpen.
+        int        backoffMs = 250;
+        qint64     nextRetryMs = 0;
     };
-    void serviceExec();             // advance every in-flight exec op one pass
-    bool advanceExecOp(ExecOp &op); // true = finished (execDone emitted)
-    void failAllExec(int exitStatus); // resolve every in-flight exec on loss
+    void serviceExec();
+    bool advanceExecOp(ExecOp &op);
+    void failAllExec(int exitStatus);
 
     std::unique_ptr<ISshTransport> m_transport;
     int m_channelCap;
@@ -314,9 +410,12 @@ private:
     bool m_hostKeyRejected = false;
 
     // Live + queued channels. m_channels holds every non-removed channel keyed
-    // by logicalId; m_openQueue is the FIFO of Queued logicalIds (D5).
+    // by logicalId. FIX-2: the open queue is split into two sub-queues by kind.
     QHash<int, Channel> m_channels;
-    QList<int> m_openQueue;
+    // FIX-2: two sub-queues for pending opens. Short-lived (git-exec) is
+    // admitted first; long-lived (PTY + acp-exec) second. FIFO within each.
+    QList<PendingOpen> m_shortQueue;
+    QList<PendingOpen> m_longQueue;
     // Stable rotation order for the round-robin read sweep (insertion order of
     // Open channels). Kept as a list so every sweep visits each exactly once.
     QList<int> m_rotation;
@@ -326,16 +425,27 @@ private:
     bool m_writeNotifierWanted = false;
     bool m_lost = false;
 
-    // SFTP engine state. m_sftpInited latches the one-and-only sftpInit so every
-    // op reuses the single session (D1 one-channel-reuse invariant). The op
-    // queue is serviced strictly FIFO, one op at a time (the SFTP session is
-    // single-threaded like every other channel).
-    bool m_sftpInited = false;
-    QList<SftpOp> m_sftpQueue;
+    // FIX-3: keepalive timer state.
+    QTimer *m_keepaliveTimer = nullptr;
+    bool m_sawInboundSinceKeepalive = false;
+    int m_keepaliveMissCount = 0;
 
-    // Exec engine state (D6). In-flight exec ops, each on its own channel,
-    // advanced concurrently by serviceExec. Not keyed against the channel cap
-    // (they are short-lived one-shots, not interactive PTYs).
+    // FIX-1/FIX-4: maintenance timer (short interval) for backoff retries and
+    // connect re-polling. Created lazily on the worker thread.
+    QTimer *m_maintenanceTimer = nullptr;
+    // Monotonic clock base for backoff deadlines (QDateTime::currentMSecsSinceEpoch).
+    qint64 monotonicMs() const;
+
+    // SFTP engine state (D1a): two independent lanes.
+    // Bulk lane (Read + Write) and metadata lane (Stat + Readdir). Each has its
+    // own SFTP channel (sftpInit) + FIFO queue + inited flag, so a large bulk
+    // transfer never blocks latency-sensitive metadata ops.
+    bool m_sftpBulkInited = false;
+    bool m_sftpMetaInited = false;
+    QList<SftpOp> m_sftpBulkQueue;
+    QList<SftpOp> m_sftpMetaQueue;
+
+    // Exec engine state (D6).
     QList<ExecOp> m_execOps;
 };
 
@@ -344,5 +454,6 @@ private:
 Q_DECLARE_METATYPE(remote::SshSessionWorker::ConnectParams)
 Q_DECLARE_METATYPE(remote::RemoteDirEntry)
 Q_DECLARE_METATYPE(QList<remote::RemoteDirEntry>)
+Q_DECLARE_METATYPE(remote::ExecKind)
 
 #endif // REMOTE_SSHSESSIONWORKER_H

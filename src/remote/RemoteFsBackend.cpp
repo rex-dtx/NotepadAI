@@ -20,9 +20,30 @@
 
 #include "SshConnection.h"
 
+#include <QTimer>
+
 #include <utility>
 
 namespace remote {
+
+namespace {
+
+// D12 read-only auto-retry budget. Read-only ops are idempotent, so a TRANSIENT
+// (connection/session-level) failure is retried up to kMaxRetries additional
+// times (kMaxRetries + 1 = 3 attempts total) with a bounded exponential
+// backoff: attempt 0→1 waits kBaseBackoffMs (200ms), attempt 1→2 waits
+// 2*kBaseBackoffMs (400ms). Mutating ops (writeFileAsync) never retry.
+constexpr int kMaxRetries = 2;       // additional attempts after the first
+constexpr int kBaseBackoffMs = 200;  // 200ms, then 400ms
+
+// Backoff before re-issuing the op that just failed on `attempt` (0-based).
+// attempt 0 → 200ms, attempt 1 → 400ms (1 << attempt scaling).
+inline int backoffForAttempt(int attempt)
+{
+    return kBaseBackoffMs << attempt;
+}
+
+} // namespace
 
 RemoteFsBackend::RemoteFsBackend(SshConnection *connection, QObject *parent)
     : IFileSystemBackend(parent)
@@ -45,15 +66,47 @@ RemoteFsBackend::RemoteFsBackend(SshConnection *connection, QObject *parent)
 RemoteFsBackend::~RemoteFsBackend() = default;
 
 // --- async API ---------------------------------------------------------------
+//
+// D12 read-only auto-retry. readFileAsync/statAsync/readdirAsync delegate to
+// their attempt-0 helper; on a TRANSIENT failure (isTransientError, defined
+// inline in the header) with attempts remaining, the wrapped callback re-issues
+// the SAME op (fresh reqId, same path) after a bounded backoff. writeFileAsync
+// (mutating) is intentionally NOT retried — fail-no-replay.
 
 void RemoteFsBackend::readFileAsync(const QString &path, ReadCallback cb)
+{
+    readFileAttempt(path, std::move(cb), 0);
+}
+
+void RemoteFsBackend::readFileAttempt(const QString &path, ReadCallback cb, int attempt)
 {
     if (!m_connection) {
         if (cb) cb(false, QByteArray(), tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_readCallbacks.insert(reqId, std::move(cb));
+    if (cb) {
+        // Wrap the user callback: on a transient failure with attempts left,
+        // re-issue the same read after a backoff; otherwise surface the result.
+        // QTimer's `this` context-object form auto-cancels if the backend is
+        // destroyed mid-backoff, so no QPointer guard is needed.
+        ReadCallback userCb = std::move(cb);
+        ReadCallback wrapped =
+            [this, path, attempt, userCb = std::move(userCb)](
+                bool ok, const QByteArray &data, const QString &error) mutable {
+                if (!ok && attempt < kMaxRetries && isTransientError(error)) {
+                    const int nextAttempt = attempt + 1;
+                    QTimer::singleShot(
+                        backoffForAttempt(attempt), this,
+                        [this, path, nextAttempt, userCb = std::move(userCb)]() mutable {
+                            readFileAttempt(path, std::move(userCb), nextAttempt);
+                        });
+                    return;
+                }
+                if (userCb) userCb(ok, data, error);
+            };
+        m_readCallbacks.insert(reqId, std::move(wrapped));
+    }
     m_connection->sftpRead(reqId, path);
 }
 
@@ -71,23 +124,67 @@ void RemoteFsBackend::writeFileAsync(const QString &path, const QByteArray &data
 
 void RemoteFsBackend::statAsync(const QString &path, StatCallback cb)
 {
+    statAttempt(path, std::move(cb), 0);
+}
+
+void RemoteFsBackend::statAttempt(const QString &path, StatCallback cb, int attempt)
+{
     if (!m_connection) {
         if (cb) cb(false, FileStat(), tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_statCallbacks.insert(reqId, std::move(cb));
+    if (cb) {
+        StatCallback userCb = std::move(cb);
+        StatCallback wrapped =
+            [this, path, attempt, userCb = std::move(userCb)](
+                bool ok, const FileStat &stat, const QString &error) mutable {
+                if (!ok && attempt < kMaxRetries && isTransientError(error)) {
+                    const int nextAttempt = attempt + 1;
+                    QTimer::singleShot(
+                        backoffForAttempt(attempt), this,
+                        [this, path, nextAttempt, userCb = std::move(userCb)]() mutable {
+                            statAttempt(path, std::move(userCb), nextAttempt);
+                        });
+                    return;
+                }
+                if (userCb) userCb(ok, stat, error);
+            };
+        m_statCallbacks.insert(reqId, std::move(wrapped));
+    }
     m_connection->sftpStat(reqId, path);
 }
 
 void RemoteFsBackend::readdirAsync(const QString &path, ReaddirCallback cb)
+{
+    readdirAttempt(path, std::move(cb), 0);
+}
+
+void RemoteFsBackend::readdirAttempt(const QString &path, ReaddirCallback cb, int attempt)
 {
     if (!m_connection) {
         if (cb) cb(false, QList<RemoteDirEntry>(), tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_readdirCallbacks.insert(reqId, std::move(cb));
+    if (cb) {
+        ReaddirCallback userCb = std::move(cb);
+        ReaddirCallback wrapped =
+            [this, path, attempt, userCb = std::move(userCb)](
+                bool ok, const QList<RemoteDirEntry> &entries, const QString &error) mutable {
+                if (!ok && attempt < kMaxRetries && isTransientError(error)) {
+                    const int nextAttempt = attempt + 1;
+                    QTimer::singleShot(
+                        backoffForAttempt(attempt), this,
+                        [this, path, nextAttempt, userCb = std::move(userCb)]() mutable {
+                            readdirAttempt(path, std::move(userCb), nextAttempt);
+                        });
+                    return;
+                }
+                if (userCb) userCb(ok, entries, error);
+            };
+        m_readdirCallbacks.insert(reqId, std::move(wrapped));
+    }
     m_connection->sftpReaddir(reqId, path);
 }
 

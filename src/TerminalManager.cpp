@@ -357,6 +357,70 @@ void TerminalManager::openTask(const QString &workspaceCwd, const TerminalTask &
     dock->terminalWidget()->setFocus();
 }
 
+void TerminalManager::openRemoteTask(remote::ExecutionContext *ctx,
+                                     const QString &remoteCwd,
+                                     const TerminalTask &task)
+{
+    if (!ctx || !ctx->isRemote()) {
+        return;
+    }
+    if (ctx->state() != remote::ExecutionContext::State::Connected) {
+        QMessageBox::warning(
+            m_mainWindow,
+            tr("Terminal"),
+            tr("Cannot run task '%1': remote workspace is not connected.").arg(task.name));
+        return;
+    }
+
+    auto *dock = new TerminalDock(ctx, remoteCwd, task.command, task.name, m_mainWindow);
+    DockMiddleClickCloser::install(dock);
+    wireContextMenu(dock);
+
+    QPointer<TerminalDock> p(dock);
+    m_docks.append(p);
+
+    connect(dock, &QObject::destroyed, this, [this](QObject *obj) {
+        for (int i = m_docks.size() - 1; i >= 0; --i) {
+            if (m_docks[i].isNull() || m_docks[i].data() == obj) {
+                m_docks.removeAt(i);
+            }
+        }
+    });
+
+    if (m_app) {
+        const TerminalColorScheme scheme = m_app->isEffectiveThemeDark()
+            ? TerminalColorScheme::darkScheme()
+            : TerminalColorScheme::lightScheme();
+        dock->terminalWidget()->setColorScheme(scheme);
+
+        if (m_app->getSettings()) {
+            QFont f;
+            const QString fontStr = m_app->getSettings()->terminalFont();
+            if (!fontStr.isEmpty() && f.fromString(fontStr)) {
+                dock->terminalWidget()->setTerminalFont(f);
+            } else {
+                dock->terminalWidget()->setTerminalFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+            }
+        }
+    }
+
+    TerminalDock *existing = nullptr;
+    for (const auto &d : m_docks) {
+        if (d.isNull()) continue;
+        if (d.data() == dock) continue;
+        existing = d.data();
+        break;
+    }
+
+    m_mainWindow->addDockWidget(Qt::BottomDockWidgetArea, dock);
+    if (existing) {
+        m_mainWindow->tabifyDockWidget(existing, dock);
+    }
+    dock->setVisible(true);
+    dock->raise();
+    dock->terminalWidget()->setFocus();
+}
+
 void TerminalManager::applyTheme()
 {
     if (!m_app) return;
@@ -415,7 +479,8 @@ TerminalDock *TerminalManager::findTaskDock(const QString &command, const QStrin
     return nullptr;
 }
 
-void TerminalManager::runOrRestartTask(const QString &cwd, const TerminalTask &task)
+void TerminalManager::runOrRestartTask(const QString &cwd, const TerminalTask &task,
+                                       remote::ExecutionContext *context)
 {
     TerminalDock *existing = findTaskDock(task.command, cwd);
     if (existing) {
@@ -427,7 +492,11 @@ void TerminalManager::runOrRestartTask(const QString &cwd, const TerminalTask &t
         }
         return;
     }
-    openTask(cwd, task);
+    if (context && context->isRemote()) {
+        openRemoteTask(context, cwd, task);
+    } else {
+        openTask(cwd, task);
+    }
 }
 
 QList<TerminalTask> TerminalManager::tasksForWorkspace(const QString &workspacePath) const

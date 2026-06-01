@@ -32,6 +32,7 @@
 #include "../remote/RemoteDirectoryWatcher.h"
 #include "../remote/RemoteFileSystemModel.h"
 #include "../remote/RemoteFsBackend.h"
+#include "../remote/SshProfile.h"
 #include "ui_FolderAsWorkspaceDock.h"
 
 #include <QApplication>
@@ -41,12 +42,18 @@
 #include <QDir>
 #include <QEvent>
 #include <QFileInfo>
+#include <QFont>
+#include <QFrame>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QHelpEvent>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QMenu>
 #include <QMetaObject>
 #include <QPointer>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QShowEvent>
 #include <QStyle>
 #include <QTabWidget>
@@ -253,6 +260,20 @@ void FolderAsWorkspaceDock::useRemoteBackend(remote::RemoteFsBackend *backend)
 {
     if (!backend) return;
 
+    // Idempotency guard for the reconnect path: if the dock already has a remote
+    // model backed by this same backend (same connection), skip the full rebuild.
+    // The model's existing tree is stale after a drop, but setRootPath (called by
+    // the caller right after) triggers a re-root + re-fetch that refreshes it.
+    if (!model && fsModel) {
+        // Already remote — check if the backend is the same object.
+        if (auto *existing = qobject_cast<remote::RemoteFileSystemModel *>(fsModel->asModel())) {
+            Q_UNUSED(existing);
+            // Already wired to a remote model. The caller will setRootPath to
+            // re-root the tree. No rebuild needed.
+            return;
+        }
+    }
+
     // Tear down the local model + its signal wiring. The git-decoration lambdas
     // were connected with `model` as the receiver, so Qt auto-disconnects them
     // when it is destroyed; the settings/theme connects with `this` as receiver
@@ -309,6 +330,155 @@ void FolderAsWorkspaceDock::useRemoteBackend(remote::RemoteFsBackend *backend)
     // same seam the backend's own directoryChanged feeds, so the model is the
     // single source of truth for row state either way.
     setupRemoteWatcher(backend);
+}
+
+// --- SSH connection banner (D10 / Batch H) ----------------------------------
+
+void FolderAsWorkspaceDock::ensureConnectionBanner()
+{
+    if (m_connectionBanner) {
+        return;
+    }
+
+    // The banner is inserted at the TOP of the Files tab layout, above the tree.
+    // Palette-driven chrome; status accent colors (soft warning yellow / error
+    // red) are applied only on the failed/lost states, per ui-dna. The neutral
+    // connecting state uses palette(window) so it blends into chrome.
+    m_connectionBanner = new QFrame(ui->filesTab);
+    m_connectionBanner->setObjectName(QStringLiteral("SshConnectionBanner"));
+    m_connectionBanner->setFrameShape(QFrame::NoFrame);
+
+    auto *outer = new QVBoxLayout(m_connectionBanner);
+    outer->setContentsMargins(8, 6, 8, 6);
+    outer->setSpacing(4);
+
+    auto *row = new QHBoxLayout();
+    row->setSpacing(6);
+
+    m_bannerLabel = new QLabel(m_connectionBanner);
+    m_bannerLabel->setWordWrap(true);
+    m_bannerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    row->addWidget(m_bannerLabel, 1);
+
+    // Indeterminate spinner shown only while connecting/reconnecting.
+    m_bannerSpinner = new QProgressBar(m_connectionBanner);
+    m_bannerSpinner->setRange(0, 0); // indeterminate
+    m_bannerSpinner->setTextVisible(false);
+    m_bannerSpinner->setFixedWidth(64);
+    m_bannerSpinner->setVisible(false);
+    row->addWidget(m_bannerSpinner, 0);
+
+    // Reconnect button — focusable so the banner is fully keyboard-accessible.
+    m_bannerReconnectBtn = new QPushButton(tr("Reconnect"), m_connectionBanner);
+    m_bannerReconnectBtn->setVisible(false);
+    m_bannerReconnectBtn->setFocusPolicy(Qt::StrongFocus);
+    connect(m_bannerReconnectBtn, &QPushButton::clicked, this, [this]() {
+        // Re-arm the connecting visual immediately so the click feels responsive;
+        // MainWindow re-runs registry->connect on the reconnectRequested signal.
+        showConnectingState(m_bannerLabel ? QString() : QString());
+        emit reconnectRequested(this);
+    });
+    row->addWidget(m_bannerReconnectBtn, 0);
+
+    outer->addLayout(row);
+
+    // Channel-queued indicator — a muted whisper below the main row.
+    m_channelQueuedLabel = new QLabel(tr("Waiting for an available channel…"),
+                                      m_connectionBanner);
+    m_channelQueuedLabel->setVisible(false);
+    {
+        QFont f = m_channelQueuedLabel->font();
+        f.setItalic(true);
+        m_channelQueuedLabel->setFont(f);
+        QPalette pal = m_channelQueuedLabel->palette();
+        pal.setColor(QPalette::WindowText, pal.color(QPalette::PlaceholderText));
+        m_channelQueuedLabel->setPalette(pal);
+    }
+    outer->addWidget(m_channelQueuedLabel);
+
+    // Insert at index 0 of the Files tab layout (above the tree view).
+    if (auto *filesLayout = qobject_cast<QVBoxLayout *>(ui->filesTab->layout())) {
+        filesLayout->insertWidget(0, m_connectionBanner);
+    }
+    m_connectionBanner->setVisible(false);
+}
+
+void FolderAsWorkspaceDock::showConnectingState(const QString &userHost)
+{
+    ensureConnectionBanner();
+    m_connectionBanner->setStyleSheet(QString()); // neutral chrome
+    m_bannerLabel->setText(userHost.isEmpty()
+                               ? tr("Connecting…")
+                               : tr("Connecting to %1…").arg(userHost));
+    m_bannerSpinner->setVisible(true);
+    m_bannerReconnectBtn->setVisible(false);
+    m_connectionBanner->setVisible(true);
+}
+
+void FolderAsWorkspaceDock::showConnectedState()
+{
+    if (!m_connectionBanner) {
+        return; // never showed a banner (e.g. local dock)
+    }
+    m_connectionBanner->setVisible(false);
+    if (m_channelQueuedLabel) {
+        m_channelQueuedLabel->setVisible(false);
+    }
+}
+
+void FolderAsWorkspaceDock::showFailedState(const QString &reason)
+{
+    ensureConnectionBanner();
+    // Soft error red (ui-dna status accent). Color is never the sole carrier —
+    // it is paired with explicit text and the Reconnect button.
+    m_connectionBanner->setStyleSheet(QStringLiteral(
+        "QFrame#SshConnectionBanner { background: #f8d7da; border: 1px solid #f5c6cb;"
+        " border-radius: 4px; }"));
+    m_bannerLabel->setText(reason.isEmpty()
+                               ? tr("Could not connect to the remote host.")
+                               : tr("Could not connect — %1").arg(reason));
+    m_bannerSpinner->setVisible(false);
+    m_bannerReconnectBtn->setVisible(true);
+    m_bannerReconnectBtn->setDefault(true);
+    m_connectionBanner->setVisible(true);
+}
+
+void FolderAsWorkspaceDock::showConnectionLostState(const QString &reason)
+{
+    ensureConnectionBanner();
+    m_connectionBanner->setStyleSheet(QStringLiteral(
+        "QFrame#SshConnectionBanner { background: #f8d7da; border: 1px solid #f5c6cb;"
+        " border-radius: 4px; }"));
+    m_bannerLabel->setText(reason.isEmpty()
+                               ? tr("Connection lost — Reconnect")
+                               : tr("Connection lost — %1").arg(reason));
+    m_bannerSpinner->setVisible(false);
+    m_bannerReconnectBtn->setVisible(true);
+    m_bannerReconnectBtn->setDefault(true);
+    m_connectionBanner->setVisible(true);
+}
+
+void FolderAsWorkspaceDock::showChannelQueuedState()
+{
+    ensureConnectionBanner();
+    m_channelQueuedLabel->setVisible(true);
+    // The queued whisper can appear while the tree is already live (Connected),
+    // so make sure the banner frame is visible to host it without disturbing the
+    // main row's current contents.
+    m_connectionBanner->setVisible(true);
+}
+
+void FolderAsWorkspaceDock::clearChannelQueuedState()
+{
+    if (m_channelQueuedLabel) {
+        m_channelQueuedLabel->setVisible(false);
+    }
+    // If the main banner row is otherwise idle (Connected, no spinner / button),
+    // hide the whole frame again so it doesn't reserve space.
+    if (m_connectionBanner && m_bannerSpinner && m_bannerReconnectBtn
+        && !m_bannerSpinner->isVisible() && !m_bannerReconnectBtn->isVisible()) {
+        m_connectionBanner->setVisible(false);
+    }
 }
 
 void FolderAsWorkspaceDock::setupRemoteWatcher(remote::RemoteFsBackend *backend)
@@ -526,8 +696,11 @@ void FolderAsWorkspaceDock::setRootPath(const QString &dir)
 
     // Window title doubles as the tab label when several workspaces are tabified
     // alongside each other, so make it the folder basename rather than the static
-    // .ui label.
-    if (dir.isEmpty()) {
+    // .ui label. SSH workspaces keep the "SSH: user@host" title set by MainWindow
+    // (the dir here is the remote POSIX path, not a meaningful local basename).
+    if (!m_sshWorkspaceUri.isEmpty()) {
+        // Leave the existing title (already set to "SSH: user@host").
+    } else if (dir.isEmpty()) {
         setWindowTitle(tr("Folder as Workspace"));
     } else {
         QString basename = QFileInfo(QDir::cleanPath(dir)).fileName();
@@ -543,6 +716,13 @@ void FolderAsWorkspaceDock::setRootPath(const QString &dir)
 
 QString FolderAsWorkspaceDock::rootPath() const
 {
+    // SSH workspaces store their identity as an ssh:// URI (D5a). Return it for
+    // deduplication, persistence, and context resolution. The model's rootPath is
+    // the POSIX path used for SFTP operations — callers that need the exec-cwd
+    // should go through TerminalCwdResolver, not rootPath().
+    if (!m_sshWorkspaceUri.isEmpty()) {
+        return m_sshWorkspaceUri;
+    }
     return fsModel ? fsModel->rootPath() : QString();
 }
 
@@ -1123,7 +1303,10 @@ void FolderAsWorkspaceDock::applySavedTreeState(const WorkspaceStateSnapshot &sn
 WorkspaceStateSnapshot FolderAsWorkspaceDock::captureState() const
 {
     WorkspaceStateSnapshot s;
-    s.rootPath = QDir::cleanPath(rootPath());
+    const QString rp = rootPath();
+    // SSH URIs must NOT be passed through QDir::cleanPath (it collapses the
+    // double-slash in "ssh://"). Local paths are cleaned for normalization.
+    s.rootPath = remote::isSshUri(rp) ? rp : QDir::cleanPath(rp);
     s.activeTabIndex = ui->tabs->currentIndex();
     s.lastUsedEpochMs = QDateTime::currentMSecsSinceEpoch();
 

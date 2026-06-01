@@ -1029,6 +1029,30 @@ target_sources(test_ssh_session_worker PRIVATE
 )
 add_test(NAME SshSessionWorker COMMAND test_ssh_session_worker)
 
+# --- SshSessionWorker transport-core fixes (offline): the D0 FIX-1..FIX-4
+#     correctness-critical invariants — ChannelBusy re-queue + backoff (FIX-1),
+#     unified channel counter + budget + starvation reserve (FIX-2), keepalive
+#     miss → connection-lost (FIX-3), non-blocking connect + cancel preempt
+#     (FIX-4). Driven by FakeSshTransport + the *ForTest hooks — NO network, no
+#     sshd, deterministic. ---
+qt_add_executable(test_ssh_transport_fixes test_ssh_transport_fixes.cpp)
+target_include_directories(test_ssh_transport_fixes PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(test_ssh_transport_fixes PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_ssh_transport_fixes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/FakeSshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/ISshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshProfile.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.h
+)
+add_test(NAME SshTransportFixes COMMAND test_ssh_transport_fixes)
+
 # --- RemoteFsBackend SFTP engine (offline): the D1 SFTP filesystem backend's
 #     read/write/stat/readdir behavior + the one-channel-reuse invariant,
 #     driven by FakeSshTransport + SshSessionWorker's SFTP slots. RemoteFsBackend

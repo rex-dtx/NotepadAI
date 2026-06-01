@@ -20,6 +20,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QLoggingCategory>
 
 #include "AcpAgentManager.h"
 #include "AcpConnection.h"
@@ -29,15 +30,24 @@
 #include "GoalAgent.h"
 #include "ScheduledTaskRegistry.h"
 #include "docks/AiAgentDock.h"
+#include "remote/ExecutionContext.h"
+#include "remote/ExecutionContextRegistry.h"
+#include "remote/SshProfile.h"
+
+namespace {
+Q_LOGGING_CATEGORY(lcScheduledTask, "notepadai.scheduledtask")
+} // namespace
 
 ScheduledTaskRunner::ScheduledTaskRunner(ScheduledTaskRegistry *registry,
                                          AcpAgentManager *manager,
                                          ApplicationSettings *settings,
+                                         remote::ExecutionContextRegistry *contextRegistry,
                                          QObject *parent)
     : QObject(parent)
     , m_registry(registry)
     , m_manager(manager)
     , m_settings(settings)
+    , m_contextRegistry(contextRegistry)
 {
     m_timer.setInterval(60000); // 60 seconds
     connect(&m_timer, &QTimer::timeout, this, &ScheduledTaskRunner::onTick);
@@ -136,13 +146,45 @@ void ScheduledTaskRunner::fireTask(const QString &taskId)
         }
     }
 
-    // Check cwd exists
-    if (!task.cwd.isEmpty() && !QFileInfo::exists(task.cwd)) {
-        return;
+    // Resolve execution context from the task's cwd (capture-at-spawn).
+    // If cwd is an ssh:// URI → remote context; otherwise local (nullptr).
+    remote::ExecutionContext *context = nullptr;
+    QString effectiveCwd = task.cwd;
+
+    if (remote::isSshUri(task.cwd)) {
+        const remote::SshUri parsed = remote::parseSshUri(task.cwd);
+        if (!parsed.valid) {
+            qCWarning(lcScheduledTask)
+                << "Skipping scheduled task" << task.name
+                << ": invalid SSH URI" << task.cwd;
+            return;
+        }
+        if (!m_contextRegistry) {
+            qCWarning(lcScheduledTask)
+                << "Skipping scheduled task" << task.name
+                << ": no execution context registry available";
+            return;
+        }
+        auto *remoteCtx = m_contextRegistry->remoteContext(parsed.profileId);
+        if (!remoteCtx
+            || remoteCtx->state() != remote::ExecutionContext::State::Connected) {
+            qCWarning(lcScheduledTask)
+                << "Skipping scheduled task" << task.name
+                << ": remote workspace not connected";
+            return;
+        }
+        context = remoteCtx;
+        effectiveCwd = parsed.remotePath;
+    } else {
+        // Local path — check existence as before
+        if (!task.cwd.isEmpty() && !QFileInfo::exists(task.cwd)) {
+            return;
+        }
     }
 
-    // Open agent
-    AiAgentDock *dock = m_manager->openAgent(task.agentId, task.cwd);
+    // Open agent with the resolved context (remote or nullptr for local)
+    AiAgentDock *dock = m_manager->openAgent(task.agentId, effectiveCwd,
+                                             false, context);
     if (!dock) {
         return;
     }

@@ -35,12 +35,16 @@ namespace remote {
 
 class SshConnection;
 
-// SFTP-backed IFileSystemBackend (D1). All filesystem work happens on the
-// SshConnection's worker thread over the ONE reused SFTP session the worker
-// opens via sftpInit (never a session/channel per op). The public API is
-// ASYNC: each *Async call mints a reqId, registers the caller's callback, and
-// posts the op to the worker; the matching sftp*Result signal (relayed queued
-// from the worker to the UI thread by SshConnection) resolves the callback.
+// SFTP-backed IFileSystemBackend (D1a). All filesystem work happens on the
+// SshConnection's worker thread over TWO independent SFTP channels the worker
+// opens lazily (one per lane): a BULK lane for file read/write (editor open/
+// save) and a METADATA lane for readdir/stat/poll-watch. The split ensures a
+// large bulk transfer never blocks latency-sensitive tree operations. The
+// public API is ASYNC: each *Async call mints a reqId, registers the caller's
+// callback, and posts the op to the worker; the matching sftp*Result signal
+// (relayed queued from the worker to the UI thread by SshConnection) resolves
+// the callback. Routing by kind is transparent to this class — the worker
+// routes internally based on the request slot called.
 //
 // Threading: this object lives on the UI thread; it never touches libssh2. It
 // only posts queued requests and receives queued results — no locks.
@@ -87,6 +91,32 @@ public:
     void statAsync(const QString &path, StatCallback cb);
     void readdirAsync(const QString &path, ReaddirCallback cb);
 
+    // D12 read-only auto-retry classifier. Returns true when `error` is a
+    // TRANSIENT (connection/session-level) worker failure that an idempotent
+    // read-only op may safely re-issue. The TRANSIENT set mirrors the
+    // connection/session-level reasons SshSessionWorker::failSftpOp emits, where
+    // a fresh retry on a reconnected / re-opened lane can plausibly succeed:
+    //   - "Not connected"               (enqueueSftpOp / requestSftp* while down)
+    //   - "Disconnected"                (failAllSftp on requestDisconnect)
+    //   - "Could not open SFTP session" (serviceSftpLane lane-init Error)
+    //   - "SSH connection lost[...]"    (enterConnectionLost: socket drop/keepalive)
+    // matched as case-insensitive substrings ("sftp session", "connection lost").
+    // Everything else is PERMANENT (no retry) — the per-op failure reasons
+    // "Could not open remote file for reading", "Remote read failed", and "Remote
+    // directory listing failed" are permission / I/O / no-such-file conditions
+    // that would just fail again. A normal absent path never reaches here at all:
+    // stat returns ok=true / exists=false, so stat-not-found never retries.
+    //
+    // Defined inline + static + pure so it is unit-testable WITHOUT linking the
+    // libssh2-backed SshConnection a live RemoteFsBackend would require.
+    static bool isTransientError(const QString &error)
+    {
+        return error.contains(QStringLiteral("not connected"), Qt::CaseInsensitive)
+            || error.contains(QStringLiteral("disconnected"), Qt::CaseInsensitive)
+            || error.contains(QStringLiteral("sftp session"), Qt::CaseInsensitive)
+            || error.contains(QStringLiteral("connection lost"), Qt::CaseInsensitive);
+    }
+
     // --- synchronous IFileSystemBackend overrides (fail-closed for remote) --
     QByteArray readFile(const QString &path, bool *ok = nullptr) override;
     bool writeFile(const QString &path, const QByteArray &data) override;
@@ -94,6 +124,18 @@ public:
     QStringList readdir(const QString &path) override;
 
 private:
+    // D12 read-only auto-retry. The public readFileAsync/statAsync/readdirAsync
+    // delegate to these attempt-0 helpers; on a TRANSIENT failure (see
+    // isTransientError) with attempt < kMaxRetries they re-issue the SAME op
+    // (fresh reqId, same path) after a bounded exponential backoff
+    // (200ms attempt 0→1, then 400ms attempt 1→2), capping at 3 attempts total
+    // before surfacing the error. The retry counter + backoff live entirely on
+    // this consumer side; the worker never replays. writeFileAsync (mutating)
+    // has NO retry helper — fail-no-replay by design.
+    void readFileAttempt(const QString &path, ReadCallback cb, int attempt);
+    void statAttempt(const QString &path, StatCallback cb, int attempt);
+    void readdirAttempt(const QString &path, ReaddirCallback cb, int attempt);
+
     void onReadResult(quint64 reqId, bool ok, const QByteArray &data, const QString &error);
     void onWriteResult(quint64 reqId, bool ok, const QString &error);
     void onStatResult(quint64 reqId, bool ok, bool exists, bool isDir,

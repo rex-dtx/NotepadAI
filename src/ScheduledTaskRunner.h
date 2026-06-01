@@ -29,6 +29,7 @@ class AcpAgentManager;
 class AiAgentDock;
 class ApplicationSettings;
 class ScheduledTaskRegistry;
+namespace remote { class ExecutionContextRegistry; }
 
 // Periodically checks scheduled tasks and fires them when their cron
 // expression matches. Owned by NotepadNextApplication.
@@ -40,6 +41,7 @@ public:
     explicit ScheduledTaskRunner(ScheduledTaskRegistry *registry,
                                  AcpAgentManager *manager,
                                  ApplicationSettings *settings,
+                                 remote::ExecutionContextRegistry *contextRegistry,
                                  QObject *parent = nullptr);
 
     void start();
@@ -61,6 +63,7 @@ private:
     ScheduledTaskRegistry *m_registry;
     AcpAgentManager *m_manager;
     ApplicationSettings *m_settings;
+    remote::ExecutionContextRegistry *m_contextRegistry;
     QTimer m_timer;
 
     QHash<QString, QPointer<AiAgentDock>> m_activeSessions;

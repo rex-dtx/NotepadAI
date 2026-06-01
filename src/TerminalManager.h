@@ -54,7 +54,12 @@ public slots:
     void openRemoteTerminal(remote::ExecutionContext *ctx, const QString &remoteCwd,
                             const QString &shell = QString());
     void openTask(const QString &workspaceCwd, const TerminalTask &task);
-    void runOrRestartTask(const QString &cwd, const TerminalTask &task);
+    // Remote task execution: run `task` on the remote host via an SSH PTY channel.
+    // `ctx` must be Connected. `remoteCwd` is the POSIX workspace root on the host.
+    void openRemoteTask(remote::ExecutionContext *ctx, const QString &remoteCwd,
+                        const TerminalTask &task);
+    void runOrRestartTask(const QString &cwd, const TerminalTask &task,
+                          remote::ExecutionContext *context = nullptr);
     void applyTheme();
     void applyFont();
     void shutdown();

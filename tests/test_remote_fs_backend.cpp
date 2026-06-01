@@ -44,6 +44,7 @@
 #include <memory>
 
 #include "remote/ISshTransport.h"
+#include "remote/RemoteFsBackend.h" // D12 isTransientError (inline static, pure)
 #include "remote/SshSessionWorker.h"
 
 #include "FakeSshTransport.h"
@@ -138,6 +139,10 @@ private slots:
     void readdir_entriesAndDoneFiltersDots();
     void readdir_eagainResumes();
     void oneSftpInitAcrossManyOps();
+    void bulkReadDoesNotBlockMetadataReaddir();
+
+    // D12 read-only auto-retry: classifier coverage.
+    void isTransientError_classification();
 };
 
 // --- read --------------------------------------------------------------------
@@ -381,7 +386,7 @@ void TestRemoteFsBackend::readdir_eagainResumes()
     delete worker;
 }
 
-// --- one-channel-reuse invariant ---------------------------------------------
+// --- two-channel-reuse invariant (D1a) ----------------------------------------
 
 void TestRemoteFsBackend::oneSftpInitAcrossManyOps()
 {
@@ -411,10 +416,116 @@ void TestRemoteFsBackend::oneSftpInitAcrossManyOps()
     QCOMPARE(statSpy.count(), 1);
     QCOMPARE(ddSpy.count(), 1);
 
-    // THE invariant: all four ops multiplexed on ONE reused SFTP session —
-    // never a session/channel per op.
-    QCOMPARE(f->sftpInitCalls, 1);
+    // D1a invariant: two SFTP sessions (one per lane) — bulk (read+write) and
+    // metadata (stat+readdir). Each lane opens its channel once and reuses it
+    // across all ops of that kind. Never a session/channel per op.
+    QCOMPARE(f->sftpInitCalls, 2);
     delete worker;
+}
+
+// --- D1a: bulk read does NOT block metadata readdir --------------------------
+
+void TestRemoteFsBackend::bulkReadDoesNotBlockMetadataReaddir()
+{
+    FakeSshTransport *f = nullptr;
+    SshSessionWorker *worker = makeReadyWorker(&f);
+
+    // Script a bulk read that stalls on EAGAIN after the first chunk — it stays
+    // "in flight" on the bulk lane, simulating a large file transfer.
+    const QString bulkPath = QStringLiteral("/home/alice/bigfile.bin");
+    f->sftpReadScript[bulkPath] = {
+        dataChunk("chunk1;"), againResult()
+        // No EOF yet — the bulk op is stuck mid-transfer.
+    };
+
+    // Script a metadata readdir that completes immediately (no EAGAIN).
+    const QString metaDir = QStringLiteral("/home/alice/project");
+    f->sftpReaddirScript[metaDir] = {
+        dirEntry("main.cpp", false, 1024),
+        dirEntry("lib", true, 4096),
+    };
+
+    QSignalSpy readSpy(worker, &SshSessionWorker::sftpReadDone);
+    QSignalSpy ddSpy(worker, &SshSessionWorker::sftpReaddirDone);
+
+    // Issue the bulk read first — it will stall on EAGAIN after "chunk1;".
+    worker->requestSftpRead(/*reqId=*/50, bulkPath);
+    QCOMPARE(readSpy.count(), 0); // stalled on EAGAIN — still in flight
+
+    // Issue the metadata readdir WHILE the bulk read is in flight.
+    worker->requestSftpReaddir(/*reqId=*/51, metaDir);
+
+    // The metadata op completes immediately (its lane is independent) even though
+    // the bulk lane is stalled. This is the D1a non-blocking guarantee.
+    QCOMPARE(ddSpy.count(), 1);
+    const auto entries = ddSpy.first().at(2).value<QList<RemoteDirEntry>>();
+    QCOMPARE(entries.size(), 2);
+    QCOMPARE(entries.at(0).name, QStringLiteral("main.cpp"));
+    QCOMPARE(entries.at(1).name, QStringLiteral("lib"));
+
+    // The bulk read is still NOT done (no more data scripted yet).
+    QCOMPARE(readSpy.count(), 0);
+
+    // Now provide the remaining bulk data and resume. The read handle is already
+    // open (the op is mid-Transfer), so the remaining reads are injected into the
+    // live handle state (reads are bound at open time, not re-read from the script).
+    for (auto it = f->sftpHandles.begin(); it != f->sftpHandles.end(); ++it) {
+        if (it->path == bulkPath && !it->forWrite) {
+            it->reads = { dataChunk("chunk2"), eofResult() };
+            break;
+        }
+    }
+    worker->serviceSftpForTest();
+    QCOMPARE(readSpy.count(), 1);
+    QVERIFY(readSpy.first().at(1).toBool()); // ok
+    QCOMPARE(readSpy.first().at(2).toByteArray(), QByteArrayLiteral("chunk1;chunk2"));
+
+    // Two SFTP sessions total: one for bulk, one for metadata.
+    QCOMPARE(f->sftpInitCalls, 2);
+    delete worker;
+}
+
+// --- D12 read-only auto-retry: transient/permanent classification -------------
+//
+// RemoteFsBackend's read-only ops (readFileAsync/statAsync/readdirAsync) auto-
+// retry up to 2 additional times (3 attempts total) with a 200ms->400ms backoff
+// on TRANSIENT failures, because they are idempotent; writeFileAsync (mutating)
+// never retries. The retry decision keys off the pure static classifier
+// RemoteFsBackend::isTransientError, asserted directly here.
+//
+// The full re-issue/backoff PATH cannot be exercised offline: instantiating a
+// RemoteFsBackend pulls in SshConnection -> Libssh2Transport -> libssh2/mbedTLS,
+// which this offline suite (FakeSshTransport + SshSessionWorker only) does not
+// link. That path is verified by (a) code review of the attempt-N helpers in
+// RemoteFsBackend.cpp and (b) the existing worker-level transient-failure
+// coverage -- the lane-init failure surfaces "Could not open SFTP session"
+// (see FakeSshTransport::sftpInitFailsRemaining), exactly the TRANSIENT reason
+// the backend retries on. isTransientError is inline + static + pure, so it is
+// fully unit-testable here without any connection.
+void TestRemoteFsBackend::isTransientError_classification()
+{
+    // TRANSIENT (connection/session-level) -> retry. Case-insensitive substrings
+    // matching SshSessionWorker::failSftpOp / enterConnectionLost reasons.
+    QVERIFY(RemoteFsBackend::isTransientError(QStringLiteral("Not connected")));
+    QVERIFY(RemoteFsBackend::isTransientError(QStringLiteral("Disconnected")));
+    QVERIFY(RemoteFsBackend::isTransientError(QStringLiteral("Could not open SFTP session")));
+    QVERIFY(RemoteFsBackend::isTransientError(QStringLiteral("SSH connection lost")));
+    QVERIFY(RemoteFsBackend::isTransientError(
+        QStringLiteral("SSH connection lost (keepalive timeout)")));
+    // Case-insensitivity is load-bearing (reasons are tr()-able, casing varies).
+    QVERIFY(RemoteFsBackend::isTransientError(QStringLiteral("not CONNECTED")));
+    QVERIFY(RemoteFsBackend::isTransientError(QStringLiteral("CONNECTION LOST")));
+
+    // PERMANENT (permission / I/O / no-such-file) -> NO retry. These are the
+    // per-op failSftpOp reasons that would just fail again on replay.
+    QVERIFY(!RemoteFsBackend::isTransientError(
+        QStringLiteral("Could not open remote file for reading")));
+    QVERIFY(!RemoteFsBackend::isTransientError(QStringLiteral("Remote read failed")));
+    QVERIFY(!RemoteFsBackend::isTransientError(
+        QStringLiteral("Remote directory listing failed")));
+    QVERIFY(!RemoteFsBackend::isTransientError(QStringLiteral("Could not open remote directory")));
+    QVERIFY(!RemoteFsBackend::isTransientError(QStringLiteral("No SSH connection")));
+    QVERIFY(!RemoteFsBackend::isTransientError(QString())); // empty = success path, never retried
 }
 
 QTEST_MAIN(TestRemoteFsBackend)

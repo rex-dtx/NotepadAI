@@ -53,7 +53,11 @@ public:
 
     quint64 execStart(const QString &command, const QByteArray &stdinPayload) override
     {
-        return m_connection ? m_connection->execStart(command, stdinPayload) : 0;
+        // ACP agent sessions are always long-lived (the channel stays open for
+        // the session's lifetime), so tag explicitly for the FIX-2 admission budget.
+        return m_connection
+                   ? m_connection->execStart(command, stdinPayload, remote::ExecKind::LongLived)
+                   : 0;
     }
 
     void execWrite(quint64 reqId, const QByteArray &bytes) override

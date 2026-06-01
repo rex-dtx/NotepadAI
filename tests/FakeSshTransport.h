@@ -49,6 +49,22 @@ public:
     Step authStep = Step::Ok;
     QByteArray fakeHostKey = QByteArrayLiteral("FAKE-HOST-KEY-BLOB");
 
+    // ---- connect-in-progress scripting (FIX-4) -----------------------------
+    // While connectInProgress is true, connectSocket() returns Step::Again on
+    // every call (the non-blocking ::connect is still waiting for writable), so
+    // the worker stays in ConnectingSocket and a queued requestDisconnect can
+    // preempt. Flip it false (and optionally set connectStep = Error) to let the
+    // next advanceConnect proceed / fail. connectSocketCalls counts every call.
+    bool connectInProgress = false;
+    int  connectSocketCalls = 0;
+
+    // ---- keepalive scripting (FIX-3) ---------------------------------------
+    // sendKeepalive() returns keepaliveReturn (default 15 = secs-to-next on
+    // success); set it < 0 to simulate a fatal socket error during the probe.
+    // keepaliveCalls tracks how many probes the worker actually sent.
+    int keepaliveReturn = 15;
+    int keepaliveCalls = 0;
+
     // recorded auth
     int authPasswordCalls = 0;
     int authPublicKeyCalls = 0;
@@ -62,6 +78,15 @@ public:
     int nextId = 1;
     int closedCount = 0;
     QList<int> closedIds;
+
+    // ---- ChannelBusy scripting (FIX-1) -------------------------------------
+    // openChannel() returns Step::ChannelBusy for the first openBusyCount calls
+    // (server MaxSessions back-pressure), then resumes its normal Ok/openStep
+    // behavior. Lets the backoff test assert the open is re-queued (never
+    // dropped) and eventually succeeds. openChannelCalls counts every call so
+    // the test can verify the retry cadence.
+    int openBusyCount = 0;
+    int openChannelCalls = 0;
 
     // per-transportId stdout read script (popped front; empty -> Again)
     QHash<int, QList<ReadResult>> readScript;
@@ -89,15 +114,29 @@ public:
     QHash<int, QList<ReadResult>> readStderrScript;
     QHash<int, int> readStderrCalls;
 
-    // ---- SFTP scripting (D1/D11) -------------------------------------------
-    // The fake models ONE reused SFTP session (sftpInit/sftpShutdown) exactly
-    // like the production transport, so the one-channel-reuse invariant is
-    // observable: sftpInitCalls counts how many times a session was actually
-    // established (a test asserts it stays 1 across many ops).
+    // ---- SFTP scripting (D1/D1a/D11) -----------------------------------------
+    // The fake models the SFTP session layer. D1a splits into two independent
+    // lanes (bulk + metadata), each calling sftpInit(lane) once — so
+    // sftpInitCalls counts how many sessions were established (expected: 2 after
+    // the split, one per lane). The fake tracks a per-lane established flag plus
+    // a live-session count so sftpShutdown can free both.
     Step sftpInitStep = Step::Ok;
-    int sftpInitCalls = 0;   // times a NEW session was established
-    bool sftpSessionUp = false;
+    int sftpInitCalls = 0;   // times a NEW session was established (any lane)
+    int sftpSessionCount = 0; // currently-live sessions (0, 1, or 2)
     int sftpShutdownCalls = 0;
+    // Per-lane "session established" flags (D1a). The worker calls sftpInit(lane)
+    // once per lane and reuses it; the fake returns Ok without re-incrementing
+    // sftpInitCalls for an already-established lane.
+    bool sftpBulkInited = false;
+    bool sftpMetaInited = false;
+    // ---- transient-init injection (D12 read-only retry) --------------------
+    // sftpInitFailsRemaining > 0 makes sftpInit(lane) return Error that many
+    // times before succeeding — simulating a transient "Could not open SFTP
+    // session" (the worker surfaces exactly that reason, which RemoteFsBackend
+    // classifies as transient and retries for read-only ops). Decremented on each
+    // failing call. Lets a test drive "fail N times then succeed" deterministically
+    // without a real connection drop.
+    int sftpInitFailsRemaining = 0;
 
     // File-open scripting, keyed by path. sftpOpenStep lets a test force
     // Again/Error on the next open of any path; per-path overrides win.
@@ -142,7 +181,12 @@ public:
     QHash<int, SftpHandleState> sftpHandles;
     int nextSftpHandle = 1;
 
-    Step connectSocket(const QString &, int) override { return connectStep; }
+    Step connectSocket(const QString &, int) override
+    {
+        ++connectSocketCalls;
+        if (connectInProgress) return Step::Again;
+        return connectStep;
+    }
     Step handshake() override { return handshakeStep; }
     QByteArray hostKey() const override { return fakeHostKey; }
 
@@ -168,7 +212,14 @@ public:
 
     OpenResult openChannel() override
     {
+        ++openChannelCalls;
         OpenResult r;
+        // FIX-1: ChannelBusy scripting — return ChannelBusy N times first.
+        if (openBusyCount > 0) {
+            --openBusyCount;
+            r.step = Step::ChannelBusy;
+            return r;
+        }
         if (openStep != Step::Ok) {
             r.step = openStep;
             return r;
@@ -231,17 +282,36 @@ public:
     qintptr socketFd() const override { return -1; } // no real QSocketNotifier in tests
     void disconnect() override {}
 
+    // FIX-3: scriptable keepalive probe. Default 15 (secs-to-next on success);
+    // set keepaliveReturn < 0 to simulate a fatal socket error during the send.
+    int sendKeepalive() override
+    {
+        ++keepaliveCalls;
+        return keepaliveReturn;
+    }
+
     // PLACEHOLDER_SFTP_METHODS
-    SftpOpenResult sftpInit() override
+    SftpOpenResult sftpInit(SftpLane lane) override
     {
         SftpOpenResult r;
+        // D12: transient-failure injection — fail the next N init attempts so a
+        // read-only op surfaces "Could not open SFTP session" and RemoteFsBackend
+        // retries. Applies to whichever lane init is attempted.
+        if (sftpInitFailsRemaining > 0) {
+            --sftpInitFailsRemaining;
+            r.step = Step::Error;
+            return r;
+        }
         if (sftpInitStep != Step::Ok) {
             r.step = sftpInitStep;
             return r;
         }
-        if (!sftpSessionUp) {
-            sftpSessionUp = true;
-            ++sftpInitCalls; // only counts a genuinely-new session
+        // D1a: one session per lane; already-established lane reuses (no re-count).
+        bool &inited = (lane == SftpLane::Bulk) ? sftpBulkInited : sftpMetaInited;
+        if (!inited) {
+            inited = true;
+            ++sftpSessionCount;
+            ++sftpInitCalls; // counts every new session (D1a: expected 2, one/lane)
         }
         r.step = Step::Ok;
         return r;
@@ -250,11 +320,19 @@ public:
     void sftpShutdown() override
     {
         ++sftpShutdownCalls;
-        sftpSessionUp = false;
+        // D1a: free BOTH lane sessions.
+        if (sftpBulkInited) {
+            sftpBulkInited = false;
+            if (sftpSessionCount > 0) --sftpSessionCount;
+        }
+        if (sftpMetaInited) {
+            sftpMetaInited = false;
+            if (sftpSessionCount > 0) --sftpSessionCount;
+        }
         sftpHandles.clear();
     }
 
-    SftpOpenResult sftpOpen(const QString &path, bool forWrite) override
+    SftpOpenResult sftpOpen(SftpLane, const QString &path, bool forWrite) override
     {
         SftpOpenResult r;
         sftpOpenedPaths.append(path);
@@ -277,7 +355,7 @@ public:
         return r;
     }
 
-    ReadResult sftpRead(int handleId) override
+    ReadResult sftpRead(SftpLane, int handleId) override
     {
         ReadResult out;
         auto it = sftpHandles.find(handleId);
@@ -293,7 +371,7 @@ public:
         return q.takeFirst();
     }
 
-    qint64 sftpWrite(int handleId, const QByteArray &bytes) override
+    qint64 sftpWrite(SftpLane, int handleId, const QByteArray &bytes) override
     {
         auto it = sftpHandles.find(handleId);
         if (it == sftpHandles.end()) {
@@ -308,7 +386,7 @@ public:
         return bytes.size(); // accept in full
     }
 
-    void sftpClose(int handleId) override
+    void sftpClose(SftpLane, int handleId) override
     {
         ++sftpCloseCalls;
         auto it = sftpHandles.find(handleId);
@@ -321,7 +399,7 @@ public:
         sftpHandles.erase(it);
     }
 
-    SftpOpenResult sftpOpendir(const QString &path) override
+    SftpOpenResult sftpOpendir(SftpLane, const QString &path) override
     {
         SftpOpenResult r;
         sftpOpendirPaths.append(path);
@@ -341,7 +419,7 @@ public:
         return r;
     }
 
-    SftpDirEntry sftpReaddir(int handleId) override
+    SftpDirEntry sftpReaddir(SftpLane, int handleId) override
     {
         SftpDirEntry out;
         auto it = sftpHandles.find(handleId);
@@ -357,9 +435,9 @@ public:
         return q.takeFirst();
     }
 
-    void sftpClosedir(int handleId) override { sftpClose(handleId); }
+    void sftpClosedir(SftpLane lane, int handleId) override { sftpClose(lane, handleId); }
 
-    SftpStatResult sftpStat(const QString &path) override
+    SftpStatResult sftpStat(SftpLane, const QString &path) override
     {
         sftpStatPaths.append(path);
         SftpStatResult def;

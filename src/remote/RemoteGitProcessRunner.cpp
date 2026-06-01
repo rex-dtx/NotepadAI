@@ -77,8 +77,10 @@ void RemoteGitProcessRunner::run(const QString &cwd,
 
     const QString command = buildRemoteCommand(cwd, argv);
     // SshConnection mints a process-wide-unique reqId and posts the exec request
-    // onto the worker; results arrive via execStdout/execStderr/execDone.
-    m_reqId = m_connection->execStart(command, stdinPayload);
+    // onto the worker; results arrive via execStdout/execStderr/execDone. Git is
+    // short-lived (open, run, close) → tag ShortLived for the FIX-2 admission
+    // budget so a git op is never starved behind long-lived ACP channels.
+    m_reqId = m_connection->execStart(command, stdinPayload, ExecKind::ShortLived);
 
     if (timeoutMs > 0) {
         m_timeout->start(timeoutMs);

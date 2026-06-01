@@ -60,6 +60,20 @@ TerminalDock::TerminalDock(remote::ExecutionContext *ctx, const QString &shell, 
     init(shell, cwd);
 }
 
+TerminalDock::TerminalDock(remote::ExecutionContext *ctx, const QString &remoteCwd,
+                           const QString &taskCommand, const QString &taskName, QWidget *parent)
+    : QDockWidget(parent)
+    , m_initialCwd(remoteCwd)
+    , m_shell(QString()) // remote default $SHELL
+    , m_taskCommand(taskCommand)
+    , m_taskName(taskName.isEmpty() ? taskCommand : taskName)
+    , m_context(ctx)
+{
+    init(QString(), remoteCwd);
+    setupTaskTitleBar();
+    setWindowTitle(tr("Task — %1").arg(m_taskName));
+}
+
 void TerminalDock::init(const QString &shell, const QString &cwd)
 {
     setAttribute(Qt::WA_DeleteOnClose, true);
@@ -151,7 +165,7 @@ void TerminalDock::restartTask()
         QMessageBox::critical(this, tr("Terminal"), msg);
     });
 
-    m_terminal->start(m_shell, m_initialCwd, m_taskEnv);
+    m_terminal->start(m_shell, m_initialCwd, m_taskEnv, m_context.data());
 
     connect(m_terminal, &TerminalWidget::firstOutputReceived, this, [this]() {
         if (!m_cwdWarning.isEmpty()) {

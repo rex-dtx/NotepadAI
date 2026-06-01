@@ -29,13 +29,16 @@
 #include <libssh2_sftp.h>
 
 #include <cstring>
+#include <cerrno>
 
 #ifdef Q_OS_WIN
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
 #else
+#  include <fcntl.h>
 #  include <netdb.h>
 #  include <netinet/in.h>
+#  include <sys/select.h>
 #  include <sys/socket.h>
 #  include <sys/types.h>
 #  include <unistd.h>
@@ -55,10 +58,52 @@ inline ISshTransport::Step stepFromRc(int rc)
 #ifdef Q_OS_WIN
 void closeSock(qintptr s) { ::closesocket(static_cast<SOCKET>(s)); }
 inline SOCKET sockHandle(qintptr s) { return static_cast<SOCKET>(s); }
+void setNonBlocking(qintptr s)
+{
+    u_long mode = 1;
+    ioctlsocket(sockHandle(s), FIONBIO, &mode);
+}
+bool connectInProgress()
+{
+    return (WSAGetLastError() == WSAEWOULDBLOCK);
+}
 #else
 void closeSock(qintptr s) { ::close(static_cast<int>(s)); }
 inline int sockHandle(qintptr s) { return static_cast<int>(s); }
+void setNonBlocking(qintptr s)
+{
+    int flags = fcntl(static_cast<int>(s), F_GETFL, 0);
+    if (flags >= 0) fcntl(static_cast<int>(s), F_SETFL, flags | O_NONBLOCK);
+}
+bool connectInProgress()
+{
+    return (errno == EINPROGRESS);
+}
 #endif
+
+// Check if a non-blocking connect has completed. Returns true if the socket is
+// writable with no pending error (connected), false otherwise.
+bool isSocketConnected(qintptr s)
+{
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(sockHandle(s), &wfds);
+    struct timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    const int sel = ::select(static_cast<int>(s) + 1, nullptr, &wfds, nullptr, &tv);
+    if (sel <= 0) return false;
+    // Check SO_ERROR to confirm the connect succeeded (not just writable).
+    int err = 0;
+#ifdef Q_OS_WIN
+    int errLen = sizeof(err);
+#else
+    socklen_t errLen = sizeof(err);
+#endif
+    getsockopt(sockHandle(s), SOL_SOCKET, SO_ERROR,
+               reinterpret_cast<char *>(&err), &errLen);
+    return (err == 0);
+}
 
 // Decode the libssh2 SFTP attribute flags into our flat SftpAttrs. Only the
 // fields the file tree + editor consume (size, mtime, dir bit) are extracted.
@@ -84,6 +129,7 @@ inline ISshTransport::SftpAttrs attrsFromLibssh2(const LIBSSH2_SFTP_ATTRIBUTES &
 
 Libssh2Transport::Libssh2Transport()
 {
+    m_elapsed.start();
     // libssh2_init is refcounted; safe to call per transport. CRYPTO backend is
     // the vendored mbedTLS (selected at build time).
     if (libssh2_init(0) == 0) {
@@ -101,15 +147,19 @@ Libssh2Transport::~Libssh2Transport()
 
 Libssh2Transport::Step Libssh2Transport::connectSocket(const QString &host, int port)
 {
-    if (m_sock >= 0) {
-        return Step::Ok; // already connected
+    // FIX-4: re-entrant, non-blocking connect. The first call resolves the host
+    // and issues a non-blocking ::connect (expecting EINPROGRESS / WSAEWOULDBLOCK).
+    // Subsequent calls poll for writability with a zero timeout and return Again
+    // until the TCP handshake completes or a 15 s deadline expires. Returning
+    // Again (never blocking) lets the worker preempt with a queued Cancel.
+    if (m_session) {
+        return Step::Ok; // session already created → socket fully connected
     }
 
 #ifdef Q_OS_WIN
     {
-        // WSAStartup is idempotent across calls; matched by WSACleanup in
-        // disconnect-time teardown is not strictly necessary for a long-lived
-        // app, so we leave it started.
+        // WSAStartup is idempotent across calls; we leave it started for the
+        // app's lifetime (no matching WSACleanup for a long-lived process).
         static bool wsaStarted = false;
         if (!wsaStarted) {
             WSADATA wsa;
@@ -121,44 +171,91 @@ Libssh2Transport::Step Libssh2Transport::connectSocket(const QString &host, int 
     }
 #endif
 
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    const QByteArray hostUtf8 = host.toUtf8();
-    const QByteArray portStr = QByteArray::number(port);
-    addrinfo *res = nullptr;
-    if (getaddrinfo(hostUtf8.constData(), portStr.constData(), &hints, &res) != 0 || !res) {
-        return Step::Error;
-    }
-
-    qintptr sock = -1;
-    for (addrinfo *ai = res; ai; ai = ai->ai_next) {
-        const qintptr s = static_cast<qintptr>(::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
-        if (s < 0) {
-            continue;
+    // --- second-and-later calls: the connect is in flight, poll writability ---
+    if (m_connecting && m_sock >= 0) {
+        if (isSocketConnected(m_sock)) {
+            m_connecting = false;
+            m_socketConnected = true;
+            // fall through to create the session below
+        } else {
+            if (m_elapsed.elapsed() >= m_connectDeadlineMs) {
+                closeSock(m_sock);
+                m_sock = -1;
+                m_connecting = false;
+                return Step::Error; // 15 s timeout → "Could not reach host"
+            }
+            return Step::Again; // still connecting; worker re-polls on the next edge/tick
         }
-        if (::connect(sockHandle(s), ai->ai_addr,
-                      static_cast<int>(ai->ai_addrlen)) == 0) {
-            sock = s;
-            break;
+    }
+
+    // --- first call: resolve + kick off the non-blocking connect --------------
+    if (!m_socketConnected) {
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        const QByteArray hostUtf8 = host.toUtf8();
+        const QByteArray portStr = QByteArray::number(port);
+        addrinfo *res = nullptr;
+        // NOTE: getaddrinfo is the OS default (potentially blocking) resolver. The
+        // overall connect path still returns Again immediately after this call so a
+        // queued Cancel preempts the *connect* wait; a fully non-blocking resolver
+        // (getaddrinfo_a / a resolver thread) is a future refinement (D0 FIX-4).
+        if (getaddrinfo(hostUtf8.constData(), portStr.constData(), &hints, &res) != 0 || !res) {
+            return Step::Error;
         }
-        closeSock(s);
-    }
-    freeaddrinfo(res);
 
-    if (sock < 0) {
-        return Step::Error;
-    }
-    m_sock = sock;
+        qintptr sock = -1;
+        for (addrinfo *ai = res; ai; ai = ai->ai_next) {
+            const qintptr s = static_cast<qintptr>(
+                ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
+            if (s < 0) {
+                continue;
+            }
+            // Set the socket non-blocking BEFORE connect so ::connect returns
+            // immediately with EINPROGRESS / WSAEWOULDBLOCK rather than blocking.
+            setNonBlocking(s);
+            const int rc = ::connect(sockHandle(s), ai->ai_addr,
+                                     static_cast<int>(ai->ai_addrlen));
+            if (rc == 0) {
+                // Rare: connected synchronously (e.g. localhost).
+                sock = s;
+                m_socketConnected = true;
+                break;
+            }
+            if (connectInProgress()) {
+                sock = s;
+                m_connecting = true;
+                break;
+            }
+            closeSock(s);
+        }
+        freeaddrinfo(res);
 
+        if (sock < 0) {
+            return Step::Error;
+        }
+        m_sock = sock;
+        m_connectDeadlineMs = m_elapsed.elapsed() + 15000; // 15 s connect timeout
+        if (m_connecting) {
+            return Step::Again; // wait for writable; worker re-polls
+        }
+        // else: synchronously connected → fall through to session creation
+    }
+
+    // --- TCP connected: create the libssh2 session ----------------------------
     m_session = libssh2_session_init();
     if (!m_session) {
         closeSock(m_sock);
         m_sock = -1;
+        m_socketConnected = false;
         return Step::Error;
     }
     // Non-blocking from here on — the worker drives via QSocketNotifier.
     libssh2_session_set_blocking(m_session, 0);
+    // FIX-3: configure server-side keepalive so an idle TCP drop is detected in
+    // seconds, not the OS TCP-keepalive default (~2 h). want_reply=1 asks the
+    // server to answer each probe; the worker drives sendKeepalive() on a timer.
+    libssh2_keepalive_config(m_session, 1, 15);
     return Step::Ok;
 }
 
@@ -270,7 +367,15 @@ Libssh2Transport::OpenResult Libssh2Transport::openChannel()
         return out;
     }
     const int err = libssh2_session_last_errno(m_session);
-    out.step = (err == LIBSSH2_ERROR_EAGAIN) ? Step::Again : Step::Error;
+    if (err == LIBSSH2_ERROR_EAGAIN) {
+        out.step = Step::Again;
+    } else if (err == LIBSSH2_ERROR_CHANNEL_FAILURE) {
+        // FIX-1: server denied the channel (MaxSessions hit) — transient
+        // back-pressure, NOT a dead connection. The worker re-queues with backoff.
+        out.step = Step::ChannelBusy;
+    } else {
+        out.step = Step::Error;
+    }
     return out;
 }
 
@@ -393,20 +498,21 @@ void Libssh2Transport::closeChannel(int channelId)
     m_channels.remove(channelId);
 }
 
-Libssh2Transport::SftpOpenResult Libssh2Transport::sftpInit()
+Libssh2Transport::SftpOpenResult Libssh2Transport::sftpInit(SftpLane lane)
 {
     SftpOpenResult out;
     if (!m_session) {
         out.step = Step::Error;
         return out;
     }
-    if (m_sftp) {
-        out.step = Step::Ok; // already established; reuse the single session
+    _LIBSSH2_SFTP *&sftp = sftpSession(lane);
+    if (sftp) {
+        out.step = Step::Ok; // already established for this lane; reuse
         return out;
     }
-    LIBSSH2_SFTP *sftp = libssh2_sftp_init(m_session);
-    if (sftp) {
-        m_sftp = sftp;
+    LIBSSH2_SFTP *s = libssh2_sftp_init(m_session);
+    if (s) {
+        sftp = s;
         out.step = Step::Ok;
         return out;
     }
@@ -417,23 +523,30 @@ Libssh2Transport::SftpOpenResult Libssh2Transport::sftpInit()
 
 void Libssh2Transport::sftpShutdown()
 {
-    // Free any still-open file/dir handles before the session goes away.
+    // Free any still-open file/dir handles before either session goes away.
     for (auto it = m_sftpHandles.begin(); it != m_sftpHandles.end(); ++it) {
         if (it.value()) {
             libssh2_sftp_close_handle(it.value());
         }
     }
     m_sftpHandles.clear();
-    if (m_sftp) {
-        libssh2_sftp_shutdown(m_sftp);
-        m_sftp = nullptr;
+    // D1a: tear BOTH lane sessions down.
+    if (m_sftpBulk) {
+        libssh2_sftp_shutdown(m_sftpBulk);
+        m_sftpBulk = nullptr;
+    }
+    if (m_sftpMeta) {
+        libssh2_sftp_shutdown(m_sftpMeta);
+        m_sftpMeta = nullptr;
     }
 }
 
-Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(const QString &path, bool forWrite)
+Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(SftpLane lane,
+                                                            const QString &path, bool forWrite)
 {
     SftpOpenResult out;
-    if (!m_sftp) {
+    _LIBSSH2_SFTP *sftp = sftpSession(lane);
+    if (!sftp) {
         out.step = Step::Error;
         return out;
     }
@@ -446,7 +559,7 @@ Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(const QString &path,
            | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH) // 0644
         : 0;
     LIBSSH2_SFTP_HANDLE *h = libssh2_sftp_open_ex(
-        m_sftp, p.constData(), static_cast<unsigned int>(p.size()),
+        sftp, p.constData(), static_cast<unsigned int>(p.size()),
         flags, mode, LIBSSH2_SFTP_OPENFILE);
     if (h) {
         const int id = m_nextSftpHandleId++;
@@ -460,8 +573,9 @@ Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(const QString &path,
     return out;
 }
 
-Libssh2Transport::ReadResult Libssh2Transport::sftpRead(int handleId)
+Libssh2Transport::ReadResult Libssh2Transport::sftpRead(SftpLane lane, int handleId)
 {
+    Q_UNUSED(lane); // the handle carries its own session linkage
     ReadResult out;
     LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
     if (!h) {
@@ -486,8 +600,9 @@ Libssh2Transport::ReadResult Libssh2Transport::sftpRead(int handleId)
     return out;
 }
 
-qint64 Libssh2Transport::sftpWrite(int handleId, const QByteArray &bytes)
+qint64 Libssh2Transport::sftpWrite(SftpLane lane, int handleId, const QByteArray &bytes)
 {
+    Q_UNUSED(lane); // the handle carries its own session linkage
     LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
     if (!h) return kWriteError;
     const ssize_t n = libssh2_sftp_write(h, bytes.constData(),
@@ -497,24 +612,26 @@ qint64 Libssh2Transport::sftpWrite(int handleId, const QByteArray &bytes)
     return static_cast<qint64>(n);
 }
 
-void Libssh2Transport::sftpClose(int handleId)
+void Libssh2Transport::sftpClose(SftpLane lane, int handleId)
 {
+    Q_UNUSED(lane); // the handle carries its own session linkage
     LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
     if (!h) return;
     libssh2_sftp_close_handle(h);
     m_sftpHandles.remove(handleId);
 }
 
-Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpendir(const QString &path)
+Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpendir(SftpLane lane, const QString &path)
 {
     SftpOpenResult out;
-    if (!m_sftp) {
+    _LIBSSH2_SFTP *sftp = sftpSession(lane);
+    if (!sftp) {
         out.step = Step::Error;
         return out;
     }
     const QByteArray p = path.toUtf8();
     LIBSSH2_SFTP_HANDLE *h = libssh2_sftp_open_ex(
-        m_sftp, p.constData(), static_cast<unsigned int>(p.size()),
+        sftp, p.constData(), static_cast<unsigned int>(p.size()),
         0, 0, LIBSSH2_SFTP_OPENDIR);
     if (h) {
         const int id = m_nextSftpHandleId++;
@@ -528,8 +645,9 @@ Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpendir(const QString &pa
     return out;
 }
 
-Libssh2Transport::SftpDirEntry Libssh2Transport::sftpReaddir(int handleId)
+Libssh2Transport::SftpDirEntry Libssh2Transport::sftpReaddir(SftpLane lane, int handleId)
 {
+    Q_UNUSED(lane); // the handle carries its own session linkage
     SftpDirEntry out;
     LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
     if (!h) {
@@ -558,28 +676,43 @@ Libssh2Transport::SftpDirEntry Libssh2Transport::sftpReaddir(int handleId)
     return out;
 }
 
-void Libssh2Transport::sftpClosedir(int handleId)
+void Libssh2Transport::sftpClosedir(SftpLane lane, int handleId)
 {
-    sftpClose(handleId); // handle close is identical for files and dirs
+    sftpClose(lane, handleId); // handle close is identical for files and dirs
 }
 
-Libssh2Transport::SftpStatResult Libssh2Transport::sftpStat(const QString &path)
+Libssh2Transport::SftpStatResult Libssh2Transport::sftpStat(SftpLane lane, const QString &path)
 {
     SftpStatResult out;
-    if (!m_sftp) {
+    _LIBSSH2_SFTP *sftp = sftpSession(lane);
+    if (!sftp) {
         out.step = Step::Error;
         return out;
     }
     const QByteArray p = path.toUtf8();
     LIBSSH2_SFTP_ATTRIBUTES attrs{};
     const int rc = libssh2_sftp_stat_ex(
-        m_sftp, p.constData(), static_cast<unsigned int>(p.size()),
+        sftp, p.constData(), static_cast<unsigned int>(p.size()),
         LIBSSH2_SFTP_STAT, &attrs);
     out.step = stepFromRc(rc);
     if (out.step == Step::Ok) {
         out.attrs = attrsFromLibssh2(attrs);
     }
     return out;
+}
+
+int Libssh2Transport::sendKeepalive()
+{
+    if (!m_session) return -1;
+    int secondsToNext = 0;
+    const int rc = libssh2_keepalive_send(m_session, &secondsToNext);
+    if (rc == LIBSSH2_ERROR_EAGAIN) {
+        return 0; // non-fatal; retry on the next edge
+    }
+    if (rc < 0) {
+        return -1; // fatal socket error
+    }
+    return secondsToNext;
 }
 
 void Libssh2Transport::disconnect()
@@ -609,6 +742,8 @@ void Libssh2Transport::disconnect()
         closeSock(m_sock);
         m_sock = -1;
     }
+    m_connecting = false;
+    m_socketConnected = false;
 }
 
 } // namespace remote

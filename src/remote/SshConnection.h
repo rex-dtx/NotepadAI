@@ -90,11 +90,12 @@ public:
     void resizeChannel(int logicalId, int cols, int rows);
     void closeChannel(int logicalId);
 
-    // --- SFTP (D1) -----------------------------------------------------------
+    // --- SFTP (D1a) ----------------------------------------------------------
     // Posted to the worker (queued). Called by RemoteFsBackend. reqId is minted
     // by the backend and echoed in the matching sftp*Result signal so it can
-    // resolve the right pending callback. All ops reuse the single SFTP session
-    // the worker opens once; results arrive on the UI thread via the signals.
+    // resolve the right pending callback. The worker routes by kind: read/write
+    // go to the bulk SFTP lane, stat/readdir to the metadata lane (D1a two-
+    // channel split). Results arrive on the UI thread via the signals below.
     void sftpRead(quint64 reqId, const QString &path);
     void sftpWrite(quint64 reqId, const QString &path, const QByteArray &data);
     void sftpStat(quint64 reqId, const QString &path);
@@ -107,7 +108,14 @@ public:
     // exec* result signals (multiple runners share one connection, so the id
     // must be unique across them — minted here, not per-runner). execCancel
     // tears down an in-flight op's channel without a result.
+    //
+    // FIX-2: the kind-carrying overload classifies the exec op for the admission
+    // budget — ShortLived (git-exec) may use the reserved short-lived slot,
+    // LongLived (acp-exec) may not. The 2-arg overload defaults to ShortLived so
+    // existing callers/tests are unaffected.
     quint64 execStart(const QString &command, const QByteArray &stdinPayload);
+    quint64 execStart(const QString &command, const QByteArray &stdinPayload,
+                      remote::ExecKind kind);
     void execCancel(quint64 reqId);
     // Append more bytes to an in-flight exec op's stdin (D8). Unlike the one-shot
     // execStart(stdinPayload) feed used by the git runner, a long-lived ACP agent
@@ -128,6 +136,10 @@ signals:
     void connectionLost(const QString &reason);
     void channelReady(int logicalId);
     void channelOpenFailed(int logicalId, const QString &reason);
+    // FIX-2: relayed from the worker when a channel open cannot be admitted
+    // immediately (the dynamic budget is full). The UI raises a "Waiting for an
+    // available channel…" banner; the normal channelReady fires once a slot frees.
+    void channelQueued(int logicalId);
 
     // --- SFTP results (D1) — relayed queued from the worker ------------------
     void sftpReadResult(quint64 reqId, bool ok, const QByteArray &data, const QString &error);

@@ -20,6 +20,7 @@
 #define REMOTE_LIBSSH2TRANSPORT_H
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QString>
 
@@ -67,16 +68,18 @@ public:
     int chExitStatus(int channelId) override;
     void closeChannel(int channelId) override;
 
-    SftpOpenResult sftpInit() override;
+    SftpOpenResult sftpInit(SftpLane lane) override;
     void sftpShutdown() override;
-    SftpOpenResult sftpOpen(const QString &path, bool forWrite) override;
-    ReadResult sftpRead(int handleId) override;
-    qint64 sftpWrite(int handleId, const QByteArray &bytes) override;
-    void sftpClose(int handleId) override;
-    SftpOpenResult sftpOpendir(const QString &path) override;
-    SftpDirEntry sftpReaddir(int handleId) override;
-    void sftpClosedir(int handleId) override;
-    SftpStatResult sftpStat(const QString &path) override;
+    SftpOpenResult sftpOpen(SftpLane lane, const QString &path, bool forWrite) override;
+    ReadResult sftpRead(SftpLane lane, int handleId) override;
+    qint64 sftpWrite(SftpLane lane, int handleId, const QByteArray &bytes) override;
+    void sftpClose(SftpLane lane, int handleId) override;
+    SftpOpenResult sftpOpendir(SftpLane lane, const QString &path) override;
+    SftpDirEntry sftpReaddir(SftpLane lane, int handleId) override;
+    void sftpClosedir(SftpLane lane, int handleId) override;
+    SftpStatResult sftpStat(SftpLane lane, const QString &path) override;
+
+    int sendKeepalive() override;
 
     qintptr socketFd() const override { return m_sock; }
     void disconnect() override;
@@ -84,6 +87,9 @@ public:
 private:
     _LIBSSH2_CHANNEL *channel(int channelId) const { return m_channels.value(channelId, nullptr); }
     _LIBSSH2_SFTP_HANDLE *sftpHandle(int handleId) const { return m_sftpHandles.value(handleId, nullptr); }
+    // D1a: select the LIBSSH2_SFTP session for a lane. Returns the address of the
+    // member pointer so callers can both read it and lazily assign it in sftpInit.
+    _LIBSSH2_SFTP *&sftpSession(SftpLane lane) { return lane == SftpLane::Bulk ? m_sftpBulk : m_sftpMeta; }
 
     _LIBSSH2_SESSION *m_session = nullptr;
     _LIBSSH2_AGENT *m_agent = nullptr;
@@ -94,11 +100,25 @@ private:
     void *m_agentPrevId = nullptr; // last-tried agent identity (auth walk)
     bool m_libssh2Inited = false;
 
-    // SFTP state — the single reused session (D1) plus its open file/dir
-    // handles keyed by the int ids this transport hands out.
-    _LIBSSH2_SFTP *m_sftp = nullptr;
+    // SFTP state — D1a: TWO independent reused sessions (Bulk + Meta), each a
+    // distinct LIBSSH2_SFTP channel on the multiplexed connection, so a large
+    // bulk transfer never blocks a metadata op. File/dir handles are keyed by the
+    // int ids this transport hands out from a single monotonic counter — the ids
+    // never collide across lanes, and each LIBSSH2_SFTP_HANDLE* carries its own
+    // session linkage, so sftpRead/sftpWrite/sftpClose resolve the right session
+    // implicitly via the handle pointer regardless of the lane arg.
+    _LIBSSH2_SFTP *m_sftpBulk = nullptr;
+    _LIBSSH2_SFTP *m_sftpMeta = nullptr;
     QHash<int, _LIBSSH2_SFTP_HANDLE *> m_sftpHandles;
     int m_nextSftpHandleId = 1;
+
+    // Non-blocking connect state (FIX-4). connectSocket is re-entrant: the first
+    // call resolves + creates a non-blocking socket + issues ::connect (EINPROGRESS);
+    // subsequent calls check writability until connected or the deadline expires.
+    bool m_connecting = false;       // true while ::connect is in progress
+    bool m_socketConnected = false;  // true once the TCP handshake completed
+    qint64 m_connectDeadlineMs = 0;  // monotonic deadline (ms since epoch of m_elapsed)
+    QElapsedTimer m_elapsed;         // started in ctor; used for connect deadline
 };
 
 } // namespace remote

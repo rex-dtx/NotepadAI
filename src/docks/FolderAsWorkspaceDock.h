@@ -37,7 +37,11 @@ class FolderAsWorkspaceDock;
 
 class FolderAsWorkspaceFsModel;
 class FolderAsWorkspaceProxyModel;
+class QFrame;
+class QLabel;
 class QMenu;
+class QProgressBar;
+class QPushButton;
 class QTimer;
 class GitTabWidget;
 class GitDiffViewController;
@@ -80,6 +84,38 @@ public:
     // (the remote git path is wired in a later batch). `backend` is owned by the
     // workspace's RemoteExecutionContext and must outlive this dock.
     void useRemoteBackend(remote::RemoteFsBackend *backend);
+
+    // --- SSH connection-state surface (D10 / Batch H) -----------------------
+    // The banner is an inline, palette-driven, keyboard-accessible row at the top
+    // of the dock that surfaces the live SSH connection lifecycle without ever
+    // blocking the UI or popping a modal. MainWindow drives these as the
+    // workspace's RemoteExecutionContext changes state. None of this touches the
+    // tree model — it only shows/hides the banner above it. A purely-local dock
+    // never calls these, so the banner stays hidden (zero layout cost).
+
+    // Show "Connecting to user@host…" with an indeterminate spinner. Used both on
+    // the initial open and on startup auto-reconnect, before the tree is live.
+    void showConnectingState(const QString &userHost);
+    // Connection is up: hide the banner so only the tree shows. Caller has already
+    // (or is about to) populate the tree via useRemoteBackend.
+    void showConnectedState();
+    // Background reconnect / connect failed: inline reason + a Reconnect button.
+    // No modal. Clicking Reconnect emits reconnectRequested().
+    void showFailedState(const QString &reason);
+    // Mid-session connection drop: "Connection lost — Reconnect" banner with a
+    // Reconnect button. Distinct copy from the startup-failed case.
+    void showConnectionLostState(const QString &reason);
+    // FIX-2 back-pressure: "Waiting for an available channel…" indicator while a
+    // channel open is queued behind the per-profile budget. Cleared by
+    // clearChannelQueuedState() once a slot frees (channelReady).
+    void showChannelQueuedState();
+    void clearChannelQueuedState();
+
+    // Set the SSH workspace URI identity (D5a). When set, rootPath() returns this
+    // URI for deduplication/persistence/context-resolution. The model still
+    // receives the POSIX path via setRootPath(). Call BEFORE setRootPath().
+    void setSshWorkspaceUri(const QString &uri) { m_sshWorkspaceUri = uri; }
+    QString sshWorkspaceUri() const { return m_sshWorkspaceUri; }
 
     void setGitOperationManager(GitOperationManager *mgr);
 
@@ -155,6 +191,9 @@ signals:
     // workspace-state dirty bit for the 60s autosave path.
     void stateDirty();
     void treeContextMenuRequested(QMenu *menu, const QString &path, bool isDir);
+
+    // SSH connection lifecycle — MainWindow subscribes to drive registry->connect.
+    void reconnectRequested(FolderAsWorkspaceDock *dock);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -264,6 +303,24 @@ private:
     // settles, so the editor tab is always the last one activated.
     bool m_diffRenderPending = false;
     QString m_pendingEditorOpenPath;
+
+    // --- SSH connection banner (D10 / Batch H) ------------------------------
+    // Inline banner at the top of the Files tab, above the tree. Hidden for local
+    // workspaces. Palette-driven, keyboard-accessible (Reconnect button is
+    // focusable). Created lazily on first showConnectingState/showFailedState call.
+    QFrame *m_connectionBanner = nullptr;
+    QLabel *m_bannerLabel = nullptr;
+    QProgressBar *m_bannerSpinner = nullptr;
+    QPushButton *m_bannerReconnectBtn = nullptr;
+    // Thin "Waiting for an available channel…" label below the main banner.
+    QLabel *m_channelQueuedLabel = nullptr;
+    void ensureConnectionBanner();
+
+    // SSH workspace identity (D5a). When non-empty, rootPath() returns this URI
+    // instead of the model's root path, so deduplication, persistence, and
+    // activeExecutionContext resolution all key off the ssh:// URI. The model
+    // itself receives only the POSIX path for SFTP operations.
+    QString m_sshWorkspaceUri;
 
     void ensureGitTab();
     GitDiffViewController *ensureGitDiffViewController();
