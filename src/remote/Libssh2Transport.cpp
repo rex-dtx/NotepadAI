@@ -424,6 +424,16 @@ qint64 Libssh2Transport::chWrite(int channelId, const QByteArray &bytes)
     return static_cast<qint64>(n);
 }
 
+ISshTransport::Step Libssh2Transport::chSendEof(int channelId)
+{
+    LIBSSH2_CHANNEL *ch = channel(channelId);
+    if (!ch) return Step::Error;
+    const int rc = libssh2_channel_send_eof(ch);
+    if (rc == LIBSSH2_ERROR_EAGAIN) return Step::Again;
+    if (rc < 0) return Step::Error;
+    return Step::Ok;
+}
+
 Libssh2Transport::ReadResult Libssh2Transport::chRead(int channelId)
 {
     ReadResult out;

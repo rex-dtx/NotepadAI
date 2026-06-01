@@ -388,6 +388,7 @@ private:
         QByteArray stdinPayload;   // fed once at Streaming start
         qint64     stdinOffset = 0;
         bool       stdinSent = false;
+        bool       eofSent = false;
         QByteArray streamStdin;
         qint64     streamStdinOffset = 0;
         bool       stdoutEof = false;

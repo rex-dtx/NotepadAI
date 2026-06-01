@@ -63,6 +63,7 @@ public:
     Step resizePty(int channelId, int cols, int rows) override;
     Step execOrShell(int channelId, const QString &command) override;
     qint64 chWrite(int channelId, const QByteArray &bytes) override;
+    Step chSendEof(int channelId) override;
     ReadResult chRead(int channelId) override;
     ReadResult chReadStderr(int channelId) override;
     int chExitStatus(int channelId) override;

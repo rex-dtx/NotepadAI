@@ -1358,6 +1358,24 @@ bool SshSessionWorker::advanceExecOp(ExecOp &op)
             }
         }
 
+        // ShortLived ops: send EOF after all stdin is written so the remote
+        // process sees end-of-input (e.g. git commit -F - reading message from
+        // stdin). LongLived ops (ACP) keep stdin open for execWrite frames.
+        if (op.stdinSent && !op.eofSent && op.kind == ExecKind::ShortLived) {
+            const ISshTransport::Step eof = m_transport->chSendEof(op.transportId);
+            if (eof == ISshTransport::Step::Again) {
+                setWriteNotifierEnabled(true);
+                return false;
+            }
+            if (eof == ISshTransport::Step::Error) {
+                m_transport->closeChannel(op.transportId);
+                op.transportId = -1;
+                emit execDone(op.reqId, -1);
+                return true;
+            }
+            op.eofSent = true;
+        }
+
         // Drain stdout.
         if (!op.stdoutEof) {
             for (;;) {

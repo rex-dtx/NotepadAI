@@ -151,6 +151,10 @@ public:
     // command empty → interactive shell; otherwise exec the command.
     virtual Step execOrShell(int channelId, const QString &command) = 0;
     virtual qint64 chWrite(int channelId, const QByteArray &bytes) = 0;
+    // Signal EOF on the channel's stdin (half-close write direction). The remote
+    // process sees end-of-input. Returns Again if the underlying send would block
+    // (caller retries on next pump), Error on hard failure.
+    virtual Step chSendEof(int channelId) = 0;
     virtual ReadResult chRead(int channelId) = 0;
     // Reads the channel's STDERR stream (SSH extended-data id 1), separate from
     // chRead's stdout. Needed by the remote git/exec path (D6/D8) which must

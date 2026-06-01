@@ -1827,8 +1827,9 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 activeIsFile = true;
             }
         }
-        const bool workspaceOk = TerminalCwdResolver::canOpenInWorkspace(workspaceRoot);
-        const bool folderOk = TerminalCwdResolver::canOpenInFolder(activeFilePath, activeIsFile, workspaceRoot);
+        remote::ExecutionContext *ctx = activeExecutionContext();
+        const bool workspaceOk = TerminalCwdResolver::canOpenInWorkspaceForContext(ctx, workspaceRoot);
+        const bool folderOk = TerminalCwdResolver::canOpenInFolderForContext(ctx, activeFilePath, activeIsFile, workspaceRoot);
 
         AcpAgentManager *manager = this->app->getAiAgentManager();
         AcpAgentRegistry *registry = manager ? manager->registry() : nullptr;
@@ -1854,9 +1855,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 }
                 const QString agentId = agent.id;
                 connect(action, &QAction::triggered, this, [this, agentId, isWorkspaceVariant]() {
+                    remote::ExecutionContext *ctx = activeExecutionContext();
                     QString cwd;
                     if (isWorkspaceVariant) {
-                        cwd = TerminalCwdResolver::resolveWorkspace(currentWorkspaceRoot());
+                        cwd = TerminalCwdResolver::resolveWorkspaceForContext(ctx, currentWorkspaceRoot());
                     } else {
                         const QString workspaceRoot = currentWorkspaceRoot();
                         QString activeFilePath;
@@ -1867,14 +1869,13 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                                 activeIsFile = true;
                             }
                         }
-                        cwd = TerminalCwdResolver::resolveFolder(activeFilePath, activeIsFile, workspaceRoot);
+                        cwd = TerminalCwdResolver::resolveFolderForContext(ctx, activeFilePath, activeIsFile, workspaceRoot);
                     }
                     if (cwd.isEmpty()) return;
 
                     AcpAgentManager *m = this->app->getAiAgentManager();
                     if (!m) return;
-                    AiAgentDock *dock = m->openAgent(agentId, cwd, /*recordAsLastUsed=*/true,
-                                                     activeExecutionContext());
+                    AiAgentDock *dock = m->openAgent(agentId, cwd, /*recordAsLastUsed=*/true, ctx);
                     if (dock) {
                         attachAiAgentDock(dock);
                     }
@@ -1914,17 +1915,17 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 activeIsFile = true;
             }
         }
-        QString cwd = TerminalCwdResolver::resolveWorkspace(workspaceRoot);
+        remote::ExecutionContext *ctx = activeExecutionContext();
+        QString cwd = TerminalCwdResolver::resolveWorkspaceForContext(ctx, workspaceRoot);
         if (cwd.isEmpty()) {
-            cwd = TerminalCwdResolver::resolveFolder(activeFilePath, activeIsFile, workspaceRoot);
+            cwd = TerminalCwdResolver::resolveFolderForContext(ctx, activeFilePath, activeIsFile, workspaceRoot);
         }
         if (cwd.isEmpty()) {
             statusBar()->showMessage(tr("Open a workspace or a saved file to start an AI tab"), 4000);
             return;
         }
 
-        AiAgentDock *dock = manager->openAgent(agentId, cwd, /*recordAsLastUsed=*/true,
-                                               activeExecutionContext());
+        AiAgentDock *dock = manager->openAgent(agentId, cwd, /*recordAsLastUsed=*/true, ctx);
         if (dock) {
             attachAiAgentDock(dock);
         }

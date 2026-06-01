@@ -107,6 +107,10 @@ private slots:
     void exec_stderrCapturedDistinctly();
     void exec_nonZeroExitMapped();
     void exec_stdinFedToChannel();
+    void exec_stdinEofSentForShortLived();
+    void exec_eofEagainRetries();
+    void exec_eofErrorPropagates();
+    void exec_longLivedNoEof();
     void exec_eagainResumes();
     void exec_cancelClosesChannelNoDone();
 };
@@ -236,6 +240,97 @@ void TestRemoteGitRunner::exec_stdinFedToChannel()
     QCOMPARE(f->chWritten.value(1), stdinPayload);
     QCOMPARE(doneSpy.count(), 1);
     QCOMPARE(doneSpy.first().at(1).toInt(), 0);
+    delete worker;
+}
+
+void TestRemoteGitRunner::exec_stdinEofSentForShortLived()
+{
+    FakeSshTransport *f = nullptr;
+    SshSessionWorker *worker = makeReadyWorker(&f);
+
+    f->readScript[1] = { dataChunk("committed"), eofResult() };
+    f->exitStatus[1] = 0;
+
+    const QByteArray msg = QByteArrayLiteral("fix: close stdin for remote commit\n");
+    QSignalSpy doneSpy(worker, &SshSessionWorker::execDone);
+    // ShortLived (default) — simulates git commit -F -
+    worker->requestExec(/*reqId=*/42, QStringLiteral("git 'commit' '-F' '-'"), msg);
+
+    QCOMPARE(f->chWritten.value(1), msg);
+    // EOF must have been sent on the channel after stdin was written.
+    QVERIFY(f->eofSentIds.contains(1));
+    QCOMPARE(doneSpy.count(), 1);
+    QCOMPARE(doneSpy.first().at(1).toInt(), 0);
+    delete worker;
+}
+
+void TestRemoteGitRunner::exec_eofEagainRetries()
+{
+    FakeSshTransport *f = nullptr;
+    SshSessionWorker *worker = makeReadyWorker(&f);
+
+    // Script: first chSendEof returns Again, second returns Ok.
+    f->eofScript[1] = { ISshTransport::Step::Again, ISshTransport::Step::Ok };
+    f->readScript[1] = { dataChunk("done"), eofResult() };
+    f->exitStatus[1] = 0;
+
+    const QByteArray msg = QByteArrayLiteral("msg\n");
+    QSignalSpy doneSpy(worker, &SshSessionWorker::execDone);
+    worker->requestExec(/*reqId=*/50, QStringLiteral("git 'commit' '-F' '-'"), msg);
+
+    // First pump: stdin written, EOF returns Again — op not done yet.
+    QCOMPARE(f->chWritten.value(1), msg);
+    QVERIFY(!f->eofSentIds.contains(1));
+    QCOMPARE(doneSpy.count(), 0);
+
+    // Second pump: EOF succeeds, stdout drains, op completes.
+    worker->serviceExecForTest();
+    QVERIFY(f->eofSentIds.contains(1));
+    QCOMPARE(doneSpy.count(), 1);
+    QCOMPARE(doneSpy.first().at(1).toInt(), 0);
+    delete worker;
+}
+
+void TestRemoteGitRunner::exec_eofErrorPropagates()
+{
+    FakeSshTransport *f = nullptr;
+    SshSessionWorker *worker = makeReadyWorker(&f);
+
+    // Script: chSendEof returns Error — hard failure.
+    f->eofScript[1] = { ISshTransport::Step::Error };
+    f->readScript[1] = { eofResult() };
+    f->exitStatus[1] = 0;
+
+    const QByteArray msg = QByteArrayLiteral("msg\n");
+    QSignalSpy doneSpy(worker, &SshSessionWorker::execDone);
+    worker->requestExec(/*reqId=*/51, QStringLiteral("git 'commit' '-F' '-'"), msg);
+
+    // EOF error → channel closed, execDone fired with -1.
+    QVERIFY(f->closedIds.contains(1));
+    QCOMPARE(doneSpy.count(), 1);
+    QCOMPARE(doneSpy.first().at(1).toInt(), -1);
+    delete worker;
+}
+
+void TestRemoteGitRunner::exec_longLivedNoEof()
+{
+    FakeSshTransport *f = nullptr;
+    SshSessionWorker *worker = makeReadyWorker(&f);
+
+    // LongLived channel with stdin payload — simulates ACP agent start with
+    // an initial payload. EOF must NOT be sent (stdin stays open for execWrite).
+    f->readScript[1] = { dataChunk("ack"), eofResult() };
+    f->exitStatus[1] = 0;
+
+    const QByteArray initPayload = QByteArrayLiteral("{\"jsonrpc\":\"2.0\"}\n");
+    QSignalSpy doneSpy(worker, &SshSessionWorker::execDone);
+    worker->requestExec(/*reqId=*/99, QStringLiteral("acp-agent"),
+                        initPayload, ExecKind::LongLived);
+
+    QCOMPARE(f->chWritten.value(1), initPayload);
+    // EOF must NOT have been sent — stdin stays open for streaming writes.
+    QVERIFY(!f->eofSentIds.contains(1));
+    QCOMPARE(doneSpy.count(), 1);
     delete worker;
 }
 

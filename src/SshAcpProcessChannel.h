@@ -80,21 +80,60 @@ public:
         return out;
     }
 
-    // Build `cd <cwd> && exec <command> <args...>` with every token shell-quoted.
-    // An empty cwd skips the `cd` prefix (runs in the channel's default dir, e.g.
-    // the remote home). `exec` replaces the shell so the agent is the channel's
-    // process group leader and signals/exit map straight through.
+    // Build a remote launch command that probes for the binary in the default
+    // PATH, then bash's login PATH, then bash's interactive (.bashrc) PATH,
+    // and exec's through whichever shell found it. The structure is:
+    //   if command -v <cmd> >/dev/null 2>&1; then
+    //     cd <cwd> && exec <cmd> <args>
+    //   elif bash -lc 'command -v "$0"' <cmd> >/dev/null 2>&1; then
+    //     exec bash -lc 'exec 1>&3 3>&-; cd <cwd> && exec <cmd> <args>' 3>&1 1>/dev/null
+    //   elif bash -ic 'command -v "$0"' <cmd> </dev/null >/dev/null 2>&1; then
+    //     exec bash -ic 'exec 0<&4 4<&- 1>&3 3>&-; cd <cwd> && exec <cmd> <args>' \
+    //       4<&0 3>&1 0</dev/null 1>/dev/null
+    //   else
+    //     exit 127
+    //   fi
+    // Three tiers:
+    //  1. Default PATH — no bash needed, no startup files, clean stdio.
+    //  2. bash -lc — login, non-interactive. Sources /etc/profile +
+    //     ~/.bash_profile (or ~/.profile). Covers profile-based nvm installs.
+    //     Stdout suppressed during startup via fd3 dup (profiles can echo);
+    //     restored (1>&3 3>&-) before exec.
+    //  3. bash -ic — interactive, non-login. Sources ~/.bashrc directly.
+    //     Covers the common case where nvm wrote to ~/.bashrc and .bashrc has
+    //     a non-interactive early-return guard that blocks -lc from reaching
+    //     the nvm init. Both stdout AND stdin are protected: stdout via fd3,
+    //     stdin via fd4 (interactive bash readline init can consume bytes).
+    //     The condition probe also gets </dev/null to prevent stdin consumption
+    //     before the branch is chosen. Restored (0<&4 4<&- 1>&3 3>&-) before
+    //     exec so the agent owns clean stdio. Uses POSIX fd-dup (>&N, <&N)
+    //     instead of /dev/fd/N for portability (absent on minimal containers).
+    // Once a branch is chosen, `exec` replaces the shell — no fallback can
+    // fire after the agent starts.
     static QString buildRemoteCommand(const QString &cwd, const QString &command,
                                       const QStringList &args)
     {
-        QString cmd;
+        const QString qcmd = shellQuote(command);
+        QString inner;
         if (!cwd.isEmpty()) {
-            cmd += QStringLiteral("cd ") + shellQuote(cwd) + QStringLiteral(" && ");
+            inner += QStringLiteral("cd ") + shellQuote(cwd) + QStringLiteral(" && ");
         }
-        cmd += QStringLiteral("exec ") + shellQuote(command);
+        inner += QStringLiteral("exec ") + qcmd;
         for (const QString &arg : args) {
-            cmd += QLatin1Char(' ') + shellQuote(arg);
+            inner += QLatin1Char(' ') + shellQuote(arg);
         }
+        QString cmd;
+        cmd += QStringLiteral("if command -v ") + qcmd + QStringLiteral(" >/dev/null 2>&1; then ");
+        cmd += inner + QStringLiteral("; ");
+        cmd += QStringLiteral("elif bash -lc 'command -v \"$0\"' ") + qcmd + QStringLiteral(" </dev/null >/dev/null 2>&1; then ");
+        cmd += QStringLiteral("exec bash -lc ")
+             + shellQuote(QStringLiteral("exec 0<&4 4<&- 1>&3 3>&-; ") + inner)
+             + QStringLiteral(" 4<&0 3>&1 0</dev/null 1>/dev/null; ");
+        cmd += QStringLiteral("elif bash -ic 'command -v \"$0\"' ") + qcmd + QStringLiteral(" </dev/null >/dev/null 2>&1; then ");
+        cmd += QStringLiteral("exec bash -ic ")
+             + shellQuote(QStringLiteral("exec 0<&4 4<&- 1>&3 3>&-; ") + inner)
+             + QStringLiteral(" 4<&0 3>&1 0</dev/null 1>/dev/null; ");
+        cmd += QStringLiteral("else exit 127; fi");
         return cmd;
     }
 

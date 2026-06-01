@@ -232,12 +232,33 @@ void AcpConnection::spawnRemote(const AcpAgentDefinition &agent, const QString &
     appendDebugLog(QStringLiteral("spawn: remote host=%1 cwd=%2")
                        .arg(m_execContext->displayName(), workingDirectory));
 
-    // Binary availability probe (D8/10.3): `command -v <binary>` over a one-shot
-    // exec on the host. Present (exit 0) → spawn; absent → clear error and STOP,
-    // never a local fallback (a local agent with a remote cwd is meaningless).
-    const QStringList probeArgv{
-        QStringLiteral("command"), QStringLiteral("-v"), agent.command};
-    appendDebugLog(QStringLiteral("spawn: probing remote binary: command -v %1").arg(agent.command));
+    // Binary availability probe (D8/10.3): three-tier check over a one-shot exec.
+    // 1. `command -v <cmd>` in the default remote shell (covers binaries in the
+    //    system PATH — works even when bash is absent).
+    // 2. `bash -lc` — login shell sources /etc/profile + ~/.bash_profile (or
+    //    ~/.profile). Covers nvm/volta installs that went into profile files.
+    // 3. `bash -ic` — interactive non-login shell sources ~/.bashrc directly.
+    //    Covers the common case where nvm's install script wrote to ~/.bashrc
+    //    (its first choice when $SHELL is bash) and .bashrc has a non-interactive
+    //    early-return guard (`case $- in *i*) ;; *) return;; esac`) that blocks
+    //    `bash -lc` from reaching the nvm init lines.
+    // SSH exec channels run a non-interactive non-login shell by default (often
+    // dash on Debian/Ubuntu) which doesn't source any user startup files.
+    // The command name is single-quoted and passed as $0 to avoid nested quoting.
+    // Stdout from the -ic probe is suppressed via fd3 save/restore so startup
+    // noise doesn't pollute the probe output.
+    const QString qcmd = QLatin1Char('\'')
+        + QString(agent.command).replace(QLatin1Char('\''), QLatin1String("'\\''"))
+        + QLatin1Char('\'');
+    const QString probeCmd = QStringLiteral(
+        "if command -v %1 >/dev/null 2>&1; then command -v %1; "
+        "elif bash -lc 'command -v \"$0\"' %1 >/dev/null 2>&1; then "
+            "bash -lc 'exec 1>&3 3>&-; command -v \"$0\"' %1 3>&1 1>/dev/null; "
+        "elif bash -ic 'command -v \"$0\"' %1 </dev/null >/dev/null 2>&1; then "
+            "bash -ic 'exec 0<&4 4<&- 1>&3 3>&-; command -v \"$0\"' %1 4<&0 3>&1 0</dev/null 1>/dev/null; "
+        "else exit 127; fi").arg(qcmd);
+    const QStringList probeArgv{QStringLiteral("sh"), QStringLiteral("-c"), probeCmd};
+    appendDebugLog(QStringLiteral("spawn: probing remote binary: %1").arg(probeCmd));
 
     QPointer<AcpConnection> self(this);
     const QString host = m_execContext->displayName();

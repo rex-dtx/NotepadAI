@@ -98,6 +98,8 @@ public:
     // per-transportId captured channel-write bytes (stdin feed assertion for the
     // exec/git path — the worker writes stdinPayload here before draining).
     QHash<int, QByteArray> chWritten;
+    QList<int> eofSentIds;
+    QHash<int, QList<Step>> eofScript;
 
     QHash<int, int> exitStatus;
 
@@ -251,6 +253,14 @@ public:
         }
         chWritten[channelId].append(bytes); // capture stdin feed
         return bytes.size(); // accept in full
+    }
+
+    Step chSendEof(int channelId) override
+    {
+        QList<Step> &q = eofScript[channelId];
+        Step result = q.isEmpty() ? Step::Ok : q.takeFirst();
+        if (result == Step::Ok) eofSentIds.append(channelId);
+        return result;
     }
 
     ReadResult chRead(int channelId) override
