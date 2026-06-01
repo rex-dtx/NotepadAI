@@ -67,18 +67,27 @@ GitCommitFetcher::GitCommitFetcher(QObject *parent)
 
 GitCommitFetcher::~GitCommitFetcher() = default;
 
+void GitCommitFetcher::setRunnerScope(const QString &scope)
+{
+    if (scope == m_runnerScope) return;
+    m_runnerScope = scope;
+    if (!m_repoRoot.isEmpty()) {
+        if (m_runner) m_runner->asQObject()->deleteLater();
+        const QString s = m_runnerScope.isEmpty() ? m_repoRoot : m_runnerScope;
+        m_runner = GitRunnerFactory::createForRepo(s, this);
+        m_runner->setMaxOutputBytes(kDefaultCapBytes);
+    }
+}
+
 void GitCommitFetcher::setRepoRoot(const QString &repoToplevel)
 {
     if (repoToplevel == m_repoRoot) return;
     cancel();
     invalidateAll();
     m_repoRoot = repoToplevel;
-    // Re-resolve the runner for the new repo's ExecutionContext (D6): a remote
-    // (ssh://) repo needs a RemoteGitProcessRunner, a local one the QProcess
-    // runner. cancel() above idled any in-flight op, so swapping is safe. The
-    // output cap is a per-instance config, so re-apply it to the fresh runner.
     if (m_runner) m_runner->asQObject()->deleteLater();
-    m_runner = GitRunnerFactory::createForRepo(m_repoRoot, this);
+    const QString scope = m_runnerScope.isEmpty() ? m_repoRoot : m_runnerScope;
+    m_runner = GitRunnerFactory::createForRepo(scope, this);
     m_runner->setMaxOutputBytes(kDefaultCapBytes);
 }
 

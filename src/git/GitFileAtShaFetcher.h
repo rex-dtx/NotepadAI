@@ -50,6 +50,8 @@ public:
     void setRepoRoot(const QString &repoToplevel);
     QString repoRoot() const { return m_repoRoot; }
 
+    void setRunnerScope(const QString &scope);
+
     // Request file content. Cancels any in-flight fetch. On failure (commit
     // or path not found, git missing) errorMessage is non-empty.
     void request(const QByteArray &sha, const QString &relPath, Callback cb);
@@ -58,6 +60,7 @@ public:
 
 private:
     QString          m_repoRoot;
+    QString          m_runnerScope;
     IGitProcessRunner *m_runner = nullptr;
     quint64          m_generation = 0;
 

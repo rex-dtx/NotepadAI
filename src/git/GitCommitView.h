@@ -55,6 +55,8 @@ public:
     void setRepoRoot(const QString &repoRoot);
     QString repoRoot() const { return m_repoRoot; }
 
+    void setRunnerScope(const QString &scope);
+
     void setDarkPalette(bool dark);
 
     // Hook GitWatcher → invalidate the commit fetcher's cache on refs/HEAD

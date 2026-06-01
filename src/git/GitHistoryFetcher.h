@@ -55,6 +55,11 @@ public:
     void setRepoRoot(const QString &repoToplevel);
     QString repoRoot() const { return m_repoRoot; }
 
+    // Set the key used for GitRunnerFactory::createForRepo (SSH URI for remote
+    // workspaces). When empty, m_repoRoot is used (local repos). Re-creates the
+    // runner immediately if a repo root is already configured.
+    void setRunnerScope(const QString &scope);
+
     // Branch scope toggle: false = current branch (HEAD), true = --all.
     void setAllBranches(bool all);
     bool allBranches() const { return m_allBranches; }
@@ -111,6 +116,7 @@ private:
     enum class Mode : std::uint8_t { Idle, FirstPage, LoadMore };
 
     QString          m_repoRoot;
+    QString          m_runnerScope;
     bool             m_allBranches = false;
     bool             m_reachedEnd  = false;
 

@@ -19,13 +19,14 @@
 #include "TerminalCwdResolver.h"
 
 #include "remote/ExecutionContext.h"
+#include "remote/SshProfile.h"
 
 #include <QDir>
 #include <QFileInfo>
 
 static bool directoryExists(const QString &path)
 {
-    if (path.isEmpty()) {
+    if (path.isEmpty() || remote::isSshUri(path)) {
         return false;
     }
     QFileInfo info(path);
@@ -39,7 +40,7 @@ bool TerminalCwdResolver::canOpenInWorkspace(const QString &workspaceRoot)
 
 bool TerminalCwdResolver::canOpenInFolder(const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot)
 {
-    if (activeBufferIsFile && !activeFilePath.isEmpty()) {
+    if (activeBufferIsFile && !activeFilePath.isEmpty() && !remote::isSshUri(activeFilePath)) {
         const QString parent = QFileInfo(activeFilePath).absolutePath();
         if (directoryExists(parent)) {
             return true;
@@ -58,7 +59,7 @@ QString TerminalCwdResolver::resolveWorkspace(const QString &workspaceRoot)
 
 QString TerminalCwdResolver::resolveFolder(const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot)
 {
-    if (activeBufferIsFile && !activeFilePath.isEmpty()) {
+    if (activeBufferIsFile && !activeFilePath.isEmpty() && !remote::isSshUri(activeFilePath)) {
         const QString parent = QFileInfo(activeFilePath).absolutePath();
         if (directoryExists(parent)) {
             return QDir::cleanPath(parent);
@@ -68,6 +69,71 @@ QString TerminalCwdResolver::resolveFolder(const QString &activeFilePath, bool a
         return QDir::cleanPath(workspaceRoot);
     }
     return QString();
+}
+
+static QString posixParentPath(QString path)
+{
+    if (path.isEmpty()) {
+        return QString();
+    }
+    if (!path.startsWith(QLatin1Char('/'))) {
+        path.prepend(QLatin1Char('/'));
+    }
+    const int slash = path.lastIndexOf(QLatin1Char('/'));
+    return slash > 0 ? path.left(slash) : QStringLiteral("/");
+}
+
+static QString remoteWorkspacePath(const QString &workspaceRoot)
+{
+    const remote::SshUri uri = remote::parseSshUri(workspaceRoot);
+    return uri.valid ? uri.remotePath : QString();
+}
+
+static QString remoteFolderPath(const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot)
+{
+    const remote::SshUri workspaceUri = remote::parseSshUri(workspaceRoot);
+    if (!workspaceUri.valid) {
+        return QString();
+    }
+    if (activeBufferIsFile && remote::isSshUri(activeFilePath)) {
+        const remote::SshUri fileUri = remote::parseSshUri(activeFilePath);
+        if (fileUri.valid && fileUri.profileId == workspaceUri.profileId) {
+            return posixParentPath(fileUri.remotePath);
+        }
+    }
+    return workspaceUri.remotePath;
+}
+
+bool TerminalCwdResolver::canOpenInWorkspaceForContext(remote::ExecutionContext *ctx, const QString &workspaceRoot)
+{
+    if (!ctx || !ctx->isRemote()) {
+        return canOpenInWorkspace(workspaceRoot);
+    }
+    return !resolveWorkspaceForContext(ctx, workspaceRoot).isEmpty();
+}
+
+bool TerminalCwdResolver::canOpenInFolderForContext(remote::ExecutionContext *ctx, const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot)
+{
+    if (!ctx || !ctx->isRemote()) {
+        return canOpenInFolder(activeFilePath, activeBufferIsFile, workspaceRoot);
+    }
+    return !resolveFolderForContext(ctx, activeFilePath, activeBufferIsFile, workspaceRoot).isEmpty();
+}
+
+QString TerminalCwdResolver::resolveWorkspaceForContext(remote::ExecutionContext *ctx, const QString &workspaceRoot)
+{
+    if (!ctx || !ctx->isRemote()) {
+        return resolveWorkspace(workspaceRoot);
+    }
+    return resolveForContext(ctx, remoteWorkspacePath(workspaceRoot));
+}
+
+QString TerminalCwdResolver::resolveFolderForContext(remote::ExecutionContext *ctx, const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot)
+{
+    if (!ctx || !ctx->isRemote()) {
+        return resolveFolder(activeFilePath, activeBufferIsFile, workspaceRoot);
+    }
+    return resolveForContext(ctx, remoteFolderPath(activeFilePath, activeBufferIsFile, workspaceRoot));
 }
 
 QString TerminalCwdResolver::resolveForContext(remote::ExecutionContext *ctx, const QString &requested)

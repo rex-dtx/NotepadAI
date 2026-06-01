@@ -691,7 +691,7 @@ void FolderAsWorkspaceDock::setRootPath(const QString &dir)
     proxy->setRootSourcePath(dir);
 
     if (gitTab) {
-        gitTab->setWorkspaceRoot(dir);
+        gitTab->setWorkspaceRoot(m_sshWorkspaceUri.isEmpty() ? dir : m_sshWorkspaceUri);
     }
 
     // Window title doubles as the tab label when several workspaces are tabified
@@ -1066,6 +1066,7 @@ GitCommitView *FolderAsWorkspaceDock::ensureGitCommitView()
 
     gitCommitView = new GitCommitView(gitTab->controller()->currentRepo(),
                                        app->getEditorManager(), this);
+    gitCommitView->setRunnerScope(gitTab->controller()->runnerScope());
     gitCommitView->setDarkPalette(app->isEffectiveThemeDark());
 
     connect(gitCommitView, &GitCommitView::newCommitEditorCreated,
@@ -1092,8 +1093,8 @@ GitCommitView *FolderAsWorkspaceDock::ensureGitCommitView()
 void FolderAsWorkspaceDock::showGitCommitDetail(const QByteArray &sha)
 {
     if (auto *c = ensureGitCommitView()) {
-        // Repo may have switched since constructor; sync.
         if (gitTab && gitTab->controller()) {
+            c->setRunnerScope(gitTab->controller()->runnerScope());
             c->setRepoRoot(gitTab->controller()->currentRepo());
         }
         c->openForSha(sha);

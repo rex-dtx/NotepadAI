@@ -1548,6 +1548,8 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     terminalManager = new TerminalManager(app, this);
     connect(app, &NotepadNextApplication::effectiveThemeChanged, terminalManager, &TerminalManager::applyTheme);
     connect(app->getSettings(), &ApplicationSettings::terminalFontChanged, terminalManager, &TerminalManager::applyFont);
+    ui->actionOpenTerminalInWorkspace->setEnabled(false);
+    ui->actionOpenTerminalInFolder->setEnabled(false);
 
     connect(ui->menuTerminal, &QMenu::aboutToShow, this, [this]() {
         const QString workspaceRoot = currentWorkspaceRoot();
@@ -1559,13 +1561,21 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 activeIsFile = true;
             }
         }
-        ui->actionOpenTerminalInWorkspace->setEnabled(TerminalCwdResolver::canOpenInWorkspace(workspaceRoot));
-        ui->actionOpenTerminalInFolder->setEnabled(TerminalCwdResolver::canOpenInFolder(activeFilePath, activeIsFile, workspaceRoot));
+        remote::ExecutionContext *ctx = activeExecutionContext();
+        ui->actionOpenTerminalInWorkspace->setEnabled(
+            TerminalCwdResolver::canOpenInWorkspaceForContext(ctx, workspaceRoot));
+        ui->actionOpenTerminalInFolder->setEnabled(
+            TerminalCwdResolver::canOpenInFolderForContext(ctx, activeFilePath, activeIsFile, workspaceRoot));
     });
 
     connect(ui->actionOpenTerminalInWorkspace, &QAction::triggered, this, [this]() {
-        const QString cwd = TerminalCwdResolver::resolveWorkspace(currentWorkspaceRoot());
-        if (!cwd.isEmpty()) {
+        const QString workspaceRoot = currentWorkspaceRoot();
+        remote::ExecutionContext *ctx = activeExecutionContext();
+        const QString cwd = TerminalCwdResolver::resolveWorkspaceForContext(ctx, workspaceRoot);
+        if (cwd.isEmpty()) return;
+        if (ctx && ctx->isRemote()) {
+            terminalManager->openRemoteTerminal(ctx, cwd, QString());
+        } else {
             terminalManager->openTerminal(cwd);
         }
     });
@@ -1580,15 +1590,24 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 activeIsFile = true;
             }
         }
-        const QString cwd = TerminalCwdResolver::resolveFolder(activeFilePath, activeIsFile, workspaceRoot);
-        if (!cwd.isEmpty()) {
+        remote::ExecutionContext *ctx = activeExecutionContext();
+        const QString cwd = TerminalCwdResolver::resolveFolderForContext(ctx, activeFilePath, activeIsFile, workspaceRoot);
+        if (cwd.isEmpty()) return;
+        if (ctx && ctx->isRemote()) {
+            terminalManager->openRemoteTerminal(ctx, cwd, QString());
+        } else {
             terminalManager->openTerminal(cwd);
         }
     });
 
     connect(ui->menuTasks, &QMenu::aboutToShow, this, [this]() {
-        const QString workspaceRoot = TerminalTaskRegistry::normalizeWorkspacePath(currentWorkspaceRoot());
-        const bool hasWorkspace = TerminalCwdResolver::canOpenInWorkspace(workspaceRoot);
+        const QString rawWorkspaceRoot = currentWorkspaceRoot();
+        const bool isSshWorkspace = remote::isSshUri(rawWorkspaceRoot);
+        const QString workspaceRoot = isSshWorkspace
+            ? rawWorkspaceRoot
+            : TerminalTaskRegistry::normalizeWorkspacePath(rawWorkspaceRoot);
+        const bool hasWorkspace = !isSshWorkspace
+            && TerminalCwdResolver::canOpenInWorkspace(workspaceRoot);
 
         ui->actionEditTasks->setEnabled(hasWorkspace);
 
@@ -1623,7 +1642,9 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
 
     connect(ui->actionEditTasks, &QAction::triggered, this, [this]() {
-        const QString workspaceRoot = TerminalTaskRegistry::normalizeWorkspacePath(currentWorkspaceRoot());
+        const QString rawWorkspaceRoot = currentWorkspaceRoot();
+        if (remote::isSshUri(rawWorkspaceRoot)) return;
+        const QString workspaceRoot = TerminalTaskRegistry::normalizeWorkspacePath(rawWorkspaceRoot);
         const QString cwd = TerminalCwdResolver::resolveWorkspace(workspaceRoot);
         if (cwd.isEmpty()) return;
 
@@ -2659,9 +2680,33 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
         // --- Open Terminal Here (directory only) ---
         if (isDir) {
             auto *openTerminal = new QAction(tr("Open Terminal Here"), menu);
-            connect(openTerminal, &QAction::triggered, this, [this, absPath]() {
-                terminalManager->openTerminal(absPath);
-            });
+            if (remote::isSshUri(wsRoot)) {
+                remote::ExecutionContext *ctx = nullptr;
+                const remote::SshUri uri = remote::parseSshUri(wsRoot);
+                if (uri.valid) {
+                    if (remote::ExecutionContextRegistry *registry = app ? app->getExecutionContextRegistry() : nullptr) {
+                        ctx = registry->remoteContext(uri.profileId);
+                    }
+                }
+                const bool remoteReady = ctx && ctx->isRemote()
+                    && ctx->state() == remote::ExecutionContext::State::Connected;
+                openTerminal->setEnabled(remoteReady);
+                connect(openTerminal, &QAction::triggered, this, [this, wsRoot, absPath]() {
+                    const remote::SshUri uri = remote::parseSshUri(wsRoot);
+                    if (!uri.valid) return;
+                    remote::ExecutionContextRegistry *registry = app ? app->getExecutionContextRegistry() : nullptr;
+                    remote::ExecutionContext *ctx = registry ? registry->remoteContext(uri.profileId) : nullptr;
+                    const QString cwd = TerminalCwdResolver::resolveForContext(ctx, absPath);
+                    if (!ctx || !ctx->isRemote() || cwd.isEmpty()) {
+                        return;
+                    }
+                    terminalManager->openRemoteTerminal(ctx, cwd, QString());
+                });
+            } else {
+                connect(openTerminal, &QAction::triggered, this, [this, absPath]() {
+                    terminalManager->openTerminal(absPath);
+                });
+            }
             menu->addAction(openTerminal);
         }
 

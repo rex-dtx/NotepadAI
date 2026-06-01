@@ -83,7 +83,12 @@ void GitCommitView::setRepoRoot(const QString &repoRoot)
     m_repoRoot = repoRoot;
     m_fetcher->setRepoRoot(repoRoot);
     m_fileFetcher->setRepoRoot(repoRoot);
-    // Cache is per-repo; setRepoRoot already invalidates.
+}
+
+void GitCommitView::setRunnerScope(const QString &scope)
+{
+    m_fetcher->setRunnerScope(scope);
+    m_fileFetcher->setRunnerScope(scope);
 }
 
 void GitCommitView::setDarkPalette(bool dark)

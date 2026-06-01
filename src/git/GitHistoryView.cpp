@@ -187,6 +187,11 @@ void GitHistoryView::setRepoRoot(const QString &repoToplevel)
     }
 }
 
+void GitHistoryView::setRunnerScope(const QString &scope)
+{
+    m_fetcher->setRunnerScope(scope);
+}
+
 void GitHistoryView::setWatcher(GitWatcher *watcher)
 {
     m_watcher = watcher;

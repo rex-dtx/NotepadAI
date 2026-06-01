@@ -486,7 +486,8 @@ void GitTabWidget::rebuildController()
     clearError();
 
     const bool hasWorkspace = !m_workspaceRoot.isEmpty()
-                              && QDir(m_workspaceRoot).exists();
+                              && (GitRunnerFactory::isRemotePath(m_workspaceRoot)
+                                  || QDir(m_workspaceRoot).exists());
     m_emptyHint->setVisible(!hasWorkspace);
     m_repoCombo->setEnabled(hasWorkspace);
     m_branchBtn->setEnabled(false);
@@ -499,6 +500,7 @@ void GitTabWidget::rebuildController()
     }
 
     if (m_historyView) {
+        m_historyView->setRunnerScope(QString());
         m_historyView->setRepoRoot(QString());
     }
 
@@ -590,6 +592,7 @@ void GitTabWidget::onTabChanged(int index)
     // When the user first opens the History tab, kick off a fetch if the repo
     // root is set and the view hasn't loaded yet.
     if (index == kTabHistory && m_controller && !m_controller->currentRepo().isEmpty()) {
+        m_historyView->setRunnerScope(m_controller->runnerScope());
         m_historyView->setRepoRoot(m_controller->currentRepo());
     }
 }
@@ -612,7 +615,10 @@ void GitTabWidget::onReposUpdated()
         const auto *info = m_controller->repoModel()->infoAt(pick);
         if (info) {
             m_controller->selectRepo(info->toplevel);
-            if (m_historyView) m_historyView->setRepoRoot(info->toplevel);
+            if (m_historyView) {
+                m_historyView->setRunnerScope(m_controller->runnerScope());
+                m_historyView->setRepoRoot(info->toplevel);
+            }
         }
     }
     updateActionsEnabled();
@@ -635,7 +641,10 @@ void GitTabWidget::onRepoSelected(int index)
     ApplicationSettings settings;
     settings.setValue(settingsKey(QStringLiteral("lastRepo")), info->toplevel);
     m_controller->selectRepo(info->toplevel);
-    if (m_historyView) m_historyView->setRepoRoot(info->toplevel);
+    if (m_historyView) {
+        m_historyView->setRunnerScope(m_controller->runnerScope());
+        m_historyView->setRepoRoot(info->toplevel);
+    }
 }
 
 void GitTabWidget::onRefreshClicked()

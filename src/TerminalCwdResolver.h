@@ -32,6 +32,15 @@ public:
     static QString resolveWorkspace(const QString &workspaceRoot);
     static QString resolveFolder(const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot);
 
+    // Context-aware menu gating/resolution. Local/null contexts preserve the
+    // legacy local QFileInfo policy. Remote contexts accept only ssh:// workspace
+    // or file URIs, extract their POSIX remote path, and normalize through
+    // resolveForContext().
+    static bool canOpenInWorkspaceForContext(remote::ExecutionContext *ctx, const QString &workspaceRoot);
+    static bool canOpenInFolderForContext(remote::ExecutionContext *ctx, const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot);
+    static QString resolveWorkspaceForContext(remote::ExecutionContext *ctx, const QString &workspaceRoot);
+    static QString resolveFolderForContext(remote::ExecutionContext *ctx, const QString &activeFilePath, bool activeBufferIsFile, const QString &workspaceRoot);
+
     // Context-aware resolution (design D11). When `ctx` is remote: NO local
     // QFileInfo check (the path is on another machine) — require the context to
     // be Connected and `requested` non-empty, then POSIX-normalize. When `ctx`

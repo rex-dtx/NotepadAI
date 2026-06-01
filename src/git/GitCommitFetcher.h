@@ -62,6 +62,8 @@ public:
     void setRepoRoot(const QString &repoToplevel);
     QString repoRoot() const { return m_repoRoot; }
 
+    void setRunnerScope(const QString &scope);
+
     // Invalidate the cache. Called when GitWatcher reports HEAD or refs
     // change (force-push/rebase can leave SHAs valid but pointing to GC'd
     // objects in a stale cache).
@@ -115,6 +117,7 @@ private:
     static void parseTrailers(GitCommitDetail &out);
 
     QString          m_repoRoot;
+    QString          m_runnerScope;
     IGitProcessRunner *m_runner = nullptr;
 
     // LRU cache. QCache uses a "cost" budget; here every entry costs 1 so

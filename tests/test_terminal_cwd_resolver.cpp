@@ -22,6 +22,20 @@
 #include <QTemporaryDir>
 
 #include "TerminalCwdResolver.h"
+#include "remote/ExecutionContext.h"
+
+class MockRemoteContext : public remote::ExecutionContext
+{
+public:
+    bool isRemote() const override { return true; }
+    QString displayName() const override { return QStringLiteral("mock"); }
+    State state() const override { return State::Connected; }
+    IPtyProcess *createPty(QObject *) override { return nullptr; }
+    IGitProcessRunner *createGitRunner(QObject *) override { return nullptr; }
+    void exec(const QString &, const QStringList &, const QByteArray &, int, ExecCallback) override {}
+    remote::IFileSystemBackend *fsBackend() override { return nullptr; }
+    QString resolveCwd(const QString &requested) const override { return requested; }
+};
 
 
 class TestTerminalCwdResolver : public QObject
@@ -49,6 +63,12 @@ private slots:
     void emptyPaths_disabled();
     void nonExistingWorkspace_disabled();
     void nonExistingFileParentWithWorkspace_fallsBack();
+
+    void sshWorkspaceRoot_allDisabled();
+    void sshFileWithLocalWorkspace_canOpenInFolder_usesWorkspace();
+    void sshFileWithSshWorkspace_allDisabled();
+    void remoteContext_sameProfileFile_resolveFolder_returnsFileParent();
+    void remoteContext_crossProfileFile_resolveFolder_fallsBackToWorkspace();
 
 private:
     QTemporaryDir tmp;
@@ -149,6 +169,48 @@ void TestTerminalCwdResolver::nonExistingFileParentWithWorkspace_fallsBack()
     QCOMPARE(TerminalCwdResolver::resolveFolder(bogusFile, true, workspacePath), QDir::cleanPath(workspacePath));
 }
 
-QTEST_APPLESS_MAIN(TestTerminalCwdResolver)
+void TestTerminalCwdResolver::sshWorkspaceRoot_allDisabled()
+{
+    const QString sshRoot = QStringLiteral("ssh://myprofile/root/project");
+    QCOMPARE(TerminalCwdResolver::canOpenInWorkspace(sshRoot), false);
+    QCOMPARE(TerminalCwdResolver::resolveWorkspace(sshRoot), QString());
+    QCOMPARE(TerminalCwdResolver::canOpenInFolder(QString(), false, sshRoot), false);
+    QCOMPARE(TerminalCwdResolver::resolveFolder(QString(), false, sshRoot), QString());
+}
 
+void TestTerminalCwdResolver::sshFileWithLocalWorkspace_canOpenInFolder_usesWorkspace()
+{
+    // Remote file open + local workspace → fall back to local workspace for the terminal.
+    const QString sshFile = QStringLiteral("ssh://myprofile/root/project/main.cpp");
+    QCOMPARE(TerminalCwdResolver::canOpenInFolder(sshFile, true, workspacePath), true);
+    QCOMPARE(TerminalCwdResolver::resolveFolder(sshFile, true, workspacePath), QDir::cleanPath(workspacePath));
+}
+
+void TestTerminalCwdResolver::sshFileWithSshWorkspace_allDisabled()
+{
+    const QString sshFile = QStringLiteral("ssh://myprofile/root/project/main.cpp");
+    const QString sshRoot = QStringLiteral("ssh://myprofile/root/project");
+    QCOMPARE(TerminalCwdResolver::canOpenInFolder(sshFile, true, sshRoot), false);
+    QCOMPARE(TerminalCwdResolver::resolveFolder(sshFile, true, sshRoot), QString());
+}
+
+void TestTerminalCwdResolver::remoteContext_sameProfileFile_resolveFolder_returnsFileParent()
+{
+    MockRemoteContext ctx;
+    const QString sshFile = QStringLiteral("ssh://profileA/root/project/src/main.cpp");
+    const QString sshRoot = QStringLiteral("ssh://profileA/root/project");
+    QCOMPARE(TerminalCwdResolver::resolveFolderForContext(&ctx, sshFile, true, sshRoot), QStringLiteral("/root/project/src"));
+    QCOMPARE(TerminalCwdResolver::canOpenInFolderForContext(&ctx, sshFile, true, sshRoot), true);
+}
+
+void TestTerminalCwdResolver::remoteContext_crossProfileFile_resolveFolder_fallsBackToWorkspace()
+{
+    MockRemoteContext ctx;
+    const QString sshFile = QStringLiteral("ssh://profileB/other/project/src/main.cpp");
+    const QString sshRoot = QStringLiteral("ssh://profileA/root/project");
+    QCOMPARE(TerminalCwdResolver::resolveFolderForContext(&ctx, sshFile, true, sshRoot), QStringLiteral("/root/project"));
+    QCOMPARE(TerminalCwdResolver::canOpenInFolderForContext(&ctx, sshFile, true, sshRoot), true);
+}
+
+QTEST_APPLESS_MAIN(TestTerminalCwdResolver)
 #include "test_terminal_cwd_resolver.moc"

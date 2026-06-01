@@ -56,6 +56,10 @@ public:
     // and issues a fresh git log if repoToplevel is non-empty.
     void setRepoRoot(const QString &repoToplevel);
 
+    // Set the runner scope (SSH URI) for remote workspaces. Must be called
+    // before setRepoRoot so the fetcher resolves the correct remote runner.
+    void setRunnerScope(const QString &scope);
+
     // Hook the watcher so refs/HEAD changes auto-refresh.
     void setWatcher(GitWatcher *watcher);
 

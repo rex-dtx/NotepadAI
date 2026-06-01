@@ -34,6 +34,8 @@ class IGitProcessRunner;
 // Resolution policy — DEFAULT TO LOCAL when anything is ambiguous:
 //   * repoPath is an `ssh://<profileId><path>` URI AND that profile has a live,
 //     connected RemoteExecutionContext  → remote runner.
+//   * repoPath is a remote POSIX path registered via registerRemotePath AND
+//     that profile has a live, connected RemoteExecutionContext → remote runner.
 //   * everything else (local path, no app/registry, profile not connected) →
 //     local GitProcessRunner. Behavior is byte-for-byte the prior local path.
 //
@@ -42,14 +44,20 @@ class IGitProcessRunner;
 // it always returns a local runner, so callers never depend on the registry.
 namespace GitRunnerFactory {
 
-// Create a runner for a git op targeting `repoPath`. Never returns nullptr —
-// falls back to a local GitProcessRunner. `parent` owns the returned runner.
+// Create a runner for a git op targeting `repoPath`. Never returns nullptr.
+// For ssh:// URIs: returns a RemoteGitProcessRunner (live if connected,
+// null-connection if disconnected — fails loudly, never falls back to local).
+// For local paths: returns a local GitProcessRunner.
 IGitProcessRunner *createForRepo(const QString &repoPath, QObject *parent);
 
 // True iff `repoPath` resolves to a live REMOTE execution context. Used by the
 // UI to gate remote-incapable actions (e.g. interactive rebase, D7). False for
 // any local path or when no remote context is connected.
 bool isRemoteRepo(const QString &repoPath);
+
+// True iff `path` is an ssh:// URI (known-remote regardless of connection
+// state). Used to gate local-only checks (QDir::exists, gitAvailable).
+bool isRemotePath(const QString &path);
 
 } // namespace GitRunnerFactory
 

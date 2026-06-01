@@ -54,6 +54,7 @@ ConflictEntries GitOperationManager::conflicts(const QString &repoPath) const
 void GitOperationManager::registerController(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) {
         connect(controller, &GitController::statusUpdated, this, [this, controller]() {
             const QString r = controller->currentRepo();
@@ -73,6 +74,7 @@ void GitOperationManager::registerController(GitController *controller)
 void GitOperationManager::unregisterController(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (!repo.isEmpty())
         m_controllers.remove(repo);
     disconnect(controller, nullptr, this, nullptr);
@@ -147,6 +149,7 @@ void GitOperationManager::startMerge(GitController *controller, const QString &b
                                      const QStringList &strategyOptions)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     auto &rs = m_repoStates[repo];
@@ -160,7 +163,7 @@ void GitOperationManager::startMerge(GitController *controller, const QString &b
     for (const QString &opt : strategyOptions)
         argv.append(opt);
 
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 120000, false,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -189,10 +192,11 @@ void GitOperationManager::startMerge(GitController *controller, const QString &b
 void GitOperationManager::abortMerge(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("merge"), QStringLiteral("--abort")};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 30000, false,
         [this, repo, runner](int exit, const QByteArray &, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -211,10 +215,11 @@ void GitOperationManager::abortMerge(GitController *controller)
 void GitOperationManager::commitMerge(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("commit"), QStringLiteral("--no-edit")};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 30000, false,
         [this, repo, runner](int exit, const QByteArray &, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -234,6 +239,7 @@ void GitOperationManager::commitMerge(GitController *controller)
 void GitOperationManager::startRebase(GitController *controller, const QString &ontoBranch)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     auto &rs = m_repoStates[repo];
@@ -244,7 +250,7 @@ void GitOperationManager::startRebase(GitController *controller, const QString &
     emit rebaseStarted(repo);
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), ontoBranch};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 300000, true,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -271,6 +277,7 @@ void GitOperationManager::startRebase(GitController *controller, const QString &
 void GitOperationManager::startInteractiveRebase(GitController *controller, const QString &ontoBranch)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
     if (!ensureEditorServer()) {
         emit rebaseFailed(repo, tr("Cannot start local editor server."));
@@ -331,11 +338,12 @@ void GitOperationManager::startInteractiveRebase(GitController *controller, cons
 void GitOperationManager::continueRebase(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     setState(repo, OperationState::RebaseRunning);
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), QStringLiteral("--continue")};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 300000, true,
         [this, repo, runner, controller](int exit, const QByteArray &out, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -365,11 +373,12 @@ void GitOperationManager::continueRebase(GitController *controller)
 void GitOperationManager::skipRebase(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     setState(repo, OperationState::RebaseRunning);
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), QStringLiteral("--skip")};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 300000, true,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -395,10 +404,11 @@ void GitOperationManager::skipRebase(GitController *controller)
 void GitOperationManager::abortRebase(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), QStringLiteral("--abort")};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 30000, false,
         [this, repo, runner](int exit, const QByteArray &, const QByteArray &err) {
             runner->asQObject()->deleteLater();
@@ -418,10 +428,11 @@ void GitOperationManager::abortRebase(GitController *controller)
 void GitOperationManager::resolveFile(GitController *controller, const QString &relPath)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("add"), QStringLiteral("--"), relPath};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 10000, false,
         [this, repo, runner](int, const QByteArray &, const QByteArray &) {
             runner->asQObject()->deleteLater();
@@ -433,20 +444,21 @@ void GitOperationManager::resolveFile(GitController *controller, const QString &
 void GitOperationManager::acceptOurs(GitController *controller, const QStringList &relPaths)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty() || relPaths.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("checkout"),
                      QStringLiteral("--ours"), QStringLiteral("--")};
     argv.append(relPaths);
 
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 10000, false,
-        [this, repo, relPaths, runner](int exit, const QByteArray &, const QByteArray &) {
+        [this, repo, relPaths, runner, scope](int exit, const QByteArray &, const QByteArray &) {
             runner->asQObject()->deleteLater();
             if (exit != 0) return;
             QStringList addArgv{QStringLiteral("-C"), repo, QStringLiteral("add"), QStringLiteral("--")};
             addArgv.append(relPaths);
-            auto *addRunner = GitRunnerFactory::createForRepo(repo, this);
+            auto *addRunner = GitRunnerFactory::createForRepo(scope, this);
             addRunner->run(repo, addArgv, {}, 10000, false,
                 [this, repo, addRunner](int, const QByteArray &, const QByteArray &) {
                     addRunner->asQObject()->deleteLater();
@@ -459,20 +471,21 @@ void GitOperationManager::acceptOurs(GitController *controller, const QStringLis
 void GitOperationManager::acceptTheirs(GitController *controller, const QStringList &relPaths)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty() || relPaths.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("checkout"),
                      QStringLiteral("--theirs"), QStringLiteral("--")};
     argv.append(relPaths);
 
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 10000, false,
-        [this, repo, relPaths, runner](int exit, const QByteArray &, const QByteArray &) {
+        [this, repo, relPaths, runner, scope](int exit, const QByteArray &, const QByteArray &) {
             runner->asQObject()->deleteLater();
             if (exit != 0) return;
             QStringList addArgv{QStringLiteral("-C"), repo, QStringLiteral("add"), QStringLiteral("--")};
             addArgv.append(relPaths);
-            auto *addRunner = GitRunnerFactory::createForRepo(repo, this);
+            auto *addRunner = GitRunnerFactory::createForRepo(scope, this);
             addRunner->run(repo, addArgv, {}, 10000, false,
                 [this, repo, addRunner](int, const QByteArray &, const QByteArray &) {
                     addRunner->asQObject()->deleteLater();
@@ -491,11 +504,12 @@ void GitOperationManager::setState(const QString &repoPath, OperationState s)
 void GitOperationManager::refreshConflicts(GitController *controller)
 {
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("ls-files"),
                      QStringLiteral("--unmerged"), QStringLiteral("-z")};
-    auto *runner = GitRunnerFactory::createForRepo(repo, this);
+    auto *runner = GitRunnerFactory::createForRepo(scope, this);
     runner->run(repo, argv, {}, 10000, false,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &) {
             runner->asQObject()->deleteLater();
@@ -615,6 +629,7 @@ void GitOperationManager::onControllerStatusUpdated()
     if (!controller) return;
 
     const QString repo = controller->currentRepo();
+    const QString scope = controller->runnerScope();
     if (repo.isEmpty()) return;
 
     auto &rs = m_repoStates[repo];

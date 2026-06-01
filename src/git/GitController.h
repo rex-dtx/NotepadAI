@@ -55,6 +55,9 @@ public:
 
     State state() const { return m_state; }
     QString workspaceRoot() const { return m_workspaceRoot; }
+    // The key to pass to GitRunnerFactory::createForRepo for runner resolution.
+    // SSH URI for remote workspaces, local path for local ones.
+    QString runnerScope() const { return m_workspaceRoot; }
     GitRepoModel *repoModel() const { return m_repos; }
     GitStatusModel *statusModel() const { return m_status; }
 
@@ -170,6 +173,7 @@ private:
     };
 
     QString m_workspaceRoot;
+    QString m_gitCwd; // POSIX path for git -C; == m_workspaceRoot for local repos
     State m_state = State::Idle;
     IGitProcessRunner *m_runner = nullptr;
     IGitProcessRunner *m_realRunner = nullptr;    // owned when not test-injected

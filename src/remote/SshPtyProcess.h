@@ -38,7 +38,8 @@ class SshChannel;
 //     open channel with request_pty("xterm-256color", cols, rows) and run
 //     `cd <cwd> && exec <shell>` (cwd/shell shell-quoted; SSH PTY has no
 //     working-dir arg so cd is in the command). env is applied where the server
-//     permits via the command prefix.
+//     permits via the command prefix. When shell is empty, a server-side
+//     resolution chain is used: $SHELL → /etc/passwd → /bin/bash → /bin/sh.
 //   write   → SshConnection::write (queued)
 //   resize  → request_pty_size
 //   kill    → channel close
@@ -64,8 +65,12 @@ public:
     bool isAvailable() override;
     void moveToThread(QThread *targetThread) override;
 
-    // Build `cd <cwd> && exec <env> <shell>` with POSIX shell-quoting. Static +
-    // pure so it can be unit-tested without a connection.
+    // Build the remote shell command with POSIX shell-quoting. Static + pure so
+    // it can be unit-tested without a connection. When shellPath is non-empty it
+    // produces `cd <cwd> && exec <env> '<shell>'`. When shellPath is empty it
+    // produces a server-side resolution chain: $SHELL → /etc/passwd shell (via
+    // getent) → /bin/bash → /bin/sh, wrapped in `sh -c '...'` so variable
+    // expansion happens on the remote host.
     static QString buildRemoteCommand(const QString &shellPath, const QString &workingDir,
                                       const QStringList &environment);
 

@@ -31,6 +31,7 @@
 #include "GitWatcher.h"
 
 #include "../NotepadNextApplication.h"
+#include "remote/SshProfile.h" // isSshUri / parseSshUri
 
 #include <QCoreApplication>
 #include <QDir>
@@ -50,7 +51,12 @@ QString tr_(const char *s) { return QCoreApplication::translate("GitController",
 } // namespace
 
 GitController::GitController(const QString &workspaceRoot, QObject *parent)
-    : QObject(parent), m_workspaceRoot(QDir::cleanPath(workspaceRoot))
+    : QObject(parent)
+    , m_workspaceRoot(remote::isSshUri(workspaceRoot) ? workspaceRoot
+                                                      : QDir::cleanPath(workspaceRoot))
+    , m_gitCwd(remote::isSshUri(workspaceRoot)
+                   ? remote::parseSshUri(workspaceRoot).remotePath
+                   : QDir::cleanPath(workspaceRoot))
 {
     m_repos = new GitRepoModel(this);
     m_status = new GitStatusModel(this);
@@ -134,7 +140,8 @@ void GitController::scheduleDebouncedRefresh()
 
 void GitController::initialize()
 {
-    if (!GitProcessRunner::gitAvailable()) {
+    if (!GitRunnerFactory::isRemotePath(m_workspaceRoot)
+        && !GitProcessRunner::gitAvailable()) {
         GitError e;
         e.kind = GitError::NotInstalled;
         e.humanMessage = tr_("Git is not installed or not on PATH.");
@@ -151,7 +158,7 @@ void GitController::enqueueDiscovery()
     setState(State::Discovering);
     Op topl;
     topl.kind = OpKind::Toplevel;
-    topl.argv = { QStringLiteral("-C"), m_workspaceRoot, QStringLiteral("rev-parse"), QStringLiteral("--show-toplevel") };
+    topl.argv = { QStringLiteral("-C"), m_gitCwd, QStringLiteral("rev-parse"), QStringLiteral("--show-toplevel") };
     topl.timeoutMs = kTimeoutShort;
     topl.humanName = tr_("Detecting repository");
     enqueue(topl);

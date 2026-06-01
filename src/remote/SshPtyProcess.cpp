@@ -77,8 +77,26 @@ QString SshPtyProcess::buildRemoteCommand(const QString &shellPath, const QStrin
         const QString value = e.mid(eq + 1);
         cmd += key + QLatin1Char('=') + shellQuote(value) + QLatin1Char(' ');
     }
-    const QString shell = shellPath.isEmpty() ? QStringLiteral("$SHELL") : shellPath;
-    cmd += shellQuote(shell);
+    if (shellPath.isEmpty()) {
+        // $SHELL may be unset or point to a non-existent binary in SSH
+        // non-login contexts. Each candidate is guarded with -x (executable
+        // regular file) before exec, so a set-but-invalid path never terminates
+        // the wrapper. The passwd lookup uses both getent (LDAP/NIS-aware) and
+        // a direct /etc/passwd read as independent fallbacks. The outer
+        // `exec sh -c '...'` replaces the channel shell with sh; the winning
+        // inner exec replaces sh — only one process lives at the end.
+        cmd += QStringLiteral(
+            "sh -c '"
+            "_pw=$(getent passwd $(id -u) 2>/dev/null | cut -d: -f7);"
+            " [ -z \"$_pw\" ] && _pw=$(grep \"^[^:]*:[^:]*:$(id -u):\" /etc/passwd 2>/dev/null | cut -d: -f7);"
+            " [ -n \"$SHELL\" ] && [ -x \"$SHELL\" ] && exec \"$SHELL\" -i;"
+            " [ -n \"$_pw\" ] && [ -x \"$_pw\" ] && exec \"$_pw\" -i;"
+            " [ -x /bin/bash ] && exec /bin/bash -i;"
+            " exec /bin/sh"
+            "'");
+    } else {
+        cmd += shellQuote(shellPath);
+    }
     return cmd;
 }
 
