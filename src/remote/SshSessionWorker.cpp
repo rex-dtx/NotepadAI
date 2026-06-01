@@ -36,6 +36,8 @@ SshSessionWorker::SshSessionWorker(std::unique_ptr<ISshTransport> transport,
     qRegisterMetaType<remote::SshSessionWorker::State>("remote::SshSessionWorker::State");
     qRegisterMetaType<remote::SshSessionWorker::ConnectParams>(
         "remote::SshSessionWorker::ConnectParams");
+    qRegisterMetaType<remote::RemoteDirEntry>("remote::RemoteDirEntry");
+    qRegisterMetaType<QList<remote::RemoteDirEntry>>("QList<remote::RemoteDirEntry>");
 }
 
 SshSessionWorker::~SshSessionWorker()
@@ -86,6 +88,8 @@ void SshSessionWorker::startConnect(const ConnectParams &params)
     m_hostKeyEmitted = false;
     m_hostKeyAccepted = false;
     m_hostKeyRejected = false;
+    // Fresh session → the SFTP layer is re-established lazily on the first op.
+    m_sftpInited = false;
     setState(State::ConnectingSocket);
     pump();
 }
@@ -108,12 +112,20 @@ void SshSessionWorker::requestDisconnect()
     if (m_state == State::Disconnected || m_state == State::Failed) {
         teardownNotifiers();
         if (m_transport) m_transport->disconnect();
+        failAllSftp(tr("Disconnected"));
+        failAllExec(-1);
+        m_sftpInited = false;
         return;
     }
     teardownNotifiers();
     if (m_transport) {
         m_transport->disconnect();
     }
+    // Resolve any pending SFTP callbacks before tearing the session down, so a
+    // RemoteFsBackend op never hangs on a deliberate disconnect (D1).
+    failAllSftp(tr("Disconnected"));
+    failAllExec(-1);
+    m_sftpInited = false;
     setState(State::Disconnected);
 }
 
@@ -197,6 +209,10 @@ void SshSessionWorker::pump()
     advanceChannelSetup();
     readSweep();
     flushPendingWrites();
+    // The exec engine runs its own non-PTY channels off to the side; advance
+    // them after the interactive pump so a large git output never starves the
+    // terminal channels (and SFTP is serviced via onSocketActivity/serviceSftp).
+    serviceExec();
 }
 
 void SshSessionWorker::advanceConnect()
@@ -436,6 +452,16 @@ void SshSessionWorker::enterConnectionLost(const QString &reason)
     m_rotation.clear();
     m_openQueue.clear();
 
+    // Fail every in-flight / queued SFTP op with the loss reason so RemoteFsBackend
+    // resolves its pending callbacks instead of hanging (D1). No libssh2 calls —
+    // the session is already dead; the handles died with it.
+    failAllSftp(reason);
+    // Resolve every in-flight exec op with an abnormal exit (-1) so a remote git
+    // runner's callback fires instead of hanging (D6). The channels died with
+    // the session — no libssh2 calls.
+    failAllExec(-1);
+    m_sftpInited = false;
+
     if (m_transport) {
         m_transport->disconnect();
     }
@@ -516,6 +542,525 @@ void SshSessionWorker::onSocketActivity()
 {
     // A single readable/writable edge → one bounded pump sweep. Not recursive.
     pump();
+    // The SFTP layer is multiplexed on the SAME socket, so the same edge may
+    // carry SFTP progress (EAGAIN re-arm path, D1). Drive it after the channel
+    // pump so interactive channel I/O is never starved by a large transfer.
+    serviceSftp();
+    // Exec channels share the same socket too; advance them on every edge so a
+    // streaming git command resumes after EAGAIN (D6).
+    serviceExec();
+}
+
+// --- SFTP engine (D1) --------------------------------------------------------
+// One reused SFTP session (sftpInit once), serialized FIFO ops. Each request
+// slot appends an op and kicks the engine; serviceSftp() advances the head op
+// as far as it can this pass and re-arms on the next socket edge for EAGAIN.
+
+void SshSessionWorker::requestSftpRead(quint64 reqId, const QString &path)
+{
+    SftpOp op;
+    op.reqId = reqId;
+    op.kind = SftpKind::Read;
+    op.path = path;
+    enqueueSftpOp(std::move(op));
+}
+
+void SshSessionWorker::requestSftpWrite(quint64 reqId, const QString &path,
+                                        const QByteArray &data)
+{
+    SftpOp op;
+    op.reqId = reqId;
+    op.kind = SftpKind::Write;
+    op.path = path;
+    op.buffer = data; // write source; consumed front-to-back via writeOffset
+    enqueueSftpOp(std::move(op));
+}
+
+void SshSessionWorker::requestSftpStat(quint64 reqId, const QString &path)
+{
+    SftpOp op;
+    op.reqId = reqId;
+    op.kind = SftpKind::Stat;
+    op.path = path;
+    enqueueSftpOp(std::move(op));
+}
+
+void SshSessionWorker::requestSftpReaddir(quint64 reqId, const QString &path)
+{
+    SftpOp op;
+    op.reqId = reqId;
+    op.kind = SftpKind::Readdir;
+    op.path = path;
+    enqueueSftpOp(std::move(op));
+}
+
+void SshSessionWorker::enqueueSftpOp(SftpOp op)
+{
+    // Dead-guard: never queue against a lost/closed session — fail fast so the
+    // backend's callback resolves immediately rather than waiting forever.
+    if (m_lost || m_state == State::Disconnected || m_state == State::Failed) {
+        failSftpOp(op, tr("Not connected"));
+        return;
+    }
+    m_sftpQueue.append(std::move(op));
+    serviceSftp();
+}
+
+ISshTransport::Step SshSessionWorker::ensureSftpInited()
+{
+    if (m_sftpInited) {
+        return ISshTransport::Step::Ok;
+    }
+    const ISshTransport::SftpOpenResult r = m_transport->sftpInit();
+    if (r.step == ISshTransport::Step::Ok) {
+        m_sftpInited = true;
+    }
+    return r.step;
+}
+
+void SshSessionWorker::serviceSftp()
+{
+    // Only run while the session is usable; otherwise leave ops queued (they
+    // service once Ready) or, if truly dead, they were already failed in
+    // enterConnectionLost / enqueueSftpOp.
+    if (m_lost || m_state != State::Ready) {
+        return;
+    }
+    // Advance the head op to completion-or-EAGAIN. A finished op is popped and
+    // the next one is attempted in the same pass (cheap ops like an already
+    // -buffered readdir/stat chain without an extra socket edge).
+    while (!m_sftpQueue.isEmpty()) {
+        const ISshTransport::Step initStep = ensureSftpInited();
+        if (initStep == ISshTransport::Step::Again) {
+            return; // session still establishing → retry on the next edge
+        }
+        if (initStep == ISshTransport::Step::Error) {
+            // The session can never open → surface it as the head op's failure
+            // so the caller is not stuck waiting forever.
+            const SftpOp failed = m_sftpQueue.takeFirst();
+            failSftpOp(failed, tr("Could not open SFTP session"));
+            continue;
+        }
+        SftpOp &op = m_sftpQueue.first();
+        if (!advanceSftpOp(op)) {
+            return; // EAGAIN mid-op: resume on the next socket edge
+        }
+        m_sftpQueue.removeFirst(); // finished (a *Done signal was emitted)
+    }
+}
+
+bool SshSessionWorker::advanceSftpOp(SftpOp &op)
+{
+    switch (op.kind) {
+    case SftpKind::Stat: {
+        const ISshTransport::SftpStatResult r = m_transport->sftpStat(op.path);
+        if (r.step == ISshTransport::Step::Again) {
+            return false;
+        }
+        if (r.step == ISshTransport::Step::Error) {
+            // Not an I/O failure: a missing path is reported exists=false / ok=true
+            // (mirrors the local QFileInfo backend, where absence is not an error).
+            emit sftpStatDone(op.reqId, /*ok=*/true, /*exists=*/false, /*isDir=*/false,
+                              /*size=*/0, /*mtime=*/0, QString());
+            return true;
+        }
+        const ISshTransport::SftpAttrs &a = r.attrs;
+        emit sftpStatDone(op.reqId, /*ok=*/true, /*exists=*/true, a.isDir,
+                          static_cast<qint64>(a.hasSize ? a.size : 0),
+                          static_cast<qint64>(a.hasMtime ? a.mtime : 0), QString());
+        return true;
+    }
+
+    case SftpKind::Read: {
+        if (op.phase == SftpPhase::NeedOpen) {
+            const ISshTransport::SftpOpenResult r = m_transport->sftpOpen(op.path, /*forWrite=*/false);
+            if (r.step == ISshTransport::Step::Again) {
+                return false;
+            }
+            if (r.step == ISshTransport::Step::Error) {
+                failSftpOp(op, tr("Could not open remote file for reading"));
+                return true;
+            }
+            op.handleId = r.handleId;
+            op.phase = SftpPhase::Transfer;
+        }
+        // Drain chunks into the reused buffer until EOF / EAGAIN.
+        for (;;) {
+            ISshTransport::ReadResult rr = m_transport->sftpRead(op.handleId);
+            if (rr.error) {
+                m_transport->sftpClose(op.handleId);
+                op.handleId = -1;
+                failSftpOp(op, tr("Remote read failed"));
+                return true;
+            }
+            if (!rr.data.isEmpty()) {
+                op.buffer.append(rr.data); // move-append; chunked accumulation
+            }
+            if (rr.eof) {
+                m_transport->sftpClose(op.handleId);
+                op.handleId = -1;
+                emit sftpReadDone(op.reqId, /*ok=*/true, std::move(op.buffer), QString());
+                return true;
+            }
+            if (rr.again) {
+                return false; // resume on the next socket edge
+            }
+        }
+    }
+
+    case SftpKind::Write: {
+        if (op.phase == SftpPhase::NeedOpen) {
+            const ISshTransport::SftpOpenResult r = m_transport->sftpOpen(op.path, /*forWrite=*/true);
+            if (r.step == ISshTransport::Step::Again) {
+                return false;
+            }
+            if (r.step == ISshTransport::Step::Error) {
+                failSftpOp(op, tr("Could not open remote file for writing"));
+                return true;
+            }
+            op.handleId = r.handleId;
+            op.phase = SftpPhase::Transfer;
+        }
+        while (op.writeOffset < op.buffer.size()) {
+            // Zero-copy view of the not-yet-written tail (no per-iteration alloc).
+            const QByteArray slice = QByteArray::fromRawData(
+                op.buffer.constData() + op.writeOffset,
+                static_cast<int>(op.buffer.size() - op.writeOffset));
+            const qint64 n = m_transport->sftpWrite(op.handleId, slice);
+            if (n == ISshTransport::kWriteAgain) {
+                setWriteNotifierEnabled(true); // socket-writable edge resumes us
+                return false;
+            }
+            if (n == ISshTransport::kWriteError) {
+                m_transport->sftpClose(op.handleId);
+                op.handleId = -1;
+                failSftpOp(op, tr("Remote write failed"));
+                return true;
+            }
+            if (n <= 0) {
+                return false; // nothing consumed; avoid a spin, retry next edge
+            }
+            op.writeOffset += n;
+        }
+        m_transport->sftpClose(op.handleId);
+        op.handleId = -1;
+        emit sftpWriteDone(op.reqId, /*ok=*/true, QString());
+        return true;
+    }
+
+    case SftpKind::Readdir: {
+        if (op.phase == SftpPhase::NeedOpen) {
+            const ISshTransport::SftpOpenResult r = m_transport->sftpOpendir(op.path);
+            if (r.step == ISshTransport::Step::Again) {
+                return false;
+            }
+            if (r.step == ISshTransport::Step::Error) {
+                failSftpOp(op, tr("Could not open remote directory"));
+                return true;
+            }
+            op.handleId = r.handleId;
+            op.phase = SftpPhase::Transfer;
+        }
+        for (;;) {
+            ISshTransport::SftpDirEntry e = m_transport->sftpReaddir(op.handleId);
+            if (e.kind == ISshTransport::SftpDirEntry::Kind::Again) {
+                return false; // resume on the next socket edge
+            }
+            if (e.kind == ISshTransport::SftpDirEntry::Kind::Error) {
+                m_transport->sftpClosedir(op.handleId);
+                op.handleId = -1;
+                failSftpOp(op, tr("Remote directory listing failed"));
+                return true;
+            }
+            if (e.kind == ISshTransport::SftpDirEntry::Kind::Done) {
+                m_transport->sftpClosedir(op.handleId);
+                op.handleId = -1;
+                emit sftpReaddirDone(op.reqId, /*ok=*/true, op.entries, QString());
+                return true;
+            }
+            // Kind::Entry — decode + filter "." / ".." (matches local readdir).
+            const QString name = QString::fromUtf8(e.name);
+            if (name == QLatin1String(".") || name == QLatin1String("..")) {
+                continue;
+            }
+            RemoteDirEntry de;
+            de.name = name;
+            de.isDir = e.attrs.isDir;
+            de.size = static_cast<qint64>(e.attrs.hasSize ? e.attrs.size : 0);
+            de.mtimeSecs = static_cast<qint64>(e.attrs.hasMtime ? e.attrs.mtime : 0);
+            op.entries.append(std::move(de));
+        }
+    }
+    }
+    return true; // unreachable; keeps the compiler happy on all paths
+}
+
+void SshSessionWorker::failSftpOp(const SftpOp &op, const QString &reason)
+{
+    switch (op.kind) {
+    case SftpKind::Read:
+        emit sftpReadDone(op.reqId, /*ok=*/false, QByteArray(), reason);
+        break;
+    case SftpKind::Write:
+        emit sftpWriteDone(op.reqId, /*ok=*/false, reason);
+        break;
+    case SftpKind::Stat:
+        emit sftpStatDone(op.reqId, /*ok=*/false, /*exists=*/false, /*isDir=*/false,
+                          0, 0, reason);
+        break;
+    case SftpKind::Readdir:
+        emit sftpReaddirDone(op.reqId, /*ok=*/false, QList<RemoteDirEntry>(), reason);
+        break;
+    }
+}
+
+void SshSessionWorker::failAllSftp(const QString &reason)
+{
+    // Snapshot + clear first so no re-entrant enqueue can resurrect the queue.
+    const QList<SftpOp> pending = std::move(m_sftpQueue);
+    m_sftpQueue.clear();
+    for (const SftpOp &op : pending) {
+        failSftpOp(op, reason);
+    }
+}
+
+// --- exec engine (D6) --------------------------------------------------------
+// Each exec op owns a dedicated non-PTY channel and advances concurrently with
+// the others. A request appends an op and kicks the engine; serviceExec() walks
+// every op once per pass, opening / exec'ing / draining stdout+stderr until the
+// streams hit EOF, then emits execDone with the channel exit status.
+
+void SshSessionWorker::requestExec(quint64 reqId, const QString &command,
+                                   const QByteArray &stdinPayload)
+{
+    // Dead-guard: never run against a lost/closed session — resolve immediately
+    // so the runner's callback fires instead of hanging.
+    if (m_lost || m_state == State::Disconnected || m_state == State::Failed) {
+        emit execDone(reqId, -1);
+        return;
+    }
+    ExecOp op;
+    op.reqId = reqId;
+    op.command = command;
+    op.stdinPayload = stdinPayload;
+    m_execOps.append(std::move(op));
+    serviceExec();
+}
+
+void SshSessionWorker::requestExecCancel(quint64 reqId)
+{
+    for (int i = 0; i < m_execOps.size(); ++i) {
+        if (m_execOps[i].reqId != reqId) {
+            continue;
+        }
+        // Free the channel if it was opened and the session is still alive. The
+        // runner already resolved its callback, so we emit NO execDone here.
+        if (m_execOps[i].transportId >= 0 && !m_lost) {
+            m_transport->closeChannel(m_execOps[i].transportId);
+        }
+        m_execOps.removeAt(i);
+        return;
+    }
+}
+
+void SshSessionWorker::requestExecWrite(quint64 reqId, const QByteArray &bytes)
+{
+    // Append to the matching in-flight op's streamed-stdin buffer (D8). If the op
+    // is gone (already finished/cancelled) the write is silently dropped — the
+    // remote process is no longer there to read it. Bytes drain on the next
+    // service pass; serviceExec() kicks one now so a frame written while Ready
+    // goes out promptly (and EAGAIN re-arms the write notifier for the rest).
+    for (int i = 0; i < m_execOps.size(); ++i) {
+        if (m_execOps[i].reqId != reqId) {
+            continue;
+        }
+        m_execOps[i].streamStdin.append(bytes);
+        serviceExec();
+        return;
+    }
+}
+
+void SshSessionWorker::serviceExec()
+{
+    if (m_lost || m_state != State::Ready) {
+        return; // ops stay queued; they advance once Ready / are failed on loss
+    }
+    // Advance each op one pass; remove finished ops. Index walk is safe because
+    // advanceExecOp never appends, and a finished op is erased in place.
+    for (int i = 0; i < m_execOps.size();) {
+        if (advanceExecOp(m_execOps[i])) {
+            m_execOps.removeAt(i);
+        } else {
+            ++i;
+        }
+    }
+}
+
+bool SshSessionWorker::advanceExecOp(ExecOp &op)
+{
+    if (op.phase == ExecPhase::NeedOpen) {
+        const ISshTransport::OpenResult r = m_transport->openChannel();
+        if (r.step == ISshTransport::Step::Again) {
+            return false;
+        }
+        if (r.step == ISshTransport::Step::Error) {
+            emit execDone(op.reqId, -1);
+            return true;
+        }
+        op.transportId = r.channelId;
+        op.phase = ExecPhase::NeedExec;
+    }
+
+    if (op.phase == ExecPhase::NeedExec) {
+        // No PTY: a raw exec channel keeps stdout and stderr as distinct
+        // streams (chRead vs chReadStderr), which the git runner relies on.
+        const ISshTransport::Step s = m_transport->execOrShell(op.transportId, op.command);
+        if (s == ISshTransport::Step::Again) {
+            return false;
+        }
+        if (s == ISshTransport::Step::Error) {
+            m_transport->closeChannel(op.transportId);
+            op.transportId = -1;
+            emit execDone(op.reqId, -1);
+            return true;
+        }
+        op.phase = ExecPhase::Streaming;
+    }
+
+    // Streaming: feed stdin once, then drain stdout + stderr toward EOF.
+    if (op.phase == ExecPhase::Streaming) {
+        if (!op.stdinSent && !op.stdinPayload.isEmpty()) {
+            while (op.stdinOffset < op.stdinPayload.size()) {
+                const QByteArray slice = QByteArray::fromRawData(
+                    op.stdinPayload.constData() + op.stdinOffset,
+                    static_cast<int>(op.stdinPayload.size() - op.stdinOffset));
+                const qint64 n = m_transport->chWrite(op.transportId, slice);
+                if (n == ISshTransport::kWriteAgain) {
+                    setWriteNotifierEnabled(true); // resume on socket-writable
+                    break;
+                }
+                if (n == ISshTransport::kWriteError) {
+                    m_transport->closeChannel(op.transportId);
+                    op.transportId = -1;
+                    emit execDone(op.reqId, -1);
+                    return true;
+                }
+                if (n <= 0) {
+                    break; // nothing consumed; retry next edge
+                }
+                op.stdinOffset += n;
+            }
+            if (op.stdinOffset >= op.stdinPayload.size()) {
+                op.stdinSent = true;
+            }
+        } else {
+            op.stdinSent = true;
+        }
+
+        // Drain streamed stdin (D8): frames appended after start via
+        // requestExecWrite. Only after the one-shot payload is fully sent, so
+        // byte order on the wire is payload-then-streamed. EAGAIN re-arms the
+        // write notifier; the rest drains on the next writable edge. Consumed
+        // bytes are compacted out of the buffer so it does not grow unbounded
+        // across a long session.
+        if (op.stdinSent && op.streamStdinOffset < op.streamStdin.size()) {
+            while (op.streamStdinOffset < op.streamStdin.size()) {
+                const QByteArray slice = QByteArray::fromRawData(
+                    op.streamStdin.constData() + op.streamStdinOffset,
+                    static_cast<int>(op.streamStdin.size() - op.streamStdinOffset));
+                const qint64 n = m_transport->chWrite(op.transportId, slice);
+                if (n == ISshTransport::kWriteAgain) {
+                    setWriteNotifierEnabled(true); // resume on socket-writable
+                    break;
+                }
+                if (n == ISshTransport::kWriteError) {
+                    m_transport->closeChannel(op.transportId);
+                    op.transportId = -1;
+                    emit execDone(op.reqId, -1);
+                    return true;
+                }
+                if (n <= 0) {
+                    break; // nothing consumed; retry next edge
+                }
+                op.streamStdinOffset += n;
+            }
+            if (op.streamStdinOffset >= op.streamStdin.size()) {
+                op.streamStdin.clear();
+                op.streamStdinOffset = 0;
+            }
+        }
+
+        // Drain stdout.
+        if (!op.stdoutEof) {
+            for (;;) {
+                ISshTransport::ReadResult r = m_transport->chRead(op.transportId);
+                if (r.error) {
+                    m_transport->closeChannel(op.transportId);
+                    op.transportId = -1;
+                    emit execDone(op.reqId, -1);
+                    return true;
+                }
+                if (!r.data.isEmpty()) {
+                    emit execStdoutChunk(op.reqId, std::move(r.data));
+                }
+                if (r.eof) {
+                    op.stdoutEof = true;
+                    break;
+                }
+                if (r.again) {
+                    break; // resume on next edge
+                }
+            }
+        }
+
+        // Drain stderr (separate extended-data stream).
+        if (!op.stderrEof) {
+            for (;;) {
+                ISshTransport::ReadResult r = m_transport->chReadStderr(op.transportId);
+                if (r.error) {
+                    m_transport->closeChannel(op.transportId);
+                    op.transportId = -1;
+                    emit execDone(op.reqId, -1);
+                    return true;
+                }
+                if (!r.data.isEmpty()) {
+                    emit execStderrChunk(op.reqId, std::move(r.data));
+                }
+                if (r.eof) {
+                    op.stderrEof = true;
+                    break;
+                }
+                if (r.again) {
+                    break;
+                }
+            }
+        }
+
+        // The remote process has fully finished once stdout reaches EOF (the
+        // channel-level EOF the transport reports tracks both streams). Read the
+        // exit status, close, and resolve. stderr that did not explicitly EOF is
+        // drained one last time above on this same pass.
+        if (op.stdoutEof) {
+            const int exitStatus = m_transport->chExitStatus(op.transportId);
+            m_transport->closeChannel(op.transportId);
+            op.transportId = -1;
+            emit execDone(op.reqId, exitStatus);
+            return true;
+        }
+        return false; // still streaming; resume on the next socket edge
+    }
+
+    return false;
+}
+
+void SshSessionWorker::failAllExec(int exitStatus)
+{
+    // Snapshot + clear so a re-entrant requestExec can't resurrect the list.
+    const QList<ExecOp> pending = std::move(m_execOps);
+    m_execOps.clear();
+    for (const ExecOp &op : pending) {
+        emit execDone(op.reqId, exitStatus);
+    }
 }
 
 } // namespace remote

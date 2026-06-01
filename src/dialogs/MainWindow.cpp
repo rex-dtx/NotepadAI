@@ -39,6 +39,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QUuid>
 #include <QLineEdit>
 #include <QLabel>
 #include <QCheckBox>
@@ -94,6 +95,7 @@
 
 #include "remote/ExecutionContext.h"
 #include "remote/ExecutionContextRegistry.h"
+#include "remote/IFileSystemBackend.h"
 #include "remote/LocalExecutionContext.h"
 #include "remote/RemoteExecutionContext.h"
 #include "remote/SshProfile.h"
@@ -1792,7 +1794,8 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
                     AcpAgentManager *m = this->app->getAiAgentManager();
                     if (!m) return;
-                    AiAgentDock *dock = m->openAgent(agentId, cwd, /*recordAsLastUsed=*/true);
+                    AiAgentDock *dock = m->openAgent(agentId, cwd, /*recordAsLastUsed=*/true,
+                                                     activeExecutionContext());
                     if (dock) {
                         attachAiAgentDock(dock);
                     }
@@ -1841,7 +1844,8 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
             return;
         }
 
-        AiAgentDock *dock = manager->openAgent(agentId, cwd, /*recordAsLastUsed=*/true);
+        AiAgentDock *dock = manager->openAgent(agentId, cwd, /*recordAsLastUsed=*/true,
+                                               activeExecutionContext());
         if (dock) {
             attachAiAgentDock(dock);
         }
@@ -2087,28 +2091,48 @@ void MainWindow::openFileList(const QStringList &fileNames)
     for (const QString &filePath : fileNames) {
         qInfo("%s", qUtf8Printable(filePath));
 
-        // Search currently open editors to see if it is already open
+        // Search currently open editors to see if it is already open. For an
+        // ssh:// path getEditorByFilePath dedupes by URI (no local QFileInfo).
         ScintillaNext *editor = app->getEditorManager()->getEditorByFilePath(filePath);
 
         if (editor == Q_NULLPTR) {
-            QFileInfo fileInfo(filePath);
-
-            if (!fileInfo.isFile()) {
-                auto reply = QMessageBox::question(this, tr("Create File"), tr("<b>%1</b> does not exist. Do you want to create it?").arg(filePath));
-
-                if (reply == QMessageBox::Yes) {
-                    editor = app->getEditorManager()->createEditorFromFile(filePath, true);
-                }
-                else {
-                    // Make sure it is not still in the recent files list still.
-                    // Normally when a file is opened it is removed from the file list,
-                    // but if a user doesn't want to create the file, remove it explicitly.
-                    app->getRecentFilesListManager()->removeFile(filePath);
+            if (remote::isSshUri(filePath)) {
+                // Remote (ssh://) open (D5 branch point 1): SKIP the local
+                // QFileInfo(filePath).isFile() stat + "Create File?" prompt — the
+                // path lives on another host. Resolve the backend from the active
+                // execution context; trust the tree that surfaced the path. The
+                // shell tab is added synchronously by createEditorFromRemote, so
+                // the initialEditor snapshot/close ordering below still holds.
+                remote::ExecutionContext *ctx = activeExecutionContext();
+                remote::IFileSystemBackend *backend = ctx ? ctx->fsBackend() : nullptr;
+                if (!backend || !backend->isRemote()) {
+                    qWarning("openFileList: no remote backend for %s", qUtf8Printable(filePath));
                     continue;
                 }
+                const remote::SshUri parsed = remote::parseSshUri(filePath);
+                editor = app->getEditorManager()->createEditorFromRemote(
+                    backend, filePath, parsed.remotePath);
             }
             else {
-                editor = app->getEditorManager()->createEditorFromFile(filePath);
+                QFileInfo fileInfo(filePath);
+
+                if (!fileInfo.isFile()) {
+                    auto reply = QMessageBox::question(this, tr("Create File"), tr("<b>%1</b> does not exist. Do you want to create it?").arg(filePath));
+
+                    if (reply == QMessageBox::Yes) {
+                        editor = app->getEditorManager()->createEditorFromFile(filePath, true);
+                    }
+                    else {
+                        // Make sure it is not still in the recent files list still.
+                        // Normally when a file is opened it is removed from the file list,
+                        // but if a user doesn't want to create the file, remove it explicitly.
+                        app->getRecentFilesListManager()->removeFile(filePath);
+                        continue;
+                    }
+                }
+                else {
+                    editor = app->getEditorManager()->createEditorFromFile(filePath);
+                }
             }
         }
         else if (editor == dockedEditor->previewEditor()) {
@@ -2184,16 +2208,42 @@ void MainWindow::previewFile(const QString &filePath)
         return;
     }
 
-    QFileInfo fileInfo(filePath);
-    if (!fileInfo.isFile()) return;
-
     // Snapshot the reusable pristine "New X" editor BEFORE creating the preview
-    // editor: createEditorFromFile() adds the new editor to the layout
-    // synchronously (editorCreated → addEditor), so by the time it returns
-    // editorCount() is already 2 and getInitialEditor() — which requires
+    // editor: createEditorFromFile()/createEditorFromRemote() add the new editor
+    // to the layout synchronously (editorCreated → addEditor), so by the time it
+    // returns editorCount() is already 2 and getInitialEditor() — which requires
     // editorCount() == 1 — would return null, leaving the scratch tab behind.
     // Same ordering rule as newFile(). Closed at the end so totalTabCount()
     // never hits 0 mid-flight and lastTabClosed never fires.
+    if (remote::isSshUri(filePath)) {
+        // Remote (ssh://) preview (D5 branch point 2): SKIP the local QFileInfo
+        // stat. Resolve the backend from the active execution context.
+        remote::ExecutionContext *ctx = activeExecutionContext();
+        remote::IFileSystemBackend *backend = ctx ? ctx->fsBackend() : nullptr;
+        if (!backend || !backend->isRemote()) {
+            qWarning("previewFile: no remote backend for %s", qUtf8Printable(filePath));
+            return;
+        }
+
+        ScintillaNext *initialEditor = getInitialEditor();
+
+        const remote::SshUri parsed = remote::parseSshUri(filePath);
+        editor = app->getEditorManager()->createEditorFromRemote(
+            backend, filePath, parsed.remotePath);
+        if (!editor) return;
+
+        dockedEditor->addPreviewEditor(editor);
+        dockedEditor->switchToEditor(editor);
+
+        if (initialEditor) {
+            initialEditor->close();
+        }
+        return;
+    }
+
+    QFileInfo fileInfo(filePath);
+    if (!fileInfo.isFile()) return;
+
     ScintillaNext *initialEditor = getInitialEditor();
 
     editor = app->getEditorManager()->createEditorFromFile(filePath);
@@ -2327,7 +2377,7 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
             [this]() { m_workspaceStateDirty = true; });
 
     connect(dock, &FolderAsWorkspaceDock::treeContextMenuRequested, this,
-            [this](QMenu *menu, const QString &absPath, bool isDir) {
+            [this, dock](QMenu *menu, const QString &absPath, bool isDir) {
         const QString wsRoot = currentWorkspaceRoot();
 
         // --- Preview (rendered preview for supported file types) ---
@@ -2370,6 +2420,35 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
         menu->addAction(copyRelPath);
 
         menu->addSeparator();
+
+        // --- Rename... (not on the workspace root node of THIS dock) ---
+        // Renaming the root would require re-rooting the whole workspace; that
+        // is out of scope. Compare against the raising dock's own root so the
+        // gate is correct for tabified multi-workspace setups.
+        const bool isDockRoot = dock
+            && QDir::cleanPath(absPath).compare(QDir::cleanPath(dock->rootPath()),
+                                                Qt::CaseInsensitive) == 0;
+        if (!isDockRoot) {
+            auto *renameAction = new QAction(tr("Rename..."), menu);
+            connect(renameAction, &QAction::triggered, this, [this, absPath, isDir]() {
+                const QString oldName = QFileInfo(absPath).fileName();
+                bool ok = false;
+                const QString newName = QInputDialog::getText(this, tr("Rename"),
+                    tr("New name:"), QLineEdit::Normal, oldName, &ok);
+                if (!ok || newName.isEmpty() || newName == oldName) return;
+                // Same validation as New File / New Folder.
+                if (newName.contains(QLatin1Char('/')) || newName.contains(QLatin1Char('\\'))
+                    || newName.contains(QStringLiteral(".."))) {
+                    QMessageBox::warning(this, tr("Rename"), tr("Invalid name."));
+                    return;
+                }
+                const QString newPath =
+                    QDir(QFileInfo(absPath).absolutePath()).filePath(newName);
+                renameWorkspaceEntry(absPath, newPath, isDir);
+            });
+            menu->addAction(renameAction);
+            menu->addSeparator();
+        }
 
         // --- New File / New Folder (directory only) ---
         if (isDir) {
@@ -2701,6 +2780,13 @@ void MainWindow::wireWorkspaceGitSignals(FolderAsWorkspaceDock *dock)
     });
     connect(dock, &FolderAsWorkspaceDock::gitInteractiveRebaseRequested, this,
             [this](FolderAsWorkspaceDock *wsDock) {
+        // Interactive rebase is local-only (D7): it relies on the notepadai-editor
+        // helper IPC-ing back to this local window, which a remote host has no
+        // channel to. The action is also disabled in the menu for remote
+        // workspaces; this is the authoritative runtime guard.
+        if (remote::ExecutionContext *ctx = activeExecutionContext(); ctx && ctx->isRemote()) {
+            return;
+        }
         auto *ctrl = wsDock->gitTabWidget() ? wsDock->gitTabWidget()->controller() : nullptr;
         if (!ctrl) return;
         auto *picker = new BranchPickerPopup(this);
@@ -3224,6 +3310,103 @@ void MainWindow::copyAsFormat(Converter *converter, const QString &mimeType)
     mimeData->setData(mimeType, buffer);
 
     QApplication::clipboard()->setMimeData(mimeData);
+}
+
+bool MainWindow::renameWorkspaceEntry(const QString &oldPath, const QString &newPath, bool isDir)
+{
+    const QString oldClean = QDir::cleanPath(oldPath);
+    const QString newClean = QDir::cleanPath(newPath);
+    const QString newName = QFileInfo(newClean).fileName();
+
+    // A case-only rename on a case-insensitive FS (foo.txt -> Foo.txt) maps to
+    // the same inode, so it is NOT a real collision and Qt's plain rename would
+    // refuse it. Detect it up front.
+    const bool caseOnlySelf =
+        oldClean.compare(newClean, Qt::CaseInsensitive) == 0 && oldClean != newClean;
+
+    // Collision check (mirrors New File / New Folder), excluding the case-only
+    // self-match above.
+    if (!caseOnlySelf && QFileInfo::exists(newClean)) {
+        QMessageBox::warning(this, tr("Rename"),
+            tr("A file or folder named \"%1\" already exists.").arg(newName));
+        return false;
+    }
+
+    // Snapshot affected open editors BEFORE the disk op (old paths still
+    // resolve). Folder: rebase every editor whose file lives beneath it; file:
+    // the single exact match. Case-insensitive compare matches
+    // EditorManager::getEditorByFilePath's convention.
+    QVector<QPair<QPointer<ScintillaNext>, QString>> rebase;
+    const QString prefix = oldClean + QLatin1Char('/');
+    for (ScintillaNext *e : app->getEditorManager()->getEditors()) {
+        if (!e || !e->isFile() || e->isRemote()) continue;
+        const QString p = QDir::cleanPath(e->getFileInfo().absoluteFilePath());
+        QString rebased;
+        if (isDir) {
+            if (p.compare(oldClean, Qt::CaseInsensitive) == 0)
+                rebased = newClean;
+            else if (p.startsWith(prefix, Qt::CaseInsensitive))
+                rebased = newClean + p.mid(oldClean.length());
+        } else if (p.compare(oldClean, Qt::CaseInsensitive) == 0) {
+            rebased = newClean;
+        }
+        if (!rebased.isEmpty())
+            rebase.append({QPointer<ScintillaNext>(e), QDir::cleanPath(rebased)});
+    }
+
+    // Perform the on-disk rename. On ANY failure: warn, return, and crucially
+    // DO NOT rebase — leaving editors on the still-valid old path (no spurious
+    // FileMissing). renameOnDisk handles the case-only two-step + rollback.
+    if (!renameOnDisk(oldClean, newClean, caseOnlySelf)) {
+        QMessageBox::warning(this, tr("Rename"),
+            tr("Could not rename \"%1\".").arg(QFileInfo(oldClean).fileName()));
+        return false;
+    }
+
+    // Success only: rebase open tabs synchronously, before returning to the
+    // event loop, so FileWatcher's old->new remap (driven by renamed()) lands
+    // before any queued fileChanged(oldPath) can be dispatched.
+    for (const auto &entry : rebase) {
+        if (entry.first)
+            entry.first->updatePathAfterMove(entry.second);
+    }
+
+    return true;
+}
+
+bool MainWindow::renameOnDisk(const QString &oldClean, const QString &newClean, bool caseOnly)
+{
+    QDir parent = QFileInfo(oldClean).absoluteDir();
+    const QString oldName = QFileInfo(oldClean).fileName();
+    const QString newName = QFileInfo(newClean).fileName();
+
+    if (!caseOnly)
+        return parent.rename(oldName, newName);
+
+    // Case-only on a case-insensitive FS: QDir::rename refuses (target "exists"
+    // = same inode). Go via a guaranteed-unique temp.
+    QString tempName;
+    do {
+        tempName = oldName + QStringLiteral(".rename-")
+                 + QUuid::createUuid().toString(QUuid::Id128);
+    } while (parent.exists(tempName));
+
+    if (!parent.rename(oldName, tempName))
+        return false; // step 1 failed: nothing moved, entry intact at oldName
+
+    if (!parent.rename(tempName, newName)) {
+        // Step 2 failed — roll back so the entry is never stranded under temp.
+        if (!parent.rename(tempName, oldName)) {
+            // Rollback also failed (extremely rare): tell the user exactly where
+            // the entry is so it is never silently lost.
+            QMessageBox::warning(this, tr("Rename"),
+                tr("Rename failed and the original name could not be restored. "
+                   "The item is currently named \"%1\" in the same folder.")
+                   .arg(tempName));
+        }
+        return false;
+    }
+    return true;
 }
 
 void MainWindow::renameFile()

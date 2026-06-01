@@ -37,112 +37,14 @@
 #include "remote/ISshTransport.h"
 #include "remote/SshSessionWorker.h"
 
+#include "FakeSshTransport.h"
+
 using namespace remote;
 
-// Scriptable fake. Every knob is public so each test arranges exactly the
-// scenario it needs. socketFd() returns -1 so the worker creates no real
+// FakeSshTransport now lives in the shared tests/FakeSshTransport.h so every
+// offline SSH suite (this one + the Phase-2..4 remote tests) drives the same
+// scriptable double. socketFd() returns -1 so the worker creates no real
 // QSocketNotifier and pumpForTest() drives the pump deterministically.
-class FakeSshTransport : public ISshTransport
-{
-public:
-    // connect/auth scripting
-    Step connectStep = Step::Ok;
-    Step handshakeStep = Step::Ok;
-    Step authStep = Step::Ok;
-    QByteArray fakeHostKey = QByteArrayLiteral("FAKE-HOST-KEY-BLOB");
-
-    // recorded auth
-    int authPasswordCalls = 0;
-    int authPublicKeyCalls = 0;
-    int authAgentCalls = 0;
-    QString lastAuthUser;
-    QString lastAuthPassword;
-
-    // channel-open scripting
-    Step openStep = Step::Ok;             // Again to simulate EAGAIN on open
-    QList<int> openedIds;                 // transport ids assigned, in order
-    int nextId = 1;
-    int closedCount = 0;
-    QList<int> closedIds;
-
-    // per-transportId read script (popped front; empty → Again)
-    QHash<int, QList<ReadResult>> readScript;
-    QHash<int, int> readCalls;
-
-    // per-transportId write script: number of EAGAINs before it accepts in full
-    QHash<int, int> writeEagainsRemaining;
-    int writeCalls = 0;
-
-    QHash<int, int> exitStatus;
-
-    Step connectSocket(const QString &, int) override { return connectStep; }
-    Step handshake() override { return handshakeStep; }
-    QByteArray hostKey() const override { return fakeHostKey; }
-
-    Step authPassword(const QString &username, const QString &password) override
-    {
-        ++authPasswordCalls;
-        lastAuthUser = username;
-        lastAuthPassword = password;
-        return authStep;
-    }
-    Step authPublicKey(const QString &username, const QString &, const QString &) override
-    {
-        ++authPublicKeyCalls;
-        lastAuthUser = username;
-        return authStep;
-    }
-    Step authAgent(const QString &username) override
-    {
-        ++authAgentCalls;
-        lastAuthUser = username;
-        return authStep;
-    }
-
-    OpenResult openChannel() override
-    {
-        OpenResult r;
-        if (openStep != Step::Ok) {
-            r.step = openStep;
-            return r;
-        }
-        r.step = Step::Ok;
-        r.channelId = nextId++;
-        openedIds.append(r.channelId);
-        return r;
-    }
-    Step requestPty(int, const QByteArray &, int, int) override { return Step::Ok; }
-    Step resizePty(int, int, int) override { return Step::Ok; }
-    Step execOrShell(int, const QString &) override { return Step::Ok; }
-
-    qint64 chWrite(int channelId, const QByteArray &bytes) override
-    {
-        ++writeCalls;
-        int &eagains = writeEagainsRemaining[channelId];
-        if (eagains > 0) {
-            --eagains;
-            return kWriteAgain;
-        }
-        return bytes.size(); // accept in full
-    }
-
-    ReadResult chRead(int channelId) override
-    {
-        ++readCalls[channelId];
-        QList<ReadResult> &q = readScript[channelId];
-        if (q.isEmpty()) {
-            ReadResult r;
-            r.again = true;
-            return r;
-        }
-        return q.takeFirst();
-    }
-
-    int chExitStatus(int channelId) override { return exitStatus.value(channelId, 0); }
-    void closeChannel(int channelId) override { ++closedCount; closedIds.append(channelId); }
-    qintptr socketFd() const override { return -1; } // no real QSocketNotifier in tests
-    void disconnect() override {}
-};
 
 // Helper to drive the connect/auth handshake to a given point.
 static SshSessionWorker::ConnectParams passwordParams(const QString &pw)

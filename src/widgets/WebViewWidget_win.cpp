@@ -441,19 +441,13 @@ private:
             L"writable:false,configurable:false,enumerable:false});";
         m_webView->AddScriptToExecuteOnDocumentCreated(pristineFetchJs.c_str(), nullptr);
 
-        // Inject Trusted Types default policy at document creation — before CSP
-        // headers are enforced. This ensures page-agent can use innerHTML even on
-        // pages with strict trusted-types directives (e.g. Teams).
-        const std::wstring ttPolicyJs =
-            L"(function(){"
-            L"if(!window.trustedTypes||!window.trustedTypes.createPolicy)return;"
-            L"try{window.__nai_tt_policy=window.trustedTypes.createPolicy('default',{"
-            L"createHTML:function(s){return s;},"
-            L"createScript:function(s){return s;},"
-            L"createScriptURL:function(s){return s;}"
-            L"});}catch(e){}"
-            L"})();";
-        m_webView->AddScriptToExecuteOnDocumentCreated(ttPolicyJs.c_str(), nullptr);
+        // NOTE: We deliberately do NOT pre-create a Trusted Types 'default' policy at
+        // document creation. 'default' is a per-realm singleton — claiming it first makes
+        // the page's own createPolicy('default') throw "already exists" (e.g. OWA/Outlook,
+        // Teams), which aborts their boot and leaves the page unreachable. Page-agent
+        // instead creates its policy lazily at run time (see executeCopilotCommand in
+        // WebViewWidget.cpp): it tries 'default', and on failure falls back to the named
+        // 'nai-page-agent' policy, degrading silently if even that is CSP-blocked.
 
         // Bypass ALL CSP enforcement via DevTools Protocol. Uses a completion
         // callback to guarantee the bypass is active before Navigate() fires.

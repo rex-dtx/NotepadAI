@@ -26,6 +26,7 @@
 #include <QtGlobal>
 
 #include <libssh2.h>
+#include <libssh2_sftp.h>
 
 #include <cstring>
 
@@ -58,6 +59,26 @@ inline SOCKET sockHandle(qintptr s) { return static_cast<SOCKET>(s); }
 void closeSock(qintptr s) { ::close(static_cast<int>(s)); }
 inline int sockHandle(qintptr s) { return static_cast<int>(s); }
 #endif
+
+// Decode the libssh2 SFTP attribute flags into our flat SftpAttrs. Only the
+// fields the file tree + editor consume (size, mtime, dir bit) are extracted.
+inline ISshTransport::SftpAttrs attrsFromLibssh2(const LIBSSH2_SFTP_ATTRIBUTES &a)
+{
+    ISshTransport::SftpAttrs out;
+    if (a.flags & LIBSSH2_SFTP_ATTR_SIZE) {
+        out.hasSize = true;
+        out.size = static_cast<quint64>(a.filesize);
+    }
+    if (a.flags & LIBSSH2_SFTP_ATTR_ACMODTIME) {
+        out.hasMtime = true;
+        out.mtime = static_cast<quint64>(a.mtime);
+    }
+    if (a.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) {
+        out.permissions = static_cast<quint32>(a.permissions);
+        out.isDir = LIBSSH2_SFTP_S_ISDIR(a.permissions);
+    }
+    return out;
+}
 
 } // namespace
 
@@ -327,6 +348,35 @@ Libssh2Transport::ReadResult Libssh2Transport::chRead(int channelId)
     return out;
 }
 
+Libssh2Transport::ReadResult Libssh2Transport::chReadStderr(int channelId)
+{
+    ReadResult out;
+    LIBSSH2_CHANNEL *ch = channel(channelId);
+    if (!ch) {
+        out.error = true;
+        return out;
+    }
+    char buf[32 * 1024];
+    const ssize_t n =
+        libssh2_channel_read_ex(ch, SSH_EXTENDED_DATA_STDERR, buf, sizeof(buf));
+    if (n == LIBSSH2_ERROR_EAGAIN) {
+        out.again = true;
+        return out;
+    }
+    if (n < 0) {
+        out.error = true;
+        return out;
+    }
+    if (n > 0) {
+        out.data = QByteArray(buf, static_cast<int>(n));
+    }
+    // EOF on stderr tracks the same channel-level EOF as stdout.
+    if (libssh2_channel_eof(ch)) {
+        out.eof = true;
+    }
+    return out;
+}
+
 int Libssh2Transport::chExitStatus(int channelId)
 {
     LIBSSH2_CHANNEL *ch = channel(channelId);
@@ -343,8 +393,201 @@ void Libssh2Transport::closeChannel(int channelId)
     m_channels.remove(channelId);
 }
 
+Libssh2Transport::SftpOpenResult Libssh2Transport::sftpInit()
+{
+    SftpOpenResult out;
+    if (!m_session) {
+        out.step = Step::Error;
+        return out;
+    }
+    if (m_sftp) {
+        out.step = Step::Ok; // already established; reuse the single session
+        return out;
+    }
+    LIBSSH2_SFTP *sftp = libssh2_sftp_init(m_session);
+    if (sftp) {
+        m_sftp = sftp;
+        out.step = Step::Ok;
+        return out;
+    }
+    const int err = libssh2_session_last_errno(m_session);
+    out.step = (err == LIBSSH2_ERROR_EAGAIN) ? Step::Again : Step::Error;
+    return out;
+}
+
+void Libssh2Transport::sftpShutdown()
+{
+    // Free any still-open file/dir handles before the session goes away.
+    for (auto it = m_sftpHandles.begin(); it != m_sftpHandles.end(); ++it) {
+        if (it.value()) {
+            libssh2_sftp_close_handle(it.value());
+        }
+    }
+    m_sftpHandles.clear();
+    if (m_sftp) {
+        libssh2_sftp_shutdown(m_sftp);
+        m_sftp = nullptr;
+    }
+}
+
+Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(const QString &path, bool forWrite)
+{
+    SftpOpenResult out;
+    if (!m_sftp) {
+        out.step = Step::Error;
+        return out;
+    }
+    const QByteArray p = path.toUtf8();
+    const unsigned long flags = forWrite
+        ? (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC)
+        : LIBSSH2_FXF_READ;
+    const long mode = forWrite
+        ? (LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR
+           | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH) // 0644
+        : 0;
+    LIBSSH2_SFTP_HANDLE *h = libssh2_sftp_open_ex(
+        m_sftp, p.constData(), static_cast<unsigned int>(p.size()),
+        flags, mode, LIBSSH2_SFTP_OPENFILE);
+    if (h) {
+        const int id = m_nextSftpHandleId++;
+        m_sftpHandles.insert(id, h);
+        out.step = Step::Ok;
+        out.handleId = id;
+        return out;
+    }
+    const int err = libssh2_session_last_errno(m_session);
+    out.step = (err == LIBSSH2_ERROR_EAGAIN) ? Step::Again : Step::Error;
+    return out;
+}
+
+Libssh2Transport::ReadResult Libssh2Transport::sftpRead(int handleId)
+{
+    ReadResult out;
+    LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
+    if (!h) {
+        out.error = true;
+        return out;
+    }
+    char buf[32 * 1024]; // 32 KiB chunk (D1 tunable)
+    const ssize_t n = libssh2_sftp_read(h, buf, sizeof(buf));
+    if (n == LIBSSH2_ERROR_EAGAIN) {
+        out.again = true;
+        return out;
+    }
+    if (n < 0) {
+        out.error = true;
+        return out;
+    }
+    if (n == 0) {
+        out.eof = true; // SFTP read returns 0 at end-of-file
+        return out;
+    }
+    out.data = QByteArray(buf, static_cast<int>(n));
+    return out;
+}
+
+qint64 Libssh2Transport::sftpWrite(int handleId, const QByteArray &bytes)
+{
+    LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
+    if (!h) return kWriteError;
+    const ssize_t n = libssh2_sftp_write(h, bytes.constData(),
+                                         static_cast<size_t>(bytes.size()));
+    if (n == LIBSSH2_ERROR_EAGAIN) return kWriteAgain;
+    if (n < 0) return kWriteError;
+    return static_cast<qint64>(n);
+}
+
+void Libssh2Transport::sftpClose(int handleId)
+{
+    LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
+    if (!h) return;
+    libssh2_sftp_close_handle(h);
+    m_sftpHandles.remove(handleId);
+}
+
+Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpendir(const QString &path)
+{
+    SftpOpenResult out;
+    if (!m_sftp) {
+        out.step = Step::Error;
+        return out;
+    }
+    const QByteArray p = path.toUtf8();
+    LIBSSH2_SFTP_HANDLE *h = libssh2_sftp_open_ex(
+        m_sftp, p.constData(), static_cast<unsigned int>(p.size()),
+        0, 0, LIBSSH2_SFTP_OPENDIR);
+    if (h) {
+        const int id = m_nextSftpHandleId++;
+        m_sftpHandles.insert(id, h);
+        out.step = Step::Ok;
+        out.handleId = id;
+        return out;
+    }
+    const int err = libssh2_session_last_errno(m_session);
+    out.step = (err == LIBSSH2_ERROR_EAGAIN) ? Step::Again : Step::Error;
+    return out;
+}
+
+Libssh2Transport::SftpDirEntry Libssh2Transport::sftpReaddir(int handleId)
+{
+    SftpDirEntry out;
+    LIBSSH2_SFTP_HANDLE *h = sftpHandle(handleId);
+    if (!h) {
+        out.kind = SftpDirEntry::Kind::Error;
+        return out;
+    }
+    char name[512];
+    LIBSSH2_SFTP_ATTRIBUTES attrs{};
+    const int rc = libssh2_sftp_readdir_ex(h, name, sizeof(name),
+                                           nullptr, 0, &attrs);
+    if (rc == LIBSSH2_ERROR_EAGAIN) {
+        out.kind = SftpDirEntry::Kind::Again;
+        return out;
+    }
+    if (rc < 0) {
+        out.kind = SftpDirEntry::Kind::Error;
+        return out;
+    }
+    if (rc == 0) {
+        out.kind = SftpDirEntry::Kind::Done; // no more entries
+        return out;
+    }
+    out.kind = SftpDirEntry::Kind::Entry;
+    out.name = QByteArray(name, rc); // rc = filename length
+    out.attrs = attrsFromLibssh2(attrs);
+    return out;
+}
+
+void Libssh2Transport::sftpClosedir(int handleId)
+{
+    sftpClose(handleId); // handle close is identical for files and dirs
+}
+
+Libssh2Transport::SftpStatResult Libssh2Transport::sftpStat(const QString &path)
+{
+    SftpStatResult out;
+    if (!m_sftp) {
+        out.step = Step::Error;
+        return out;
+    }
+    const QByteArray p = path.toUtf8();
+    LIBSSH2_SFTP_ATTRIBUTES attrs{};
+    const int rc = libssh2_sftp_stat_ex(
+        m_sftp, p.constData(), static_cast<unsigned int>(p.size()),
+        LIBSSH2_SFTP_STAT, &attrs);
+    out.step = stepFromRc(rc);
+    if (out.step == Step::Ok) {
+        out.attrs = attrsFromLibssh2(attrs);
+    }
+    return out;
+}
+
 void Libssh2Transport::disconnect()
 {
+    // Tear the SFTP layer down first (frees its handles + the implicit channel)
+    // so the channel sweep below does not double-free anything SFTP owns.
+    sftpShutdown();
+
     for (auto it = m_channels.begin(); it != m_channels.end(); ++it) {
         if (it.value()) {
             libssh2_channel_free(it.value());

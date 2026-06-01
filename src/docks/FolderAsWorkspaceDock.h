@@ -23,6 +23,7 @@
 #include <QDockWidget>
 #include <QMultiHash>
 #include <QPersistentModelIndex>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -44,6 +45,7 @@ class GitCommitView;
 class GitOperationManager;
 class ScintillaNext;
 class SubmoduleStatusFetcher;
+namespace remote { class IWorkspaceFsModel; class RemoteFsBackend; class RemoteDirectoryWatcher; }
 
 // Snapshot of per-workspace UI state. Carried verbatim between disk (QSettings
 // nested array under FolderAsWorkspace/WorkspaceStates) and the dock.
@@ -67,6 +69,17 @@ public:
 
     void setRootPath(const QString &dir);
     QString rootPath() const;
+
+    // Switch this dock's file tree from the default local QFileSystemModel-backed
+    // model to an SFTP-backed RemoteFileSystemModel driven by `backend` (D2).
+    // Must be called BEFORE setRootPath()/applySavedTreeState() (i.e. right after
+    // construction, mirroring the local default-ctor + setRootPath sequence). The
+    // dock keeps talking to the model only through the IWorkspaceFsModel seam, so
+    // every path-space code path (reveal, restore, expansion cascade) is
+    // unchanged. Git decorations are local-only and are skipped while remote
+    // (the remote git path is wired in a later batch). `backend` is owned by the
+    // workspace's RemoteExecutionContext and must outlive this dock.
+    void useRemoteBackend(remote::RemoteFsBackend *backend);
 
     void setGitOperationManager(GitOperationManager *mgr);
 
@@ -146,6 +159,7 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private slots:
     void onTabChanged(int index);
@@ -165,11 +179,33 @@ private slots:
 private:
     Ui::FolderAsWorkspaceDock *ui;
 
+    // Local QFileSystemModel-backed model. Non-null for a local workspace; set to
+    // nullptr by useRemoteBackend() (which deletes it) so the git-decoration code
+    // — which is QFileSystemModel-specific — safely no-ops on a remote workspace.
     FolderAsWorkspaceFsModel *model;
+    // The active file-tree model behind the path-based seam (the local `model`
+    // above, or a RemoteFileSystemModel after useRemoteBackend). Every path-space
+    // touch-point routes through this so the dock is backend-agnostic. Always the
+    // proxy's source.
+    remote::IWorkspaceFsModel *fsModel = nullptr;
     // Synthetic-root proxy that presents the workspace dir as the single top
-    // node. The view binds to this; `model` is its source. Per-dock, parented
+    // node. The view binds to this; `fsModel` is its source. Per-dock, parented
     // to the dock. See FolderAsWorkspaceProxyModel.h for the invariants.
     FolderAsWorkspaceProxyModel *proxy;
+
+    // Remote (SFTP) poll-watcher (D3). Null for a local workspace — local change
+    // notification stays on QFileSystemModel's own QFileSystemWatcher, which
+    // surfaces through the SAME proxy rowsInserted/rowsRemoved seam, so the dock
+    // is backend-agnostic. Created + armed by useRemoteBackend(); fed the
+    // visible/expanded-dir set + focus/visibility/minimize state by the dock.
+    // Parented to the dock; explicitly stopped in the destructor before the
+    // tree/proxy are torn down. Its directoryChanged drives the remote model's
+    // onDirectoryChanged re-list/diff.
+    remote::RemoteDirectoryWatcher *m_remoteWatcher = nullptr;
+    // The top-level window we installed the focus/minimize event filter on (for
+    // the remote watcher's interval gating). QPointer so a destroyed window
+    // auto-nulls; used to remove the filter on teardown / re-hook.
+    QPointer<QWidget> m_watchedWindow;
     GitTabWidget *gitTab = nullptr;
     GitDiffViewController *gitDiffViewController = nullptr;
     GitCommitView         *gitCommitView = nullptr;
@@ -247,6 +283,29 @@ private:
     // (tests instantiate the dock standalone): the theme connect is skipped.
     void wireFileTreeGitDecorations();
     void wireTreeContextMenu();
+    // Connect the active model's directoryLoaded(QString) signal to
+    // onDirectoryLoaded by signature (string-based), so it resolves against
+    // whichever concrete model (local QFileSystemModel or RemoteFileSystemModel)
+    // backs fsModel. Called once per model from each ctor and from
+    // useRemoteBackend after the model swap.
+    void connectModelSignals();
+
+    // --- remote poll-watch wiring (D3) ---------------------------------------
+    // Construct + arm the RemoteDirectoryWatcher over `backend`, feeding it the
+    // visible-dir set (collectExpandedDirs) and the current focus/visibility/
+    // minimize state. Called once from useRemoteBackend after the model swap.
+    void setupRemoteWatcher(remote::RemoteFsBackend *backend);
+    // Cleaned absolute paths of every directory currently EXPANDED in the tree
+    // (the workspace root included when expanded). Walks the proxy tree skipping
+    // unexpanded subtrees, so the result is non-recursive by construction — a
+    // collapsed dir contributes neither itself nor its descendants. O(visible
+    // expanded rows). This is the watcher's VisibleDirsFn source.
+    QStringList collectExpandedDirs() const;
+    // Install (idempotently) the focus/minimize event filter on this dock's
+    // top-level window and sync the watcher's initial window state. Called from
+    // showEvent and setupRemoteWatcher (whichever happens first once both a
+    // watcher and a window exist). No-op without a remote watcher.
+    void hookWindowStateForWatcher();
 
     // Schedule a deferred ensureGitTab() if the workspace has a directory
     // and the file-tree decoration setting is enabled. No-op if gitTab is

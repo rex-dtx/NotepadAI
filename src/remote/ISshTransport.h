@@ -21,6 +21,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QtGlobal>
 
 namespace remote {
 
@@ -65,6 +66,58 @@ public:
     static constexpr qint64 kWriteAgain = -1; // EAGAIN: send buffer full
     static constexpr qint64 kWriteError = -2; // fatal socket error
 
+    // --- SFTP (D1) -----------------------------------------------------------
+    // The SFTP layer is itself a channel multiplexed on the live session. The
+    // worker opens ONE SFTP session (sftpInit) and reuses it for every
+    // file/dir op — never a session-per-request. File and directory handles are
+    // identified by an opaque int the transport assigns (mirrors openChannel's
+    // channelId), so this interface never leaks a libssh2 pointer to its
+    // callers. Every method is non-blocking and may return Again.
+
+    // Decoded subset of LIBSSH2_SFTP_ATTRIBUTES the file tree + editor need.
+    // The has* flags are false when the SFTP attrs did not carry that field;
+    // callers treat a missing size as 0 and a missing mode as "not a directory".
+    struct SftpAttrs
+    {
+        bool   isDir = false;
+        bool   hasSize = false;
+        bool   hasMtime = false;
+        quint64 size = 0;
+        quint64 mtime = 0;       // seconds since epoch (SFTP server clock)
+        quint32 permissions = 0; // POSIX mode bits (0 if not provided)
+    };
+
+    // sftpInit / sftpOpen / sftpOpendir outcome: Ok carries a transport handle
+    // id (sftpInit's id is unused — the session is implicit/singleton).
+    struct SftpOpenResult
+    {
+        Step step = Step::Again;
+        int  handleId = -1;
+    };
+
+    // sftpReaddir outcome. One entry per call (matches libssh2_sftp_readdir_ex):
+    // `kind` distinguishes a real entry from end-of-stream / retry / fatal.
+    struct SftpDirEntry
+    {
+        enum class Kind
+        {
+            Entry, // `name` + `attrs` valid
+            Done,  // directory fully enumerated
+            Again, // EAGAIN — retry on next socket activity
+            Error, // fatal SFTP/socket condition
+        };
+        Kind       kind = Kind::Again;
+        QByteArray name;  // raw filename bytes (no path), as sent by the server
+        SftpAttrs  attrs;
+    };
+
+    // sftpStat outcome. `attrs` is only meaningful when step == Ok.
+    struct SftpStatResult
+    {
+        Step      step = Step::Again;
+        SftpAttrs attrs;
+    };
+
     virtual ~ISshTransport() = default;
 
     // --- connect / auth ------------------------------------------------------
@@ -87,8 +140,38 @@ public:
     virtual Step execOrShell(int channelId, const QString &command) = 0;
     virtual qint64 chWrite(int channelId, const QByteArray &bytes) = 0;
     virtual ReadResult chRead(int channelId) = 0;
+    // Reads the channel's STDERR stream (SSH extended-data id 1), separate from
+    // chRead's stdout. Needed by the remote git/exec path (D6/D8) which must
+    // keep stderr distinct from stdout. Same EAGAIN/eof/error semantics as
+    // chRead. Production reads via libssh2_channel_read_ex(STDERR); the local
+    // exec path keeps stdout/stderr split exactly as QProcess does.
+    virtual ReadResult chReadStderr(int channelId) = 0;
     virtual int chExitStatus(int channelId) = 0;
     virtual void closeChannel(int channelId) = 0;
+
+    // --- SFTP ops (D1) -------------------------------------------------------
+    // Open the single reused SFTP session over the live connection. handleId in
+    // the result is unused (the session is a singleton owned by the transport);
+    // a non-Ok step means it could not be established yet (Again) or at all.
+    virtual SftpOpenResult sftpInit() = 0;
+    // Tear the SFTP session down (frees any dangling file/dir handles first).
+    // Idempotent; safe to call even if sftpInit never succeeded.
+    virtual void sftpShutdown() = 0;
+
+    // File ops. sftpOpen: forWrite=false → O_RDONLY; forWrite=true →
+    // O_WRONLY|O_CREAT|O_TRUNC with mode 0644. Returns a file handle id on Ok.
+    virtual SftpOpenResult sftpOpen(const QString &path, bool forWrite) = 0;
+    virtual ReadResult sftpRead(int handleId) = 0;
+    virtual qint64 sftpWrite(int handleId, const QByteArray &bytes) = 0;
+    virtual void sftpClose(int handleId) = 0;
+
+    // Directory ops. sftpReaddir returns one entry per call until Done.
+    virtual SftpOpenResult sftpOpendir(const QString &path) = 0;
+    virtual SftpDirEntry sftpReaddir(int handleId) = 0;
+    virtual void sftpClosedir(int handleId) = 0;
+
+    // Stat a path (follows symlinks — LIBSSH2_SFTP_STAT).
+    virtual SftpStatResult sftpStat(const QString &path) = 0;
 
     // Underlying socket fd, for the QSocketNotifier pump. -1 until connected.
     virtual qintptr socketFd() const = 0;

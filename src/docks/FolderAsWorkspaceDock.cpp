@@ -29,6 +29,9 @@
 #include "NotepadNextApplication.h"
 #include "ProfileScope.h"
 #include "SubmoduleStatusFetcher.h"
+#include "../remote/RemoteDirectoryWatcher.h"
+#include "../remote/RemoteFileSystemModel.h"
+#include "../remote/RemoteFsBackend.h"
 #include "ui_FolderAsWorkspaceDock.h"
 
 #include <QApplication>
@@ -38,15 +41,20 @@
 #include <QDir>
 #include <QEvent>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHelpEvent>
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QMetaObject>
+#include <QPointer>
+#include <QShowEvent>
 #include <QStyle>
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolTip>
 #include <QVBoxLayout>
+
+#include <utility>
 
 // Deprecated as of the multi-workspace refactor. The authoritative state now lives
 // in FolderAsWorkspace/Workspaces (list) and FolderAsWorkspace/ActiveWorkspace
@@ -72,6 +80,7 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(QWidget *parent) :
 {
     ui->setupUi(this);
 
+    fsModel = model;
     proxy->setSourceModel(model);
     ui->treeView->setModel(proxy);
     ui->treeView->header()->hideSection(1);
@@ -122,10 +131,8 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(QWidget *parent) :
 
     // Tree state restoration plumbing. directoryLoaded must be connected BEFORE
     // setRootPath fires so the very first model-load (root level) is captured.
-    // It stays on the SOURCE model — it is a QFileSystemModel-specific,
-    // path-carrying signal that the proxy does not relay.
-    connect(model, &QFileSystemModel::directoryLoaded,
-            this, &FolderAsWorkspaceDock::onDirectoryLoaded);
+    // Connected by signature off the active model (see connectModelSignals).
+    connectModelSignals();
     connect(ui->treeView, &QTreeView::expanded,
             this, &FolderAsWorkspaceDock::onTreeExpanded);
     connect(ui->treeView, &QTreeView::collapsed,
@@ -143,6 +150,7 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget
 {
     ui->setupUi(this);
 
+    fsModel = model;
     proxy->setSourceModel(model);
     ui->treeView->setModel(proxy);
     ui->treeView->header()->hideSection(1);
@@ -191,8 +199,7 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget
         if (!m_programmaticToggle) emit stateDirty();
     });
 
-    connect(model, &QFileSystemModel::directoryLoaded,
-            this, &FolderAsWorkspaceDock::onDirectoryLoaded);
+    connectModelSignals();
     connect(ui->treeView, &QTreeView::expanded,
             this, &FolderAsWorkspaceDock::onTreeExpanded);
     connect(ui->treeView, &QTreeView::collapsed,
@@ -205,17 +212,237 @@ FolderAsWorkspaceDock::FolderAsWorkspaceDock(const QString &initialPath, QWidget
 
 FolderAsWorkspaceDock::~FolderAsWorkspaceDock()
 {
+    // Disarm the remote poll-watcher FIRST: stop its timer + drop in-flight
+    // bookkeeping so a queued readdir callback can never fire into a
+    // half-destroyed dock (the lambda touches proxy/treeView via
+    // collectExpandedDirs). The watcher is parented to `this` and will be
+    // deleted in the QObject child sweep regardless.
+    if (m_remoteWatcher) {
+        m_remoteWatcher->stop();
+    }
+    if (m_watchedWindow) {
+        m_watchedWindow->removeEventFilter(this);
+        m_watchedWindow = nullptr;
+    }
+
     // Defensive: clear the model's index pointer before m_pathStatus is
     // destroyed by the member-destruction phase, in case the model is asked
-    // to paint during Qt's child-cleanup walk.
+    // to paint during Qt's child-cleanup walk. Remote workspaces have no local
+    // `model` (useRemoteBackend deleted it) — the null guard covers that.
     if (model) {
         model->setStatusIndex(nullptr);
     }
     delete ui;
 }
 
+void FolderAsWorkspaceDock::connectModelSignals()
+{
+    // directoryLoaded is not on QAbstractItemModel — it lives on the concrete
+    // model (QFileSystemModel or RemoteFileSystemModel), both with the identical
+    // `directoryLoaded(QString)` shape. Connect by signature so this resolves
+    // against whichever model currently backs fsModel. It stays on the SOURCE
+    // model (the proxy does not relay it) and must be live BEFORE setRootPath so
+    // the very first (root-level) load is captured.
+    if (fsModel) {
+        connect(fsModel->asModel(), SIGNAL(directoryLoaded(QString)),
+                this, SLOT(onDirectoryLoaded(QString)));
+    }
+}
+
+void FolderAsWorkspaceDock::useRemoteBackend(remote::RemoteFsBackend *backend)
+{
+    if (!backend) return;
+
+    // Tear down the local model + its signal wiring. The git-decoration lambdas
+    // were connected with `model` as the receiver, so Qt auto-disconnects them
+    // when it is destroyed; the settings/theme connects with `this` as receiver
+    // are dropped explicitly below via the model disconnect. Detach it from the
+    // proxy first so the proxy doesn't briefly hold a dangling source.
+    if (model) {
+        model->disconnect(this);
+        disconnect(model, nullptr, this, nullptr);
+    }
+    proxy->setSourceModel(nullptr);
+    if (model) {
+        model->deleteLater();
+        model = nullptr;
+    }
+
+    // Build the SFTP-backed model. The lister adapts RemoteFsBackend::readdirAsync
+    // (async, results queued to the UI thread) to the model's ListFn, converting
+    // RemoteDirEntry → RemoteFileSystemModel::Entry (same fields; the model owns no
+    // SSH dependency). directoryChanged from the backend (Batch C poll-watcher /
+    // local-watch relay) drives the model's re-list/diff seam.
+    QPointer<remote::RemoteFsBackend> safeBackend(backend);
+    auto *remoteModel = new remote::RemoteFileSystemModel(
+        [safeBackend](const QString &path,
+                      remote::RemoteFileSystemModel::ListDoneCallback done) {
+            if (!safeBackend) {
+                if (done) done(false, {}, QObject::tr("No SSH connection"));
+                return;
+            }
+            safeBackend->readdirAsync(
+                path, [done = std::move(done)](bool ok,
+                                               const QList<remote::RemoteDirEntry> &entries,
+                                               const QString &error) {
+                    if (!done) return;
+                    QList<remote::RemoteFileSystemModel::Entry> converted;
+                    converted.reserve(entries.size());
+                    for (const remote::RemoteDirEntry &e : entries) {
+                        converted.append({e.name, e.isDir, e.size, e.mtimeSecs});
+                    }
+                    done(ok, converted, error);
+                });
+        },
+        this);
+
+    connect(backend, &remote::RemoteFsBackend::directoryChanged,
+            remoteModel, &remote::RemoteFileSystemModel::onDirectoryChanged);
+
+    fsModel = remoteModel;
+    proxy->setSourceModel(remoteModel);
+    connectModelSignals();
+
+    // Stand up the bounded poll-watcher (D3): the remote analogue of the local
+    // QFileSystemWatcher. It polls SFTP readdir for ONLY the expanded/visible
+    // dirs and, on a diff, drives the model's onDirectoryChanged re-list — the
+    // same seam the backend's own directoryChanged feeds, so the model is the
+    // single source of truth for row state either way.
+    setupRemoteWatcher(backend);
+}
+
+void FolderAsWorkspaceDock::setupRemoteWatcher(remote::RemoteFsBackend *backend)
+{
+    if (m_remoteWatcher || !backend) {
+        return;
+    }
+
+    // PollFn: adapt RemoteFsBackend::readdirAsync (one reused SFTP channel,
+    // results queued to the UI thread) to the watcher's POD entries. The backend
+    // serializes every SFTP op on the worker, so per-interval polls just queue
+    // behind interactive reads — no new channel is opened.
+    QPointer<remote::RemoteFsBackend> safeBackend(backend);
+    auto pollFn = [safeBackend](const QString &path,
+                                remote::RemoteDirectoryWatcher::PollDoneCallback done) {
+        if (!safeBackend) {
+            if (done) done(false, {});
+            return;
+        }
+        safeBackend->readdirAsync(
+            path, [done = std::move(done)](bool ok,
+                                           const QList<remote::RemoteDirEntry> &entries,
+                                           const QString & /*error*/) {
+                if (!done) return;
+                QList<remote::RemoteDirectoryWatcher::DirEntry> converted;
+                converted.reserve(entries.size());
+                for (const remote::RemoteDirEntry &e : entries) {
+                    converted.append({e.name, e.isDir, e.size, e.mtimeSecs});
+                }
+                done(ok, converted);
+            });
+    };
+
+    // VisibleDirsFn: the expanded-dir set walked from the (proxy) tree —
+    // non-recursive by construction (collapsed subtrees contribute nothing).
+    QPointer<FolderAsWorkspaceDock> self(this);
+    auto visibleFn = [self]() -> QStringList {
+        return self ? self->collectExpandedDirs() : QStringList();
+    };
+
+    m_remoteWatcher = new remote::RemoteDirectoryWatcher(std::move(pollFn),
+                                                         std::move(visibleFn), this);
+    // The watcher's diff result funnels through the model's existing
+    // change-notification slot — identical to the backend's directoryChanged
+    // wiring above. fsModel is the freshly-installed RemoteFileSystemModel here.
+    if (auto *remoteModel =
+            qobject_cast<remote::RemoteFileSystemModel *>(fsModel->asModel())) {
+        connect(m_remoteWatcher, &remote::RemoteDirectoryWatcher::directoryChanged,
+                remoteModel, &remote::RemoteFileSystemModel::onDirectoryChanged);
+    }
+
+    // Seed visibility now; focus/minimize are hooked off the top-level window
+    // (in showEvent or here if the dock is already shown).
+    m_remoteWatcher->setDockVisible(isVisible());
+    connect(this, &QDockWidget::visibilityChanged, m_remoteWatcher,
+            [this](bool visible) {
+                if (m_remoteWatcher) m_remoteWatcher->setDockVisible(visible);
+            });
+
+    // App-level focus (gives 2s vs 10s). Window minimize is handled by the
+    // window-state event filter (hookWindowStateForWatcher).
+    if (auto *guiApp = qobject_cast<QGuiApplication *>(qApp)) {
+        connect(guiApp, &QGuiApplication::applicationStateChanged, m_remoteWatcher,
+                [this](Qt::ApplicationState state) {
+                    if (m_remoteWatcher)
+                        m_remoteWatcher->setWindowFocused(state == Qt::ApplicationActive);
+                });
+        m_remoteWatcher->setWindowFocused(guiApp->applicationState() == Qt::ApplicationActive);
+    }
+
+    hookWindowStateForWatcher();
+    m_remoteWatcher->start();
+}
+
+QStringList FolderAsWorkspaceDock::collectExpandedDirs() const
+{
+    QStringList dirs;
+    if (!proxy) {
+        return dirs;
+    }
+    // PR is the synthetic root (the workspace dir). Only descend through
+    // EXPANDED dirs — an unexpanded dir is skipped entirely, so its subtree is
+    // never polled (the non-recursive guarantee).
+    const QModelIndex pr = proxy->index(0, 0, QModelIndex());
+    if (!pr.isValid()) {
+        return dirs;
+    }
+    if (ui->treeView->isExpanded(pr)) {
+        dirs << QDir::cleanPath(proxy->filePath(pr));
+        QList<QModelIndex> stack;
+        stack.reserve(64);
+        for (int r = 0, n = proxy->rowCount(pr); r < n; ++r) {
+            stack.append(proxy->index(r, 0, pr));
+        }
+        while (!stack.isEmpty()) {
+            const QModelIndex idx = stack.takeLast();
+            if (!idx.isValid() || !proxy->isDir(idx)) continue;
+            if (!ui->treeView->isExpanded(idx)) continue; // skip → non-recursive
+            dirs << QDir::cleanPath(proxy->filePath(idx));
+            for (int r = 0, n = proxy->rowCount(idx); r < n; ++r) {
+                stack.append(proxy->index(r, 0, idx));
+            }
+        }
+    }
+    return dirs;
+}
+
+void FolderAsWorkspaceDock::hookWindowStateForWatcher()
+{
+    if (!m_remoteWatcher) {
+        return;
+    }
+    QWidget *win = window();
+    if (!win) {
+        return;
+    }
+    if (m_watchedWindow != win) {
+        if (m_watchedWindow) {
+            m_watchedWindow->removeEventFilter(this);
+        }
+        win->installEventFilter(this);
+        m_watchedWindow = win;
+    }
+    // Sync the current minimize state immediately (a dock created while the
+    // window is already minimized must start paused).
+    m_remoteWatcher->setWindowMinimized(win->isMinimized());
+}
+
 void FolderAsWorkspaceDock::wireFileTreeGitDecorations()
 {
+    // Git decorations are local-only (they colour QFileSystemModel rows via the
+    // local PathStatusIndex). A remote workspace has no local `model` — bail.
+    if (!model) return;
+
     model->setStatusIndex(&m_pathStatus);
 
     if (auto *app = qobject_cast<NotepadNextApplication *>(qApp)) {
@@ -230,6 +457,7 @@ void FolderAsWorkspaceDock::wireFileTreeGitDecorations()
             model->setColorsEnabled(settings->fileTreeGitColors());
             connect(settings, &ApplicationSettings::fileTreeGitColorsChanged,
                     this, [this](bool enabled) {
+                        if (!model) return; // remote workspace: no local model
                         model->setColorsEnabled(enabled);
                         if (enabled) maybeScheduleGitTabForDecoration();
                     });
@@ -286,7 +514,7 @@ void FolderAsWorkspaceDock::maybeScheduleGitTabForDecoration()
 
 void FolderAsWorkspaceDock::setRootPath(const QString &dir)
 {
-    model->setRootPath(dir);
+    if (fsModel) fsModel->setRootPath(dir);
     // Point the proxy at the new root. The view's root index stays
     // QModelIndex() so the workspace dir shows as the single top node — we do
     // NOT call setRootIndex(model->index(dir)) (that would hide the root).
@@ -315,7 +543,7 @@ void FolderAsWorkspaceDock::setRootPath(const QString &dir)
 
 QString FolderAsWorkspaceDock::rootPath() const
 {
-    return model->rootPath();
+    return fsModel ? fsModel->rootPath() : QString();
 }
 
 bool FolderAsWorkspaceDock::eventFilter(QObject *watched, QEvent *event)
@@ -367,7 +595,34 @@ bool FolderAsWorkspaceDock::eventFilter(QObject *watched, QEvent *event)
             break;
         }
     }
+    // Top-level window state for the remote poll-watcher's interval gating. We
+    // observe (never consume) WindowStateChange (minimize/restore) and
+    // ActivationChange (focus) on the window we hooked in
+    // hookWindowStateForWatcher; app-level focus is also tracked via
+    // applicationStateChanged, but ActivationChange catches the per-window case.
+    if (m_remoteWatcher && watched == m_watchedWindow) {
+        if (event->type() == QEvent::WindowStateChange) {
+            if (auto *w = qobject_cast<QWidget *>(watched)) {
+                m_remoteWatcher->setWindowMinimized(w->isMinimized());
+            }
+        } else if (event->type() == QEvent::ActivationChange) {
+            if (auto *w = qobject_cast<QWidget *>(watched)) {
+                m_remoteWatcher->setWindowFocused(w->isActiveWindow());
+            }
+        }
+    }
     return QDockWidget::eventFilter(watched, event);
+}
+
+void FolderAsWorkspaceDock::showEvent(QShowEvent *event)
+{
+    QDockWidget::showEvent(event);
+    // The top-level window is reliably resolvable once shown; (re)hook the
+    // focus/minimize filter for the remote watcher and mark the dock visible.
+    if (m_remoteWatcher) {
+        hookWindowStateForWatcher();
+        m_remoteWatcher->setDockVisible(true);
+    }
 }
 
 void FolderAsWorkspaceDock::onTabChanged(int index)
@@ -457,7 +712,7 @@ void FolderAsWorkspaceDock::onStatusUpdated()
         if (!m_pathStatus.isEmpty()) {
             const QSet<QString> stale = m_pathStatus.allIndexedPaths();
             m_pathStatus.clear();
-            model->notifyPathsChanged(stale);
+            if (model) model->notifyPathsChanged(stale);
         }
         return;
     }
@@ -522,7 +777,7 @@ void FolderAsWorkspaceDock::applyMergedEntries(const GitStatusEntries &merged,
 
     const QSet<QString> delta = next.deltaPaths(m_pathStatus);
     m_pathStatus = std::move(next);
-    model->notifyPathsChanged(delta);
+    if (model) model->notifyPathsChanged(delta);
 }
 
 SubmoduleStatusFetcher *FolderAsWorkspaceDock::ensureSubmoduleFetcher()
@@ -732,10 +987,10 @@ void FolderAsWorkspaceDock::revealAndSelectPath(const QString &absolutePath)
     for (int i = 0; i < ancestorsDesc.size(); ++i) {
         const QString &dir = ancestorsDesc[i];
         // The root is now a real top node (PR), not the view's rootIndex, so it
-        // is expanded like any ancestor. model->index(dir) is a SOURCE index;
-        // map it to the proxy before the view call.
-        const QModelIndex srcIdx = model->index(dir);
-        if (!srcIdx.isValid() || !model->isDir(srcIdx)) break;
+        // is expanded like any ancestor. fsModel->indexForPath(dir) is a SOURCE
+        // index; map it to the proxy before the view call.
+        const QModelIndex srcIdx = fsModel ? fsModel->indexForPath(dir) : QModelIndex();
+        if (!srcIdx.isValid() || !fsModel->isDir(srcIdx)) break;
         const QModelIndex proxyIdx = proxy->mapFromSource(srcIdx);
         if (!proxyIdx.isValid()) break;
         m_programmaticToggle = true;
@@ -748,7 +1003,7 @@ void FolderAsWorkspaceDock::revealAndSelectPath(const QString &absolutePath)
     // immediately and return WITHOUT seeding anything. This is the steady-state
     // path for repeated reveals of an already-navigated subtree, so
     // m_pendingExpansion stays empty across consecutive reveals (no accumulation).
-    const QModelIndex leafSrc = model->index(cleaned);
+    const QModelIndex leafSrc = fsModel ? fsModel->indexForPath(cleaned) : QModelIndex();
     if (leafSrc.isValid()) {
         const QModelIndex leafIdx = proxy->mapFromSource(leafSrc);
         // Cancel any still-pending select from an earlier reveal/restore whose
@@ -966,8 +1221,8 @@ void FolderAsWorkspaceDock::onDirectoryLoaded(const QString &loadedPath)
             // Ancestor veto: any user-collapsed ancestor wipes the entire subtree.
             if (ancestorVetoed(child)) continue;
 
-            const QModelIndex srcIdx = model->index(child);
-            if (!srcIdx.isValid() || !model->isDir(srcIdx)) continue;  // stale path / now-file
+            const QModelIndex srcIdx = fsModel ? fsModel->indexForPath(child) : QModelIndex();
+            if (!srcIdx.isValid() || !fsModel->isDir(srcIdx)) continue;  // stale path / now-file
             const QModelIndex idx = proxy->mapFromSource(srcIdx);
             if (!idx.isValid()) continue;
 
@@ -985,7 +1240,7 @@ void FolderAsWorkspaceDock::onDirectoryLoaded(const QString &loadedPath)
     if (pendingItemVar.isValid()) {
         const QString pendingItem = pendingItemVar.toString();
         if (QFileInfo(pendingItem).absolutePath() == key) {
-            const QModelIndex itemSrc = model->index(pendingItem);
+            const QModelIndex itemSrc = fsModel ? fsModel->indexForPath(pendingItem) : QModelIndex();
             if (itemSrc.isValid()) {
                 const QModelIndex itemIdx = proxy->mapFromSource(itemSrc);
                 m_programmaticToggle = true;

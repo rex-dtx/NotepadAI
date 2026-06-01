@@ -90,6 +90,32 @@ public:
     void resizeChannel(int logicalId, int cols, int rows);
     void closeChannel(int logicalId);
 
+    // --- SFTP (D1) -----------------------------------------------------------
+    // Posted to the worker (queued). Called by RemoteFsBackend. reqId is minted
+    // by the backend and echoed in the matching sftp*Result signal so it can
+    // resolve the right pending callback. All ops reuse the single SFTP session
+    // the worker opens once; results arrive on the UI thread via the signals.
+    void sftpRead(quint64 reqId, const QString &path);
+    void sftpWrite(quint64 reqId, const QString &path, const QByteArray &data);
+    void sftpStat(quint64 reqId, const QString &path);
+    void sftpReaddir(quint64 reqId, const QString &path);
+
+    // --- exec (D6) -----------------------------------------------------------
+    // Posted to the worker (queued). Called by RemoteGitProcessRunner (and the
+    // ACP exec transport later). execStart mints a process-wide-unique reqId,
+    // posts the exec request, and returns the reqId so the caller can match the
+    // exec* result signals (multiple runners share one connection, so the id
+    // must be unique across them — minted here, not per-runner). execCancel
+    // tears down an in-flight op's channel without a result.
+    quint64 execStart(const QString &command, const QByteArray &stdinPayload);
+    void execCancel(quint64 reqId);
+    // Append more bytes to an in-flight exec op's stdin (D8). Unlike the one-shot
+    // execStart(stdinPayload) feed used by the git runner, a long-lived ACP agent
+    // session keeps writing JSON-RPC frames over the channel's whole life, so the
+    // ACP exec transport posts each frame here. No EOF primitive — stdin stays
+    // open until the op finishes / is cancelled.
+    void execWrite(quint64 reqId, const QByteArray &bytes);
+
 signals:
     void stateChanged(remote::SshConnection::State state);
     // Unknown host: prompt the user (first-connect TOFU is NOT silent).
@@ -102,6 +128,19 @@ signals:
     void connectionLost(const QString &reason);
     void channelReady(int logicalId);
     void channelOpenFailed(int logicalId, const QString &reason);
+
+    // --- SFTP results (D1) — relayed queued from the worker ------------------
+    void sftpReadResult(quint64 reqId, bool ok, const QByteArray &data, const QString &error);
+    void sftpWriteResult(quint64 reqId, bool ok, const QString &error);
+    void sftpStatResult(quint64 reqId, bool ok, bool exists, bool isDir,
+                        qint64 size, qint64 mtimeSecs, const QString &error);
+    void sftpReaddirResult(quint64 reqId, bool ok,
+                           const QList<remote::RemoteDirEntry> &entries, const QString &error);
+
+    // --- exec results (D6) — relayed queued from the worker ------------------
+    void execStdout(quint64 reqId, const QByteArray &chunk);
+    void execStderr(quint64 reqId, const QByteArray &chunk);
+    void execDone(quint64 reqId, int exitStatus);
 
 private:
     void init(std::unique_ptr<ISshTransport> transport);
@@ -117,6 +156,9 @@ private:
     State m_state = State::Idle;
     QHash<int, SshChannel *> m_channels;  // logicalId → proxy (UI thread owns)
     int m_nextLogicalId = 1;
+    // Monotonic reqId for exec ops (D6). Shared across every RemoteGitProcessRunner
+    // (and ACP exec) on this connection so ids never collide between runners.
+    quint64 m_nextExecReqId = 0;
 };
 
 } // namespace remote

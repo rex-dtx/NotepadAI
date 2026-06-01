@@ -20,6 +20,7 @@
 
 #include "GitLogParser.h"
 #include "GitProcessRunner.h"
+#include "GitRunnerFactory.h"
 #include "GitWatcher.h"
 
 #include <QDir>
@@ -30,7 +31,7 @@ constexpr qint64 kHistoryMaxStdoutBytes = 64 * 1024 * 1024;  // 64 MB safety cap
 } // namespace
 
 GitHistoryFetcher::GitHistoryFetcher(QObject *parent)
-    : QObject(parent), m_runner(new GitProcessRunner(this))
+    : QObject(parent), m_runner(GitRunnerFactory::createForRepo(QString(), this))
 {
     m_runner->setMaxOutputBytes(kHistoryMaxStdoutBytes);
 }
@@ -44,6 +45,11 @@ void GitHistoryFetcher::setRepoRoot(const QString &repoToplevel)
     cancel();
     m_repoRoot = clean;
     m_reachedEnd = false;
+    // Re-resolve the runner for the new repo's ExecutionContext (D6). cancel()
+    // idled any in-flight op; re-apply the per-instance output cap.
+    if (m_runner) m_runner->asQObject()->deleteLater();
+    m_runner = GitRunnerFactory::createForRepo(m_repoRoot, this);
+    m_runner->setMaxOutputBytes(kHistoryMaxStdoutBytes);
 }
 
 void GitHistoryFetcher::setAllBranches(bool all)

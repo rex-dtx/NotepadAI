@@ -28,6 +28,10 @@
 #include "TranslationManager.h"
 #include "ApplicationSettings.h"
 #include "AcpAgentManager.h"
+#include "AcpAgentDefinition.h"
+#include "IAcpProcessChannel.h"
+#include "SshAcpProcessChannel.h"
+#include "SshConnectionExecHost.h"
 #include "PreviewTabManager.h"
 #include "MarkdownPreviewWidget.h"
 #include "HtmlPreviewWidget.h"
@@ -35,6 +39,7 @@
 #include "ai/CommitMessageGenerator.h"
 #include "ai/CredentialStore.h"
 #include "remote/ExecutionContextRegistry.h"
+#include "remote/RemoteExecutionContext.h"
 #include "remote/SshProfileRegistry.h"
 #include "ScheduledTaskRegistry.h"
 #include "ScheduledTaskRunner.h"
@@ -218,6 +223,25 @@ bool NotepadNextApplication::init()
         auto *scheduledTaskRegistry = new ScheduledTaskRegistry(settings, this);
         scheduledTaskRunner_ = new ScheduledTaskRunner(scheduledTaskRegistry, aiAgentManager_, settings, this);
         scheduledTaskRunner_->start();
+
+        // Inject the SSH exec-channel transport factory (D8) so a remote-workspace
+        // agent session spawns on the host. Kept here (the app links the SSH
+        // stack) so AcpAgentManager / AcpConnection never reference SSH symbols.
+        aiAgentManager_->setRemoteChannelBuilder(
+            [](remote::ExecutionContext *ctx, const AcpAgentDefinition &agent,
+               const QString &remoteCwd, QObject *parent) -> IAcpProcessChannel * {
+                auto *remoteCtx = qobject_cast<remote::RemoteExecutionContext *>(ctx);
+                if (!remoteCtx || !remoteCtx->connection()) {
+                    return nullptr;
+                }
+                // Host bridges the channel to the live SshConnection. Both are
+                // parented to the AcpConnection (`parent`) so they share its
+                // lifetime; the channel is created after the host so it is torn
+                // down first (its dtor cancels the exec op through the host).
+                auto *host = new SshConnectionExecHost(remoteCtx->connection(), parent);
+                return new SshAcpProcessChannel(host, agent.command, agent.args,
+                                                remoteCwd, parent);
+            });
     }
 
     connect(editorManager, &EditorManager::editorCreated, recentFilesListManager, [this](ScintillaNext *editor) {

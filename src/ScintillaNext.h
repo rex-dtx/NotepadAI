@@ -27,6 +27,10 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <functional>
+
+namespace remote { class IFileSystemBackend; }
+
 
 
 
@@ -44,6 +48,49 @@ public:
     virtual ~ScintillaNext();
 
     static ScintillaNext *fromFile(const QString &filePath, bool tryToCreate=false);
+
+    // --- Async (shell-then-load) open path (D4) ------------------------------
+    //
+    // createShell() is SYNCHRONOUS: it constructs the editor, stamps it with the
+    // ssh:// URI identity and BufferType::File IMMEDIATELY (before any bytes), and
+    // (for remote) puts it in a read-only "Loading…" state. It returns the editor
+    // NOW so the tab can be registered synchronously — DockedEditor::initialEditor()
+    // rejects isFile(), so a still-loading shell can never be reused/closed as a
+    // pristine scratch tab. `backend` must be a remote (isRemote()==true) backend;
+    // `uri` is the ssh://<profileId><remotePath> identity; `remotePath` is the
+    // POSIX path passed to the backend's read/write.
+    static ScintillaNext *createShell(const QString &name,
+                                      remote::IFileSystemBackend *backend,
+                                      const QString &uri,
+                                      const QString &remotePath);
+
+    // Callback invoked once on the UI thread when an async load resolves.
+    using LoadCallback = std::function<void(bool ok, const QString &error)>;
+
+    // loadInto() is ASYNC for remote (backend->readFileAsync) — it never blocks
+    // the UI thread on the network. On success the received bytes run through the
+    // SAME local detection (detectBom) + fill (undo off + signals blocked) the
+    // local readFromDisk path uses, then editing is re-enabled and the save point
+    // set. On failure the editor enters an error state and `cb`/loadFailed report
+    // it so a caller can offer Retry (re-invoke loadInto).
+    void loadInto(LoadCallback cb = {});
+
+    // Re-invoke the load after a read failure (Retry affordance).
+    void retryLoad(LoadCallback cb = {});
+
+    // Remote identity / state -------------------------------------------------
+    bool isRemote() const;
+    QString remoteUri() const { return remoteUriString; }
+    QString remotePath() const { return remoteFilePath; }
+
+    enum class LoadState {
+        Idle,    // local buffer or fully-loaded remote buffer
+        Loading, // remote bytes in flight (read-only placeholder shown)
+        Loaded,  // remote content arrived and filled
+        Error,   // remote read failed (placeholder shows the error)
+    };
+    LoadState loadState() const { return loadStatus; }
+
     static QString eolModeToString(int eolMode);
     static int stringToEolMode(QString eolMode);
 
@@ -91,6 +138,17 @@ public:
 
     // NOTE: this is dangerous and should only be used in very rare situations
     void setFileInfo(const QString &filePath);
+
+    // Re-point an open buffer at a file that was moved/renamed on disk by an
+    // external actor (e.g. the workspace file tree's Rename action) WITHOUT
+    // rewriting the buffer. The on-disk bytes are unchanged, so unsaved edits
+    // are preserved (no setSavePoint). setFileInfo() refreshes the timestamp so
+    // checkFileForStateChange() does not false-positive "Modified", and the
+    // renamed() signal drives the exact same consumer set as rename()/saveAs()
+    // (tab title, FileListDock, FileWatcher remap, PreviewTabManager, task
+    // gutter, language re-detect). The caller MUST have completed the disk
+    // rename successfully first, so newFilePath exists.
+    void updatePathAfterMove(const QString &newFilePath);
 
     void detachFileInfo(const QString &newName);
 
@@ -154,6 +212,14 @@ signals:
     void lexerChanged();
     void reloaded();
 
+    // Async open/save outcome (D4). loaded(): remote content arrived + filled.
+    // loadFailed(): remote read failed (error tab + Retry). saveFailed(): remote
+    // write failed — the buffer stays dirty (no content loss) and the UI shows
+    // the reason. Local open/save never emits these (they complete inline).
+    void loaded();
+    void loadFailed(const QString &error);
+    void saveFailed(const QString &error);
+
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -168,7 +234,23 @@ private:
 
     bool temporary = false; // Temporary file loaded from a session. It can either be a 'New' file or actual 'File'
 
+    // Remote (ssh://) backing. nullptr for a local buffer. Not owned — the
+    // ExecutionContext owns the backend and outlives the editor.
+    remote::IFileSystemBackend *fsBackend = nullptr;
+    QString remoteUriString;   // ssh://<profileId><remotePath> identity
+    QString remoteFilePath;    // POSIX path handed to the backend
+    LoadState loadStatus = LoadState::Idle;
+
     bool readFromDisk(QFile &file);
+    // Fill the buffer from already-read bytes, running the SAME BOM detection +
+    // undo-off/signals-blocked fill as readFromDisk's chunk loop. Shared by the
+    // remote async load path. Returns false if Scintilla reported an error.
+    bool fillFromBytes(const QByteArray &data);
+    // Enter the read-only "Loading…" placeholder state (remote shell pre-bytes).
+    void enterLoadingState();
+    // Async remote save (D4): writeFileAsync; OK → setSavePoint/saved, fail →
+    // stay dirty + saveFailed (no content loss).
+    QFileDevice::FileError saveRemote();
     QDateTime fileTimestamp();
     void updateTimestamp();
 

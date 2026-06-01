@@ -25,15 +25,18 @@
 #include <QPointer>
 #include <QString>
 
+#include "AcpConnection.h" // AcpConnection::RemoteChannelBuilder
+
 class QThread;
 class QTimer;
 
 class AcpAgentRegistry;
-class AcpConnection;
 class AcpHistoryStore;
 class AcpSessionModel;
 class AiAgentDock;
 class ApplicationSettings;
+
+namespace remote { class ExecutionContext; }
 
 Q_DECLARE_LOGGING_CATEGORY(lcAcpManager)
 
@@ -70,7 +73,23 @@ public:
     // addDockWidget()). Returns nullptr if the agent cannot be resolved at all.
     // When recordAsLastUsed is true, the resolved agent id is persisted as the
     // "last used" AI agent (the single chokepoint for that record).
-    AiAgentDock *openAgent(const QString &agentId, const QString &workingDirectory, bool recordAsLastUsed = false);
+    //
+    // `context` is the workspace's ExecutionContext (D8/D9): when remote, the
+    // agent is spawned on that host over an SSH exec channel with workingDirectory
+    // as the remote cwd (captured at spawn, never re-resolved); when null or
+    // local, the agent spawns locally exactly as before.
+    AiAgentDock *openAgent(const QString &agentId, const QString &workingDirectory,
+                           bool recordAsLastUsed = false,
+                           remote::ExecutionContext *context = nullptr);
+
+    // Inject the SSH exec-channel transport factory (D8). Set once by the app
+    // layer (which links the SSH stack); the manager forwards it to every remote
+    // AcpConnection so the connection never references SSH symbols directly. When
+    // unset, a remote context falls back to local spawning.
+    void setRemoteChannelBuilder(AcpConnection::RemoteChannelBuilder builder)
+    {
+        m_remoteChannelBuilder = std::move(builder);
+    }
 
     // Cancel + tear down the session keyed by sessionId. Safe to call with an
     // unknown id (no-op).
@@ -120,6 +139,7 @@ private:
     AcpHistoryStore *m_historyStore = nullptr;
     QThread *m_historyThread = nullptr;
     QTimer *m_idleReaperTimer = nullptr;
+    AcpConnection::RemoteChannelBuilder m_remoteChannelBuilder; // app-injected (D8)
 
     QHash<QString, Session> m_sessions;
 };

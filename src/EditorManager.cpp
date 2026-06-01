@@ -29,6 +29,9 @@
 #include "ScintillaNext.h"
 #include "Scintilla.h"
 
+#include "remote/IFileSystemBackend.h"
+#include "remote/SshProfile.h"
+
 // Editor decorators
 #include "BraceMatch.h"
 #include "HighlightedScrollBar.h"
@@ -228,16 +231,67 @@ ScintillaNext *EditorManager::createEditorFromFile(const QString &filePath, bool
     return editor;
 }
 
+ScintillaNext *EditorManager::createEditorFromRemote(remote::IFileSystemBackend *backend,
+                                                     const QString &uri,
+                                                     const QString &remotePath)
+{
+    PROFILE_SCOPE("EditorManager::createEditorFromRemote");
+
+    // Shell is constructed + registered SYNCHRONOUSLY: createShell stamps File +
+    // URI identity before any bytes, manageEditor → editorCreated → addEditor adds
+    // the tab now (totalTabCount() >= 1 on return), so the snapshot-before /
+    // close-after scratch-tab rule and the empty-area logic stay intact. Only the
+    // content load is async.
+    ScintillaNext *editor = ScintillaNext::createShell(QString(), backend, uri, remotePath);
+    if (!editor) {
+        return nullptr;
+    }
+
+    manageEditor(editor);
+
+    QPointer<EditorManager> selfGuard(this);
+    QPointer<ScintillaNext> editorGuard(editor);
+    editor->loadInto([selfGuard, editorGuard](bool ok, const QString &error) {
+        if (!selfGuard || !editorGuard) return;
+        if (ok) {
+            // Re-detect EOL now that the content has arrived (setupEditor ran on
+            // the empty placeholder, so its detection saw nothing).
+            const int eol = selfGuard->detectEOLMode(editorGuard.data());
+            if (eol != -1) {
+                editorGuard->setEOLMode(eol);
+            }
+            emit selfGuard->editorLoaded(editorGuard.data());
+        } else {
+            emit selfGuard->editorLoadFailed(editorGuard.data(), error);
+        }
+    });
+
+    return editor;
+}
+
 ScintillaNext *EditorManager::getEditorByFilePath(const QString &filePath)
 {
+    purgeOldEditorPointers();
+
+    // Remote (ssh://) identity: compare the URI directly. A local
+    // QFileInfo::canonicalFilePath() is meaningless for a remote path (and the
+    // syscall is pointless), so the remote and local dedupe paths are disjoint.
+    if (remote::isSshUri(filePath)) {
+        for (ScintillaNext *editor : qAsConst(editors)) {
+            if (!editor->isFile() || !editor->isRemote()) continue;
+            if (editor->remoteUri() == filePath) {
+                return editor;
+            }
+        }
+        return Q_NULLPTR;
+    }
+
     QFileInfo newInfo(filePath);
     newInfo.makeAbsolute();
     const QString canonicalNew = newInfo.absoluteFilePath();
 
-    purgeOldEditorPointers();
-
     for (ScintillaNext *editor : qAsConst(editors)) {
-        if (!editor->isFile()) continue;
+        if (!editor->isFile() || editor->isRemote()) continue;
         // Fast path: case-insensitive string compare avoids the expensive
         // GetFileInformationByHandle syscall that QFileInfo::operator== uses.
         if (editor->getFileInfo().absoluteFilePath().compare(canonicalNew, Qt::CaseInsensitive) == 0) {

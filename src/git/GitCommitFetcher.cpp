@@ -20,6 +20,7 @@
 
 #include "GitNumstatParser.h"
 #include "GitProcessRunner.h"
+#include "GitRunnerFactory.h"
 #include "GitWatcher.h"
 
 #include <QByteArray>
@@ -58,7 +59,7 @@ qint64 parseI64(const QByteArray &b)
 } // namespace
 
 GitCommitFetcher::GitCommitFetcher(QObject *parent)
-    : QObject(parent), m_runner(new GitProcessRunner(this))
+    : QObject(parent), m_runner(GitRunnerFactory::createForRepo(QString(), this))
 {
     m_cache.setMaxCost(kCacheCapacity);
     m_runner->setMaxOutputBytes(kDefaultCapBytes);
@@ -72,6 +73,13 @@ void GitCommitFetcher::setRepoRoot(const QString &repoToplevel)
     cancel();
     invalidateAll();
     m_repoRoot = repoToplevel;
+    // Re-resolve the runner for the new repo's ExecutionContext (D6): a remote
+    // (ssh://) repo needs a RemoteGitProcessRunner, a local one the QProcess
+    // runner. cancel() above idled any in-flight op, so swapping is safe. The
+    // output cap is a per-instance config, so re-apply it to the fresh runner.
+    if (m_runner) m_runner->asQObject()->deleteLater();
+    m_runner = GitRunnerFactory::createForRepo(m_repoRoot, this);
+    m_runner->setMaxOutputBytes(kDefaultCapBytes);
 }
 
 void GitCommitFetcher::invalidateAll()

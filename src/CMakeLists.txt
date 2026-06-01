@@ -29,6 +29,11 @@ qt_add_executable(NotepadAI
 	DockAreaSanitizer.h
 	DockedEditor.h
 	DockedEditorTitleBar.h
+	IAcpExecHost.h
+	IAcpProcessChannel.h
+	LocalAcpProcessChannel.h
+	SshAcpProcessChannel.h
+	SshConnectionExecHost.h
 
 	EditorManager.h
 	EditorPrintPreviewRenderer.h
@@ -100,6 +105,8 @@ qt_add_executable(NotepadAI
 	AcpHistoryStore.cpp
 	AcpProtocol.cpp
 	AcpSessionModel.cpp
+	LocalAcpProcessChannel.cpp
+	SshAcpProcessChannel.cpp
 	CronExpression.cpp
 	GoalActionParser.cpp
 	GoalAgent.cpp
@@ -335,6 +342,8 @@ qt_add_executable(NotepadAI
 	git/GitNumstatParser.h
 	git/GitProcessRunner.cpp
 	git/GitProcessRunner.h
+	git/GitRunnerFactory.cpp
+	git/GitRunnerFactory.h
 	git/PathStatusIndex.cpp
 	git/PathStatusIndex.h
 	git/SubmoduleStatusFetcher.cpp
@@ -465,10 +474,19 @@ qt_add_executable(NotepadAI
 
 	remote/ExecutionContext.h
 	remote/IFileSystemBackend.h
+	remote/IWorkspaceFsModel.h
 	remote/LocalExecutionContext.h
 	remote/LocalExecutionContext.cpp
+	remote/RemoteDirectoryWatcher.h
+	remote/RemoteDirectoryWatcher.cpp
 	remote/RemoteExecutionContext.h
 	remote/RemoteExecutionContext.cpp
+	remote/RemoteFileSystemModel.h
+	remote/RemoteFileSystemModel.cpp
+	remote/RemoteFsBackend.h
+	remote/RemoteFsBackend.cpp
+	remote/RemoteGitProcessRunner.h
+	remote/RemoteGitProcessRunner.cpp
 	remote/ExecutionContextRegistry.h
 	remote/ExecutionContextRegistry.cpp
 	remote/ISshTransport.h

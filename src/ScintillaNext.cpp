@@ -22,14 +22,19 @@
 #include "ProfileScope.h"
 #include "ScintillaCommenter.h"
 
+#include "remote/IFileSystemBackend.h"
+
 #include "ByteArrayUtils.h"
 #include "uchardet.h"
 #include <cinttypes>
 
 #include <QDir>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QSaveFile>
 #include <QTextCodec>
+
+#include <utility>
 
 
 const int CHUNK_SIZE = 1024 * 1024 * 4; // Not sure what is best
@@ -139,6 +144,167 @@ ScintillaNext *ScintillaNext::fromFile(const QString &filePath, bool tryToCreate
     editor->setFileInfo(filePath);
 
     return editor;
+}
+
+ScintillaNext *ScintillaNext::createShell(const QString &name,
+                                          remote::IFileSystemBackend *backend,
+                                          const QString &uri,
+                                          const QString &remotePath)
+{
+    PROFILE_SCOPE("ScintillaNext::createShell");
+
+    // Tab title = basename of the remote path (fall back to the supplied name).
+    QString tabName = name;
+    if (tabName.isEmpty()) {
+        const int slash = remotePath.lastIndexOf(QLatin1Char('/'));
+        tabName = (slash >= 0 && slash + 1 < remotePath.size())
+                      ? remotePath.mid(slash + 1)
+                      : remotePath;
+    }
+
+    ScintillaNext *editor = new ScintillaNext(tabName);
+
+    editor->fsBackend = backend;
+    editor->remoteUriString = uri;
+    editor->remoteFilePath = remotePath;
+
+    // CRITICAL (D4): stamp File identity BEFORE any bytes arrive. fileInfo is set
+    // from the remote path WITHOUT touching the local disk (setFileInfo() would
+    // Q_ASSERT(exists()) against the local fs, which is wrong for a remote path).
+    // bufferType = File makes DockedEditor::initialEditor() reject this editor, so
+    // a still-loading shell is never mistaken for a pristine "New X" scratch tab.
+    editor->fileInfo.setFile(remotePath);
+    editor->bufferType = ScintillaNext::File;
+
+    // Read-only "Loading…" placeholder until loadInto() fills the buffer.
+    editor->enterLoadingState();
+
+    return editor;
+}
+
+void ScintillaNext::enterLoadingState()
+{
+    loadStatus = LoadState::Loading;
+
+    const QByteArray placeholder = tr("Loading…").toUtf8();
+
+    const QSignalBlocker blocker(this);
+    setUndoCollection(false);
+    emptyUndoBuffer();
+    setReadOnly(false);
+    setText("");
+    appendText(placeholder.size(), placeholder.constData());
+    setReadOnly(true);
+    setSavePoint();
+    // Undo stays OFF while loading so canUndo()/canRedo() are false — another
+    // belt for initialEditor()'s reject test (though isFile() already wins).
+}
+
+void ScintillaNext::loadInto(LoadCallback cb)
+{
+    if (!fsBackend) {
+        // No backend → nothing to load asynchronously. Treat as loaded so the
+        // caller's completion contract still fires.
+        loadStatus = LoadState::Loaded;
+        if (cb) cb(true, QString());
+        emit loaded();
+        return;
+    }
+
+    loadStatus = LoadState::Loading;
+
+    QPointer<ScintillaNext> guard(this);
+    fsBackend->readFileAsync(remoteFilePath, [this, guard, cb](bool ok, const QByteArray &data,
+                                                               const QString &error) {
+        if (!guard) return; // editor closed mid-load
+        if (!ok) {
+            loadStatus = LoadState::Error;
+            // Show the error in the (still read-only) placeholder.
+            {
+                const QSignalBlocker blocker(this);
+                setUndoCollection(false);
+                setReadOnly(false);
+                setText("");
+                const QByteArray msg = (tr("Failed to load: ") + error).toUtf8();
+                appendText(msg.size(), msg.constData());
+                setReadOnly(true);
+                setSavePoint();
+            }
+            if (cb) cb(false, error);
+            emit loadFailed(error);
+            return;
+        }
+
+        // Leave the read-only placeholder, fill from the received bytes using the
+        // exact same detection + fill as the local readFromDisk path.
+        setReadOnly(false);
+        {
+            const QSignalBlocker blocker(this);
+            setText("");
+            emptyUndoBuffer();
+        }
+        const bool filled = fillFromBytes(data);
+
+        updateTimestamp();
+        setSavePoint();
+        loadStatus = filled ? LoadState::Loaded : LoadState::Error;
+
+        if (!filled) {
+            const QString err = tr("Document error while loading");
+            if (cb) cb(false, err);
+            emit loadFailed(err);
+            return;
+        }
+
+        if (cb) cb(true, QString());
+        emit loaded();
+    });
+}
+
+void ScintillaNext::retryLoad(LoadCallback cb)
+{
+    // Re-arm the placeholder, then re-issue the async read.
+    enterLoadingState();
+    loadInto(std::move(cb));
+}
+
+bool ScintillaNext::isRemote() const
+{
+    return fsBackend && fsBackend->isRemote();
+}
+
+bool ScintillaNext::fillFromBytes(const QByteArray &data)
+{
+    // Mirror readFromDisk's fill: preallocate, BOM-detect on the head, strip a
+    // UTF-8 BOM, then append the bytes verbatim with undo OFF + signals blocked.
+    // This is byte-for-byte the same document the chunked local path produces;
+    // only the source of the bytes differs (network vs QFile).
+    allocate(data.size());
+
+    setUndoCollection(false);
+    blockSignals(true);
+
+    bomType = detectBom(data);
+
+    const char *bytes = data.constData();
+    int size = data.size();
+    if (bomType == BomType::Utf8) {
+        const int n = bomLength(bomType);
+        bytes += n;
+        size -= n;
+    }
+    // UTF-16 BOMs are intentionally left in place (matches readFromDisk).
+
+    appendText(size, bytes);
+
+    this->blockSignals(false);
+    setUndoCollection(true);
+
+    if (status() != SC_STATUS_OK) {
+        qWarning("fillFromBytes(): document error %ld", status());
+        return false;
+    }
+    return true;
 }
 
 QString ScintillaNext::eolModeToString(int eolMode)
@@ -303,12 +469,24 @@ QString ScintillaNext::getPath() const
 {
     Q_ASSERT(isFile());
 
+    if (isRemote()) {
+        // POSIX parent of the remote path (no local canonicalization).
+        const int slash = remoteFilePath.lastIndexOf(QLatin1Char('/'));
+        return slash > 0 ? remoteFilePath.left(slash) : QStringLiteral("/");
+    }
+
     return QDir::toNativeSeparators(fileInfo.canonicalPath());
 }
 
 QString ScintillaNext::getFilePath() const
 {
     Q_ASSERT(isFile());
+
+    if (isRemote()) {
+        // Identity is the ssh:// URI (a local canonicalFilePath() is meaningless
+        // for a remote path). EditorManager::getEditorByFilePath compares this.
+        return remoteUriString;
+    }
 
     return QDir::toNativeSeparators(fileInfo.canonicalFilePath());
 }
@@ -348,6 +526,10 @@ QFileDevice::FileError ScintillaNext::save()
 
     Q_ASSERT(isFile());
 
+    if (isRemote()) {
+        return saveRemote();
+    }
+
     emit aboutToSave();
 
     const QByteArray data = QByteArray::fromRawData((char*)characterPointer(), textLength());
@@ -365,6 +547,38 @@ QFileDevice::FileError ScintillaNext::save()
     }
 
     return writeSuccessful;
+}
+
+QFileDevice::FileError ScintillaNext::saveRemote()
+{
+    // Async remote save (D4). Q_ASSERT(isFile()) already holds (remote buffers
+    // are File). The buffer is shown "Saving…" by the UI on aboutToSave(); on
+    // success setSavePoint()/saved(); on failure it STAYS dirty (no setSavePoint)
+    // and saveFailed() reports the reason — no content loss.
+    emit aboutToSave();
+
+    // Snapshot the bytes into an OWNED buffer (prepend BOM as writeToDisk does):
+    // the document's characterPointer() must not be referenced from the async
+    // callback, which fires after this returns.
+    QByteArray payload = bomData(bomType);
+    payload.append((const char *)characterPointer(), textLength());
+
+    QPointer<ScintillaNext> guard(this);
+    fsBackend->writeFileAsync(remoteFilePath, payload, [this, guard](bool ok, const QString &error) {
+        if (!guard) return;
+        if (ok) {
+            updateTimestamp();
+            setSavePoint();
+            setTemporary(false);
+            emit saved();
+        } else {
+            emit saveFailed(error);
+        }
+    });
+
+    // The write is in flight; report "no synchronous error". The real outcome
+    // arrives via saved()/saveFailed().
+    return QFileDevice::NoError;
 }
 
 void ScintillaNext::reload()
@@ -728,6 +942,12 @@ QDateTime ScintillaNext::fileTimestamp()
 
 void ScintillaNext::updateTimestamp()
 {
+    // A remote buffer has no local QFileInfo to stat; skip the local timestamp
+    // refresh (remote freshness is handled by the poll-watcher, not here).
+    if (isRemote()) {
+        modifiedTime = QDateTime();
+        return;
+    }
     modifiedTime = fileTimestamp();
 }
 
@@ -742,6 +962,18 @@ void ScintillaNext::setFileInfo(const QString &filePath)
     bufferType = ScintillaNext::File;
 
     updateTimestamp();
+}
+
+void ScintillaNext::updatePathAfterMove(const QString &newFilePath)
+{
+    // Metadata-only move: reuse setFileInfo for the full internal state update
+    // (fileInfo, name, bufferType=File, updateTimestamp) then emit renamed().
+    // Deliberately NOT setSavePoint() — disk content is untouched, so a dirty
+    // buffer stays dirty. Emit only renamed() (no aboutToSave/saved): those are
+    // save signals and nothing was written here.
+    setFileInfo(newFilePath);
+
+    emit renamed();
 }
 
 void ScintillaNext::detachFileInfo(const QString &newName)

@@ -19,6 +19,7 @@
 #include "GitOperationManager.h"
 #include "GitController.h"
 #include "GitProcessRunner.h"
+#include "GitRunnerFactory.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -159,10 +160,10 @@ void GitOperationManager::startMerge(GitController *controller, const QString &b
     for (const QString &opt : strategyOptions)
         argv.append(opt);
 
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 120000, false,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit == 0) {
                 setState(repo, OperationState::Idle);
                 m_repoStates[repo].mergeSourceBranch.clear();
@@ -191,10 +192,10 @@ void GitOperationManager::abortMerge(GitController *controller)
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("merge"), QStringLiteral("--abort")};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 30000, false,
         [this, repo, runner](int exit, const QByteArray &, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit == 0) {
                 m_repoStates[repo].conflicts.clear();
                 m_repoStates[repo].mergeSourceBranch.clear();
@@ -213,10 +214,10 @@ void GitOperationManager::commitMerge(GitController *controller)
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("commit"), QStringLiteral("--no-edit")};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 30000, false,
         [this, repo, runner](int exit, const QByteArray &, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit == 0) {
                 m_repoStates[repo].conflicts.clear();
                 m_repoStates[repo].mergeSourceBranch.clear();
@@ -243,10 +244,10 @@ void GitOperationManager::startRebase(GitController *controller, const QString &
     emit rebaseStarted(repo);
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), ontoBranch};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 300000, true,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             QString combined = QString::fromUtf8(out) + QString::fromUtf8(err);
             if (exit == 0) {
                 m_repoStates[repo].rebaseOntoBranch.clear();
@@ -291,6 +292,11 @@ void GitOperationManager::startInteractiveRebase(GitController *controller, cons
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"),
                      QStringLiteral("-i"), ontoBranch};
 
+    // Interactive rebase is LOCAL-ONLY (D7): the notepadai-editor helper set as
+    // GIT_SEQUENCE_EDITOR must IPC back to this local MainWindow, which a remote
+    // host has no channel to. The action is gated off for remote workspaces
+    // (GitTabWidget + MainWindow guard), so this path is only ever reached for a
+    // local repo — use the concrete local runner directly, never the factory.
     auto *runner = new GitProcessRunner(this);
     auto env = GitProcessRunner::baseEnv();
     env.insert(QStringLiteral("GIT_SEQUENCE_EDITOR"), editorCmd);
@@ -298,7 +304,7 @@ void GitOperationManager::startInteractiveRebase(GitController *controller, cons
 
     runner->run(repo, argv, {}, 600000, true,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             QString combined = QString::fromUtf8(out) + QString::fromUtf8(err);
             if (exit == 0) {
                 m_repoStates[repo].rebaseOntoBranch.clear();
@@ -329,10 +335,10 @@ void GitOperationManager::continueRebase(GitController *controller)
 
     setState(repo, OperationState::RebaseRunning);
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), QStringLiteral("--continue")};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 300000, true,
         [this, repo, runner, controller](int exit, const QByteArray &out, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             QString combined = QString::fromUtf8(out) + QString::fromUtf8(err);
             if (exit == 0) {
                 m_repoStates[repo].conflicts.clear();
@@ -363,10 +369,10 @@ void GitOperationManager::skipRebase(GitController *controller)
 
     setState(repo, OperationState::RebaseRunning);
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), QStringLiteral("--skip")};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 300000, true,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             QString combined = QString::fromUtf8(out) + QString::fromUtf8(err);
             if (exit == 0) {
                 m_repoStates[repo].conflicts.clear();
@@ -392,10 +398,10 @@ void GitOperationManager::abortRebase(GitController *controller)
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("rebase"), QStringLiteral("--abort")};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 30000, false,
         [this, repo, runner](int exit, const QByteArray &, const QByteArray &err) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit == 0) {
                 m_repoStates[repo].conflicts.clear();
                 m_repoStates[repo].rebaseOntoBranch.clear();
@@ -415,10 +421,10 @@ void GitOperationManager::resolveFile(GitController *controller, const QString &
     if (repo.isEmpty()) return;
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("add"), QStringLiteral("--"), relPath};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 10000, false,
         [this, repo, runner](int, const QByteArray &, const QByteArray &) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (auto *ctrl = m_controllers.value(repo))
                 refreshConflicts(ctrl);
         });
@@ -433,17 +439,17 @@ void GitOperationManager::acceptOurs(GitController *controller, const QStringLis
                      QStringLiteral("--ours"), QStringLiteral("--")};
     argv.append(relPaths);
 
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 10000, false,
         [this, repo, relPaths, runner](int exit, const QByteArray &, const QByteArray &) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit != 0) return;
             QStringList addArgv{QStringLiteral("-C"), repo, QStringLiteral("add"), QStringLiteral("--")};
             addArgv.append(relPaths);
-            auto *addRunner = new GitProcessRunner(this);
+            auto *addRunner = GitRunnerFactory::createForRepo(repo, this);
             addRunner->run(repo, addArgv, {}, 10000, false,
                 [this, repo, addRunner](int, const QByteArray &, const QByteArray &) {
-                    addRunner->deleteLater();
+                    addRunner->asQObject()->deleteLater();
                     if (auto *ctrl = m_controllers.value(repo))
                         refreshConflicts(ctrl);
                 });
@@ -459,17 +465,17 @@ void GitOperationManager::acceptTheirs(GitController *controller, const QStringL
                      QStringLiteral("--theirs"), QStringLiteral("--")};
     argv.append(relPaths);
 
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 10000, false,
         [this, repo, relPaths, runner](int exit, const QByteArray &, const QByteArray &) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit != 0) return;
             QStringList addArgv{QStringLiteral("-C"), repo, QStringLiteral("add"), QStringLiteral("--")};
             addArgv.append(relPaths);
-            auto *addRunner = new GitProcessRunner(this);
+            auto *addRunner = GitRunnerFactory::createForRepo(repo, this);
             addRunner->run(repo, addArgv, {}, 10000, false,
                 [this, repo, addRunner](int, const QByteArray &, const QByteArray &) {
-                    addRunner->deleteLater();
+                    addRunner->asQObject()->deleteLater();
                     if (auto *ctrl = m_controllers.value(repo))
                         refreshConflicts(ctrl);
                 });
@@ -489,10 +495,10 @@ void GitOperationManager::refreshConflicts(GitController *controller)
 
     QStringList argv{QStringLiteral("-C"), repo, QStringLiteral("ls-files"),
                      QStringLiteral("--unmerged"), QStringLiteral("-z")};
-    auto *runner = new GitProcessRunner(this);
+    auto *runner = GitRunnerFactory::createForRepo(repo, this);
     runner->run(repo, argv, {}, 10000, false,
         [this, repo, runner](int exit, const QByteArray &out, const QByteArray &) {
-            runner->deleteLater();
+            runner->asQObject()->deleteLater();
             if (exit != 0) return;
 
             ConflictEntries entries = parseUnmergedOutput(out);

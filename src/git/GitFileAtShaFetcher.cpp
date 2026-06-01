@@ -19,11 +19,12 @@
 #include "GitFileAtShaFetcher.h"
 
 #include "GitProcessRunner.h"
+#include "GitRunnerFactory.h"
 
 #include <QStringList>
 
 GitFileAtShaFetcher::GitFileAtShaFetcher(QObject *parent)
-    : QObject(parent), m_runner(new GitProcessRunner(this))
+    : QObject(parent), m_runner(GitRunnerFactory::createForRepo(QString(), this))
 {
     m_runner->setMaxOutputBytes(kCapBytes);
 }
@@ -35,6 +36,11 @@ void GitFileAtShaFetcher::setRepoRoot(const QString &repoToplevel)
     if (repoToplevel == m_repoRoot) return;
     cancel();
     m_repoRoot = repoToplevel;
+    // Re-resolve the runner for the new repo's ExecutionContext (D6). cancel()
+    // idled any in-flight op; re-apply the per-instance output cap.
+    if (m_runner) m_runner->asQObject()->deleteLater();
+    m_runner = GitRunnerFactory::createForRepo(m_repoRoot, this);
+    m_runner->setMaxOutputBytes(kCapBytes);
 }
 
 void GitFileAtShaFetcher::request(const QByteArray &sha,

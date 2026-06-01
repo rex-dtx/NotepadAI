@@ -26,6 +26,7 @@
 #include "AiAgentDock.h"
 #include "ApplicationSettings.h"
 #include "ProfileScope.h"
+#include "remote/ExecutionContext.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -73,7 +74,8 @@ AcpAgentManager::~AcpAgentManager()
     shutdown();
 }
 
-AiAgentDock *AcpAgentManager::openAgent(const QString &agentId, const QString &workingDirectory, bool recordAsLastUsed)
+AiAgentDock *AcpAgentManager::openAgent(const QString &agentId, const QString &workingDirectory,
+                                        bool recordAsLastUsed, remote::ExecutionContext *context)
 {
     AcpAgentDefinition agent = m_registry->agent(agentId);
     if (agent.id.isEmpty()) {
@@ -96,12 +98,24 @@ AiAgentDock *AcpAgentManager::openAgent(const QString &agentId, const QString &w
 
     const QString sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
-    // Canonicalize the working directory for use as the projectId. If the
-    // canonical path cannot be resolved (e.g. directory doesn't exist yet) we
-    // fall back to the raw path rather than refusing the spawn.
-    QString projectId = QFileInfo(workingDirectory).canonicalFilePath();
-    if (projectId.isEmpty()) {
+    // Is this session remote? Only when the context is remote AND the app has
+    // injected the SSH transport factory — otherwise we spawn locally (no
+    // fallback to a local agent with a remote cwd is ever taken: the connection
+    // probes the remote binary first and errors out if absent).
+    const bool isRemote = context && context->isRemote() && m_remoteChannelBuilder;
+
+    // projectId identifies the session's working dir. For a remote workspace the
+    // path is on another host, so a local canonicalFilePath would resolve to
+    // empty / a wrong local path — keep the remote path lexical. Local keeps the
+    // exact canonicalization it always used.
+    QString projectId;
+    if (isRemote) {
         projectId = workingDirectory;
+    } else {
+        projectId = QFileInfo(workingDirectory).canonicalFilePath();
+        if (projectId.isEmpty()) {
+            projectId = workingDirectory;
+        }
     }
 
     auto *conn = new AcpConnection(this);
@@ -109,6 +123,12 @@ AiAgentDock *AcpAgentManager::openAgent(const QString &agentId, const QString &w
     conn->setAutoApprovePolicyProvider([registryGuard]() -> QString {
         return registryGuard ? registryGuard->autoApprovePolicy() : QString();
     });
+    // Mark the spawn remote (capture-at-spawn): the connection probes the binary
+    // on `context`'s host, then builds the SSH transport via the injected factory
+    // with projectId as the remote cwd. Set BEFORE spawn() below.
+    if (isRemote) {
+        conn->setRemoteSpawn(context, m_remoteChannelBuilder);
+    }
 
     auto *model = new AcpSessionModel(sessionId, projectId, /*historyDirOverride=*/QString(), this);
     model->setHistoryStore(m_historyStore);
@@ -135,7 +155,8 @@ AiAgentDock *AcpAgentManager::openAgent(const QString &agentId, const QString &w
 
     qCInfo(lcAcpManager) << "openAgent: spawned session" << sessionId
                          << "agent" << agent.id
-                         << "cwd" << projectId;
+                         << "cwd" << projectId
+                         << "remote" << isRemote;
     return dock;
 }
 

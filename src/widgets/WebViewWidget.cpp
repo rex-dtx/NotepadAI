@@ -202,18 +202,21 @@ void WebViewWidget::setupToolbar()
     });
     m_toolbarLayout->addWidget(m_aiStopBtn);
 
-    // Blink animation for AI button — short attention pulse, not permanent
+    // Blink animation for AI button — short attention pulse, not permanent.
+    // Blink state is a plain member (not a heap bool tied to m_aiBtn::destroyed):
+    // the timer is this-scoped so the lambda is severed in ~QObject before the
+    // m_aiBtn child is deleted — it cannot fire on a dead button — and a member
+    // avoids the leak when that destroyed-delete is itself disconnected first.
     m_aiBlinkTimer = new QTimer(this);
     m_aiBlinkTimer->setInterval(400);
-    bool *blinkState = new bool(false);
-    connect(m_aiBlinkTimer, &QTimer::timeout, this, [this, blinkState]() {
-        *blinkState = !*blinkState;
-        if (*blinkState)
+    connect(m_aiBlinkTimer, &QTimer::timeout, this, [this]() {
+        if (!m_aiBtn) return;
+        m_aiBlinkOn = !m_aiBlinkOn;
+        if (m_aiBlinkOn)
             m_aiBtn->setStyleSheet(QStringLiteral("QToolButton { color: palette(highlight); font-weight: bold; }"));
         else
             m_aiBtn->setStyleSheet(QString());
     });
-    connect(m_aiBtn, &QObject::destroyed, this, [blinkState]() { delete blinkState; });
     m_aiBlinkTimer->start();
     QTimer::singleShot(5000, this, [this]() {
         if (m_aiBlinkTimer) m_aiBlinkTimer->stop();

@@ -53,7 +53,7 @@ public:
     QString cdpHttpUrl() const { return m_cdpHttpUrl; }
     QString cdpWsUrl() const { return m_cdpWsUrl; }
 
-    WebViewWidget *webViewWidget() const { return m_webView; }
+    WebViewWidget *webViewWidget() const { return m_webView.data(); }
     void setDockWidget(ads::CDockWidget *dw) { m_dockWidget = dw; }
     ads::CDockWidget *dockWidget() const { return m_dockWidget; }
 
@@ -90,7 +90,7 @@ private:
     QTimer *m_pollTimer = nullptr;
     QNetworkAccessManager *m_nam = nullptr;
     qint64 m_pollStartTime = 0;
-    WebViewWidget *m_webView = nullptr;
+    QPointer<WebViewWidget> m_webView;
     QPointer<ads::CDockWidget> m_dockWidget;
     QString m_lastError;
     QString m_cdpHttpUrl;

@@ -95,6 +95,27 @@ void SshConnection::init(std::unique_ptr<ISshTransport> transport)
                 }
             });
 
+    // SFTP results (D1): pure relays, worker thread → UI thread (queued). The
+    // signatures match 1:1 so a direct connect forwards them; RemoteFsBackend
+    // resolves the reqId to its pending callback.
+    connect(m_worker, &SshSessionWorker::sftpReadDone, this,
+            &SshConnection::sftpReadResult);
+    connect(m_worker, &SshSessionWorker::sftpWriteDone, this,
+            &SshConnection::sftpWriteResult);
+    connect(m_worker, &SshSessionWorker::sftpStatDone, this,
+            &SshConnection::sftpStatResult);
+    connect(m_worker, &SshSessionWorker::sftpReaddirDone, this,
+            &SshConnection::sftpReaddirResult);
+
+    // Exec results (D6): pure relays, worker thread → UI thread (queued).
+    // RemoteGitProcessRunner resolves the reqId to its in-flight op.
+    connect(m_worker, &SshSessionWorker::execStdoutChunk, this,
+            &SshConnection::execStdout);
+    connect(m_worker, &SshSessionWorker::execStderrChunk, this,
+            &SshConnection::execStderr);
+    connect(m_worker, &SshSessionWorker::execDone, this,
+            &SshConnection::execDone);
+
     m_thread->start();
 }
 
@@ -218,6 +239,56 @@ void SshConnection::closeChannel(int logicalId)
 {
     QMetaObject::invokeMethod(m_worker, "requestCloseChannel", Qt::QueuedConnection,
                               Q_ARG(int, logicalId));
+}
+
+// --- SFTP posting methods (D1) — queued onto the worker thread ---------------
+
+void SshConnection::sftpRead(quint64 reqId, const QString &path)
+{
+    QMetaObject::invokeMethod(m_worker, "requestSftpRead", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId), Q_ARG(QString, path));
+}
+
+void SshConnection::sftpWrite(quint64 reqId, const QString &path, const QByteArray &data)
+{
+    QMetaObject::invokeMethod(m_worker, "requestSftpWrite", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId), Q_ARG(QString, path),
+                              Q_ARG(QByteArray, data));
+}
+
+void SshConnection::sftpStat(quint64 reqId, const QString &path)
+{
+    QMetaObject::invokeMethod(m_worker, "requestSftpStat", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId), Q_ARG(QString, path));
+}
+
+void SshConnection::sftpReaddir(quint64 reqId, const QString &path)
+{
+    QMetaObject::invokeMethod(m_worker, "requestSftpReaddir", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId), Q_ARG(QString, path));
+}
+
+// --- exec posting methods (D6) — queued onto the worker thread ---------------
+
+quint64 SshConnection::execStart(const QString &command, const QByteArray &stdinPayload)
+{
+    const quint64 reqId = ++m_nextExecReqId;
+    QMetaObject::invokeMethod(m_worker, "requestExec", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId), Q_ARG(QString, command),
+                              Q_ARG(QByteArray, stdinPayload));
+    return reqId;
+}
+
+void SshConnection::execCancel(quint64 reqId)
+{
+    QMetaObject::invokeMethod(m_worker, "requestExecCancel", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId));
+}
+
+void SshConnection::execWrite(quint64 reqId, const QByteArray &bytes)
+{
+    QMetaObject::invokeMethod(m_worker, "requestExecWrite", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId), Q_ARG(QByteArray, bytes));
 }
 
 } // namespace remote

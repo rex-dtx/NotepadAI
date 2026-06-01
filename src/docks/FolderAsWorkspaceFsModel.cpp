@@ -68,6 +68,37 @@ QVariant FolderAsWorkspaceFsModel::data(const QModelIndex &index, int role) cons
     return QFileSystemModel::data(index, role);
 }
 
+// --- remote::IWorkspaceFsModel forwarders ------------------------------------
+// Each delegates to the QFileSystemModel original (qualified, since the
+// interface override hides the same-named base method by name lookup). The local
+// tree's behaviour is unchanged — these are only ever reached through an
+// IWorkspaceFsModel* the dock/proxy hold.
+
+QModelIndex FolderAsWorkspaceFsModel::indexForPath(const QString &path) const
+{
+    return QFileSystemModel::index(path);
+}
+
+QString FolderAsWorkspaceFsModel::filePath(const QModelIndex &index) const
+{
+    return QFileSystemModel::filePath(index);
+}
+
+bool FolderAsWorkspaceFsModel::isDir(const QModelIndex &index) const
+{
+    return QFileSystemModel::isDir(index);
+}
+
+void FolderAsWorkspaceFsModel::setRootPath(const QString &path)
+{
+    QFileSystemModel::setRootPath(path);
+}
+
+QString FolderAsWorkspaceFsModel::rootPath() const
+{
+    return QFileSystemModel::rootPath();
+}
+
 void FolderAsWorkspaceFsModel::setStatusIndex(const PathStatusIndex *idx)
 {
     m_statusIndex = idx;

@@ -26,6 +26,7 @@
 namespace remote {
 
 class SshConnection;
+class RemoteFsBackend;
 
 // An SSH host as an ExecutionContext. Holds an SshConnection (whose worker
 // thread does all libssh2 I/O) and forwards connection state + connectionLost /
@@ -51,12 +52,17 @@ public:
 
     IPtyProcess *createPty(QObject *parent) override;
 
-    // Phase 3 — git over SSH. Not implemented in Phase 1.
+    // Git over SSH (D6): a RemoteGitProcessRunner over this context's
+    // multiplexed connection (one exec channel per invocation).
     IGitProcessRunner *createGitRunner(QObject *parent) override;
-    // Phase 4 — one-shot remote exec. Not implemented in Phase 1.
+    // One-shot remote exec over an SSH exec channel (D8): `cd <cwd> && <argv...>`
+    // shell-quoted, stdout/stderr captured, exit status returned to cb exactly
+    // once. Used by the ACP binary probe (`command -v`) and other capture-style
+    // commands; multiplexed on this context's single connection.
     void exec(const QString &cwd, const QStringList &argv,
               const QByteArray &stdinPayload, int timeoutMs, ExecCallback cb) override;
-    // Phase 2 — remote (SFTP) filesystem backend. Not implemented in Phase 1.
+    // Phase 2 — remote (SFTP) filesystem backend. Lazily creates a
+    // RemoteFsBackend over this context's connection (D1).
     IFileSystemBackend *fsBackend() override;
 
     QString resolveCwd(const QString &requested) const override;
@@ -65,6 +71,7 @@ private:
     SshProfile m_profile;
     SshConnection *m_connection; // owned by the registry, not by this context
     State m_state = State::Disconnected;
+    RemoteFsBackend *m_fsBackend = nullptr; // lazily created, child of this
 };
 
 } // namespace remote

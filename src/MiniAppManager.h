@@ -12,6 +12,7 @@
 #include <QIcon>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QUrl>
 
 class DockedEditor;
@@ -23,7 +24,7 @@ class WebViewWidget;
 namespace ads { class CDockWidget; }
 
 struct QuickBrowserTab {
-    WebViewWidget *webView = nullptr;
+    QPointer<WebViewWidget> webView;
     ads::CDockWidget *dockWidget = nullptr;
     QString userDataPath;
 };

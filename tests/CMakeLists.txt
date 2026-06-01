@@ -283,6 +283,9 @@ target_sources(test_acp_agent_manager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/AcpAgentManager.h
     ${CMAKE_SOURCE_DIR}/src/AcpConnection.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpConnection.h
+    ${CMAKE_SOURCE_DIR}/src/IAcpProcessChannel.h
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.cpp
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.h
     ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.h
     ${CMAKE_SOURCE_DIR}/src/AcpHistoryStore.cpp
@@ -343,6 +346,9 @@ target_sources(test_acp_agent_exit_restart PRIVATE
     ${CMAKE_SOURCE_DIR}/src/AcpAgentManager.h
     ${CMAKE_SOURCE_DIR}/src/AcpConnection.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpConnection.h
+    ${CMAKE_SOURCE_DIR}/src/IAcpProcessChannel.h
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.cpp
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.h
     ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.h
     ${CMAKE_SOURCE_DIR}/src/AcpHistoryStore.cpp
@@ -401,6 +407,9 @@ target_sources(test_acp_dock_close_event PRIVATE
     ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.h
     ${CMAKE_SOURCE_DIR}/src/AcpConnection.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpConnection.h
+    ${CMAKE_SOURCE_DIR}/src/IAcpProcessChannel.h
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.cpp
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.h
     ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.cpp
     ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.h
     ${CMAKE_SOURCE_DIR}/src/AcpHistoryStore.cpp
@@ -1006,9 +1015,11 @@ qt_add_executable(test_ssh_session_worker test_ssh_session_worker.cpp)
 target_include_directories(test_ssh_session_worker PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(test_ssh_session_worker PRIVATE Qt6::Core Qt6::Test)
 target_sources(test_ssh_session_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/FakeSshTransport.h
     ${CMAKE_SOURCE_DIR}/src/remote/ISshTransport.h
     ${CMAKE_SOURCE_DIR}/src/remote/SshProfile.h
     ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.cpp
@@ -1017,6 +1028,193 @@ target_sources(test_ssh_session_worker PRIVATE
     ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.h
 )
 add_test(NAME SshSessionWorker COMMAND test_ssh_session_worker)
+
+# --- RemoteFsBackend SFTP engine (offline): the D1 SFTP filesystem backend's
+#     read/write/stat/readdir behavior + the one-channel-reuse invariant,
+#     driven by FakeSshTransport + SshSessionWorker's SFTP slots. RemoteFsBackend
+#     is a thin reqId→callback adapter over these exact worker slots/signals
+#     (relayed 1:1 by SshConnection), so this drives its full data path without
+#     the libssh2 / mbedTLS / CredentialStore stack a live SshConnection needs.
+#     No network, no sshd — CI needs no SSH server. ---
+qt_add_executable(test_remote_fs_backend test_remote_fs_backend.cpp)
+target_include_directories(test_remote_fs_backend PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(test_remote_fs_backend PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_remote_fs_backend PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/FakeSshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/ISshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshProfile.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.h
+)
+add_test(NAME RemoteFsBackend COMMAND test_remote_fs_backend)
+
+# --- RemoteFileSystemModel (offline): the D2 SFTP-backed workspace file-tree
+#     model — the single highest-risk piece. Driven by an in-memory FAKE lister
+#     (a path → entries map), so NO network / SshConnection / libssh2 is linked:
+#     the model takes a ListFn seam expressly for this. Asserts
+#     QAbstractItemModelTester conformance, index(path)/filePath/isDir round-trips
+#     across the synthetic-root regions, rowsInserted on fetchMore, directoryLoaded
+#     per listed dir, onDirectoryChanged insert/remove diff, empty-dir settle, and
+#     a FolderAsWorkspaceProxyModel round-trip proving the proxy's synthetic-root
+#     invariants hold VERBATIM over the remote model. RemoteFileSystemModel owns a
+#     self-contained POD Entry type, so it pulls in NO SSH headers/sources at all.
+#     QAbstractItemModelTester queries DecorationRole (a QIcon), so a GUI
+#     application context (Qt6::Gui via QTEST_MAIN) is required. ---
+qt_add_executable(test_remote_filesystem_model test_remote_filesystem_model.cpp)
+target_include_directories(test_remote_filesystem_model PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/remote
+    ${CMAKE_SOURCE_DIR}/src/docks
+)
+target_link_libraries(test_remote_filesystem_model PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_sources(test_remote_filesystem_model PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/remote/IWorkspaceFsModel.h
+    ${CMAKE_SOURCE_DIR}/src/remote/RemoteFileSystemModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/RemoteFileSystemModel.h
+    ${CMAKE_SOURCE_DIR}/src/docks/FolderAsWorkspaceProxyModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/docks/FolderAsWorkspaceProxyModel.h
+)
+add_test(NAME RemoteFilesystemModel COMMAND test_remote_filesystem_model)
+
+# --- RemoteDirectoryWatcher (offline): the D3 bounded remote poll-watcher
+#     (tasks 3.1+3.2). Driven by a FAKE in-memory poller (a path → entries map)
+#     + a scriptable visible-dir set, so NO network / SshConnection /
+#     RemoteFsBackend / libssh2 is linked: the watcher takes a PollFn +
+#     VisibleDirsFn seam expressly for this. Asserts the normative invariants:
+#       - first sighting seeds the baseline silently (no spurious change)
+#       - add / remove / metadata-change detection → directoryChanged(path)
+#       - unchanged listing emits nothing
+#       - ONLY visible/expanded dirs polled (deep tree, one expanded dir →
+#         exactly that dir; non-recursive), collapse prunes the cache
+#       - interval gating: 2s focused+visible / 10s unfocused / paused on
+#         minimize OR dock-hidden, via currentIntervalMsForTest + the timer state
+#       - transient readdir failure keeps the cached baseline
+#       - in-flight guard avoids request pile-up on a slow link
+#     Drives poll-ticks directly via pollNowForTest() — no 2s event-loop wait.
+#     Pure Qt6::Core; QTEST_MAIN provides the QCoreApplication the QTimer needs. ---
+qt_add_executable(test_remote_poll_watch test_remote_poll_watch.cpp)
+target_include_directories(test_remote_poll_watch PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/remote
+)
+target_link_libraries(test_remote_poll_watch PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_remote_poll_watch PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/remote/RemoteDirectoryWatcher.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/RemoteDirectoryWatcher.h
+)
+add_test(NAME RemotePollWatch COMMAND test_remote_poll_watch)
+
+# --- RemoteGitProcessRunner / exec engine (offline): the D6 git-over-SSH path.
+#     Two layers, both on FakeSshTransport: (1) the runner's pure argv → exec
+#     command-string construction + POSIX single-quoting; (2) the SshSessionWorker
+#     exec engine (requestExec + serviceExecForTest + exec*Chunk/execDone) which
+#     is the worker half of RemoteGitProcessRunner — stdout/stderr capture, exit
+#     mapping, stdin feed, EAGAIN resume, cancel. The runner is a thin
+#     reqId→callback adapter over these slots/signals (relayed 1:1 by
+#     SshConnection), so this drives its full data path without the libssh2 /
+#     mbedTLS / CredentialStore stack a live SshConnection needs. No network,
+#     no sshd — CI needs no SSH server. ---
+qt_add_executable(test_remote_git_runner test_remote_git_runner.cpp)
+target_include_directories(test_remote_git_runner PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(test_remote_git_runner PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_remote_git_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/FakeSshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/ISshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshProfile.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.h
+)
+add_test(NAME RemoteGitRunner COMMAND test_remote_git_runner)
+
+# --- ACP over SSH (offline): the D8 agent-over-SSH path. Three layers, all on
+#     FakeSshTransport: (1) SshAcpProcessChannel's pure `cd <cwd> && exec ...`
+#     command-string construction + POSIX quoting; (2) the exec-channel IO adapter
+#     end-to-end — write(frame) → channel stdin (chWritten), scripted stdout →
+#     readyReadStdout, channel exit → finished — driven through a real
+#     SshSessionWorker exec engine (incl. the D8 streamed-stdin requestExecWrite
+#     path) wrapped in a WorkerExecHost; (3) AcpConnection's remote binary probe:
+#     a `command -v` MISS emits a clear error and spawns nothing (no local
+#     fallback), a HIT consults the injected channel builder and starts it.
+#     AcpConnection is exercised against a fake remote ExecutionContext, so no
+#     libssh2 / mbedTLS / CredentialStore / live SshConnection. No network, no
+#     sshd — CI needs no SSH server. ---
+qt_add_executable(test_acp_remote_transport test_acp_remote_transport.cpp)
+target_include_directories(test_acp_remote_transport PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(test_acp_remote_transport PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_sources(test_acp_remote_transport PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/FakeSshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/AcpAgentDefinition.h
+    ${CMAKE_SOURCE_DIR}/src/AcpConnection.cpp
+    ${CMAKE_SOURCE_DIR}/src/AcpConnection.h
+    ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.cpp
+    ${CMAKE_SOURCE_DIR}/src/AcpErrorClassifier.h
+    ${CMAKE_SOURCE_DIR}/src/AcpProtocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/AcpProtocol.h
+    ${CMAKE_SOURCE_DIR}/src/IAcpExecHost.h
+    ${CMAKE_SOURCE_DIR}/src/IAcpProcessChannel.h
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.cpp
+    ${CMAKE_SOURCE_DIR}/src/LocalAcpProcessChannel.h
+    ${CMAKE_SOURCE_DIR}/src/SshAcpProcessChannel.cpp
+    ${CMAKE_SOURCE_DIR}/src/SshAcpProcessChannel.h
+    ${CMAKE_SOURCE_DIR}/src/remote/ExecutionContext.h
+    ${CMAKE_SOURCE_DIR}/src/remote/ISshTransport.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshProfile.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshSessionWorker.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/remote/SshHostKeyStore.h
+)
+add_test(NAME AcpRemoteTransport COMMAND test_acp_remote_transport)
+
+# --- Async editor open (offline): the D4 shell-then-load path. Drives
+#     ScintillaNext::createShell + loadInto over a FAKE remote IFileSystemBackend
+#     (no SSH / SshConnection / libssh2): createShell returns a File + ssh://-URI
+#     identity editor IMMEDIATELY (so DockedEditor::initialEditor() would reject
+#     it — never reused as a scratch tab); loadInto fills the buffer from the fake
+#     backend's deferred callback; opening a second file mid-load leaves the
+#     loading tab untouched; URI is the dedupe identity; read failure → Error +
+#     Retry. Compiles ScintillaNext.cpp + its small helper sources against the
+#     vendored scintilla lib + uchardet (the editor's encoding dep). ---
+qt_add_executable(test_async_editor_load test_async_editor_load.cpp)
+target_include_directories(test_async_editor_load PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(test_async_editor_load PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test scintilla uchardet)
+target_sources(test_async_editor_load PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/ScintillaNext.cpp
+    ${CMAKE_SOURCE_DIR}/src/ScintillaNext.h
+    ${CMAKE_SOURCE_DIR}/src/RangeAllocator.cpp
+    ${CMAKE_SOURCE_DIR}/src/RangeAllocator.h
+    ${CMAKE_SOURCE_DIR}/src/ScintillaCommenter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ScintillaCommenter.h
+    ${CMAKE_SOURCE_DIR}/src/SelectionTracker.cpp
+    ${CMAKE_SOURCE_DIR}/src/SelectionTracker.h
+    ${CMAKE_SOURCE_DIR}/src/UndoAction.cpp
+    ${CMAKE_SOURCE_DIR}/src/UndoAction.h
+    ${CMAKE_SOURCE_DIR}/src/ByteArrayUtils.h
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileScope.h
+    ${CMAKE_SOURCE_DIR}/src/remote/IFileSystemBackend.h
+    ${CMAKE_SOURCE_DIR}/src/remote/SshProfile.h
+)
+add_test(NAME AsyncEditorLoad COMMAND test_async_editor_load)
 
 # --- Optional: real-localhost-sshd smoke test of Libssh2Transport end-to-end.
 #     Excluded from CI (needs a live sshd + libssh2 vendored). Enable with

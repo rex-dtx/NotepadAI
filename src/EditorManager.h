@@ -28,6 +28,8 @@
 class ApplicationSettings;
 class ScintillaNext;
 
+namespace remote { class IFileSystemBackend; }
+
 class EditorManager : public QObject
 {
     Q_OBJECT
@@ -37,6 +39,15 @@ public:
 
     ScintillaNext *createEditor(const QString &name);
     ScintillaNext *createEditorFromFile(const QString &filePath, bool tryToCreate=false);
+
+    // Async remote open (D4): creates the editor SHELL synchronously (File + ssh://
+    // URI identity stamped immediately) and registers it via manageEditor →
+    // editorCreated → addEditor (so the tab + totalTabCount are settled on return,
+    // exactly like a local open). Content streams in afterwards; editorLoaded /
+    // editorLoadFailed fire when the async read resolves. `backend` must be remote.
+    ScintillaNext *createEditorFromRemote(remote::IFileSystemBackend *backend,
+                                          const QString &uri,
+                                          const QString &remotePath);
 
     ScintillaNext *getEditorByFilePath(const QString &filePath);
 
@@ -57,6 +68,12 @@ signals:
     void editorCreated(ScintillaNext *editor);
     void editorClosed(ScintillaNext *editor);
     void blameCommitClicked(const QByteArray &sha);
+
+    // Async remote load resolution (D4) — Batch H wires these to clear the
+    // "Loading…" state / show an error+Retry. Local opens never emit them
+    // (they complete synchronously inside createEditorFromFile).
+    void editorLoaded(ScintillaNext *editor);
+    void editorLoadFailed(ScintillaNext *editor, const QString &error);
 
 private:
     void setupEditor(ScintillaNext *editor);

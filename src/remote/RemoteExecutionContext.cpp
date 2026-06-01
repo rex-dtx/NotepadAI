@@ -18,10 +18,16 @@
 
 #include "RemoteExecutionContext.h"
 
+#include "RemoteFsBackend.h"
+#include "RemoteGitProcessRunner.h"
 #include "SshConnection.h"
 #include "SshPtyProcess.h"
 
 #include <QDir>
+#include <QPointer>
+#include <QTimer>
+
+#include <memory>
 
 namespace remote {
 
@@ -45,6 +51,42 @@ ExecutionContext::State mapState(SshConnection::State s)
         return ExecutionContext::State::Failed;
     }
     return ExecutionContext::State::Disconnected;
+}
+
+// POSIX single-quote one token (close/escape/reopen for embedded quotes) — same
+// rule as RemoteGitProcessRunner::shellQuote, kept local so exec() is
+// self-contained. Safe for arbitrary bytes; no shell metachar survives.
+QString shQuote(const QString &token)
+{
+    QString out;
+    out.reserve(token.size() + 2);
+    out.append(QLatin1Char('\''));
+    for (const QChar c : token) {
+        if (c == QLatin1Char('\'')) {
+            out.append(QLatin1String("'\\''"));
+        } else {
+            out.append(c);
+        }
+    }
+    out.append(QLatin1Char('\''));
+    return out;
+}
+
+// `cd <cwd> && <argv0> <argv1...>` with every token shell-quoted; empty cwd skips
+// the cd prefix (runs in the channel's default dir, e.g. the remote home).
+QString buildExecCommand(const QString &cwd, const QStringList &argv)
+{
+    QString cmd;
+    if (!cwd.isEmpty()) {
+        cmd += QStringLiteral("cd ") + shQuote(cwd) + QStringLiteral(" && ");
+    }
+    for (int i = 0; i < argv.size(); ++i) {
+        if (i > 0) {
+            cmd += QLatin1Char(' ');
+        }
+        cmd += shQuote(argv.at(i));
+    }
+    return cmd;
 }
 
 } // namespace
@@ -103,31 +145,108 @@ IPtyProcess *RemoteExecutionContext::createPty(QObject *parent)
 
 IGitProcessRunner *RemoteExecutionContext::createGitRunner(QObject *parent)
 {
-    Q_UNUSED(parent);
-    // TODO P3: git over SSH. Declared seam; not implemented in Phase 1.
-    return nullptr;
+    // Git over SSH (D6): a RemoteGitProcessRunner over this context's single
+    // multiplexed connection. Without a connection there is nothing to back it,
+    // so fall back to nullptr (callers null-check / default to local).
+    if (!m_connection) {
+        return nullptr;
+    }
+    return new RemoteGitProcessRunner(m_connection, parent);
 }
 
 void RemoteExecutionContext::exec(const QString &cwd, const QStringList &argv,
                                   const QByteArray &stdinPayload, int timeoutMs,
                                   ExecCallback cb)
 {
-    Q_UNUSED(cwd);
-    Q_UNUSED(argv);
-    Q_UNUSED(stdinPayload);
-    Q_UNUSED(timeoutMs);
-    // TODO P4: one-shot remote exec over an SSH channel. Declared seam; not
-    // implemented in Phase 1. Fail closed rather than pretending success.
-    if (cb) {
-        cb(-1, {}, QByteArrayLiteral("remote exec not implemented (Phase 4)"));
+    // One-shot remote exec over an SSH exec channel (D8): `cd <cwd> && <argv...>`
+    // shell-quoted, run on the host, stdout/stderr captured and the exit status
+    // returned to `cb` exactly once. Used for the ACP binary probe (`command -v`)
+    // and any other capture-style remote command. Backed by the same multiplexed
+    // exec engine the git runner uses (execStart/execStdout/execStderr/execDone),
+    // so it shares the single connection — no new TCP per call.
+    if (!m_connection) {
+        if (cb) cb(-1, {}, QByteArrayLiteral("no SSH connection"));
+        return;
+    }
+    if (argv.isEmpty()) {
+        if (cb) cb(-1, {}, QByteArrayLiteral("empty argv"));
+        return;
+    }
+
+    // Resolve cwd through the remote path policy when one is given; an empty cwd
+    // runs in the channel's default dir (e.g. the remote home) — used by the ACP
+    // binary probe, which must not be rebased onto the profile's lastRemotePath.
+    const QString effectiveCwd = cwd.isEmpty() ? QString() : resolveCwd(cwd);
+    const QString effectiveCommand = buildExecCommand(effectiveCwd, argv);
+
+    SshConnection *conn = m_connection;
+    const quint64 reqId = conn->execStart(effectiveCommand, stdinPayload);
+
+    // A small collector lives until the op resolves. It filters the connection's
+    // reqId-keyed relay signals down to this op, accumulates stdout/stderr, and
+    // fires `cb` exactly once on execDone or timeout. Held by shared_ptr so a late
+    // signal (e.g. the timeout racing execDone, both queued) safely sees
+    // resolved==true and no-ops instead of touching freed memory; `guard` (the
+    // signal-connection context) is torn down via deleteLater on resolution.
+    struct Collector
+    {
+        QByteArray out;
+        QByteArray err;
+        bool resolved = false;
+    };
+    auto state = std::make_shared<Collector>();
+    auto *guard = new QObject(this); // parents the connections; deleted on finish
+    QPointer<RemoteExecutionContext> selfGuard(this);
+
+    auto finish = [state, guard, cb](int exitCode) {
+        if (state->resolved) {
+            return;
+        }
+        state->resolved = true;
+        if (cb) {
+            cb(exitCode, state->out, state->err);
+        }
+        guard->deleteLater();
+    };
+
+    connect(conn, &SshConnection::execStdout, guard,
+            [state, reqId](quint64 id, const QByteArray &chunk) {
+                if (id == reqId && !state->resolved) state->out.append(chunk);
+            });
+    connect(conn, &SshConnection::execStderr, guard,
+            [state, reqId](quint64 id, const QByteArray &chunk) {
+                if (id == reqId && !state->resolved) state->err.append(chunk);
+            });
+    connect(conn, &SshConnection::execDone, guard,
+            [reqId, finish](quint64 id, int exitStatus) {
+                if (id == reqId) finish(exitStatus);
+            });
+
+    if (timeoutMs > 0) {
+        QTimer *timer = new QTimer(guard);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, guard, [selfGuard, conn, reqId, finish]() {
+            if (selfGuard && conn) {
+                conn->execCancel(reqId);
+            }
+            finish(-1);
+        });
+        timer->start(timeoutMs);
     }
 }
 
 IFileSystemBackend *RemoteExecutionContext::fsBackend()
 {
-    // TODO P2: SFTP-backed remote filesystem. Declared seam; not implemented in
-    // Phase 1 (the remote file tree is Phase 2).
-    return nullptr;
+    // SFTP-backed remote filesystem (D1), multiplexed on this context's single
+    // SSH connection. Lazily created and reused; parented to this context so it
+    // shares its lifetime. Without a connection there is nothing to back it.
+    if (!m_connection) {
+        return nullptr;
+    }
+    if (!m_fsBackend) {
+        m_fsBackend = new RemoteFsBackend(m_connection, this);
+    }
+    return m_fsBackend;
 }
 
 QString RemoteExecutionContext::resolveCwd(const QString &requested) const

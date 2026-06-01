@@ -119,6 +119,7 @@ private:
     QToolButton *m_aiBtn = nullptr;
     QToolButton *m_aiStopBtn = nullptr;
     QTimer *m_aiBlinkTimer = nullptr;
+    bool m_aiBlinkOn = false;
     bool m_copilotExecuting = false;
 
     // Cross-page retry state

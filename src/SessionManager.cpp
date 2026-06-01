@@ -26,7 +26,13 @@
 #include "NotepadNextApplication.h"
 #include "DataPaths.h"
 
+#include "remote/ExecutionContext.h"
+#include "remote/ExecutionContextRegistry.h"
+#include "remote/IFileSystemBackend.h"
+#include "remote/SshProfile.h"
+
 #include <QDir>
+#include <QPointer>
 #include <QUuid>
 
 
@@ -271,6 +277,66 @@ ScintillaNext* SessionManager::loadFileDetails(QSettings &settings)
     if (editor != Q_NULLPTR) {
         qDebug("  file is already open, ignoring");
         return Q_NULLPTR;
+    }
+
+    // Remote (ssh://) session entry (D5 branch points 3–4): DROP the local
+    // QFileInfo::exists() check (the path is on another host). Only attempt the
+    // restore once the workspace's execution context is Connected; otherwise the
+    // SFTP backend cannot read yet — defer to the Phase-2 startup reconnect flow,
+    // which re-opens the entry once the connection is up.
+    if (remote::isSshUri(filePath)) {
+        const remote::SshUri uri = remote::parseSshUri(filePath);
+        if (!uri.valid) {
+            qDebug("  malformed ssh:// session entry, ignoring");
+            return Q_NULLPTR;
+        }
+
+        remote::ExecutionContextRegistry *registry = app->getExecutionContextRegistry();
+        remote::ExecutionContext *ctx =
+            registry ? registry->remoteContext(uri.profileId) : nullptr;
+        if (!ctx || ctx->state() != remote::ExecutionContext::State::Connected) {
+            qDebug("  remote workspace not connected yet, deferring restore");
+            return Q_NULLPTR;
+        }
+
+        remote::IFileSystemBackend *backend = ctx->fsBackend();
+        if (!backend || !backend->isRemote()) {
+            qDebug("  no remote backend, ignoring");
+            return Q_NULLPTR;
+        }
+
+        // Snapshot the view details NOW (the QSettings cursor moves on after this
+        // returns); apply them AFTER the content arrives — never onto the empty
+        // "Loading…" placeholder.
+        const int firstVisibleLine = settings.value("FirstVisibleLine").toInt() - 1;
+        const int currentPosition = settings.value("CurrentPosition").toInt();
+        QList<int> bookMarkedLines;
+        if (settings.contains("BookMarks")) {
+            bookMarkedLines = QVariantListToQList(settings.value("BookMarks").toList());
+        }
+
+        editor = app->getEditorManager()->createEditorFromRemote(
+            backend, filePath, uri.remotePath);
+        if (!editor) {
+            return Q_NULLPTR;
+        }
+
+        QPointer<ScintillaNext> guard(editor);
+        connect(editor, &ScintillaNext::loaded, editor,
+                [guard, firstVisibleLine, currentPosition, bookMarkedLines]() {
+                    if (!guard) return;
+                    ScintillaNext *e = guard.data();
+                    e->setFirstVisibleLine(firstVisibleLine);
+                    e->setEmptySelection(currentPosition);
+                    if (!bookMarkedLines.isEmpty()) {
+                        if (auto *decorator = e->findChild<BookMarkDecorator *>(
+                                QString(), Qt::FindDirectChildrenOnly)) {
+                            decorator->setBookMarkedLines(bookMarkedLines);
+                        }
+                    }
+                });
+
+        return editor;
     }
 
     if (QFileInfo::exists(filePath)) {

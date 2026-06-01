@@ -25,6 +25,7 @@
 #include "GitProcessRunner.h"
 #include "GitRepoDiscovery.h"
 #include "GitRepoModel.h"
+#include "GitRunnerFactory.h"
 #include "GitStatusModel.h"
 #include "GitStatusParser.h"
 #include "GitWatcher.h"
@@ -54,7 +55,10 @@ GitController::GitController(const QString &workspaceRoot, QObject *parent)
     m_repos = new GitRepoModel(this);
     m_status = new GitStatusModel(this);
     m_watcher = new GitWatcher(this);
-    m_realRunner = new GitProcessRunner(this);
+    // Obtain the runner through the workspace's ExecutionContext (D6): a local
+    // workspace gets the QProcess GitProcessRunner, a remote (ssh://) one gets a
+    // RemoteGitProcessRunner. Defaults to local for any non-ssh path.
+    m_realRunner = GitRunnerFactory::createForRepo(m_workspaceRoot, this);
     m_runner = m_realRunner;
 
     m_refreshDebounce = new QTimer(this);
@@ -65,8 +69,13 @@ GitController::GitController(const QString &workspaceRoot, QObject *parent)
         refresh();
     });
 
-    connect(m_realRunner, &GitProcessRunner::progressLine,
-            this, &GitController::remoteOpProgress);
+    // progressLine lives on the concrete runner (the interface can't carry Qt
+    // signals); both GitProcessRunner and RemoteGitProcessRunner declare an
+    // identically-signatured signal, so connect via the QObject identity using
+    // the string-based overload — works regardless of which runner the factory
+    // returned.
+    connect(m_realRunner->asQObject(), SIGNAL(progressLine(QString)),
+            this, SIGNAL(remoteOpProgress(QString)));
     connect(m_watcher, &GitWatcher::headChanged,
             this, &GitController::scheduleDebouncedRefresh);
     // HEAD now points to a different commit → every cached HEAD blob for

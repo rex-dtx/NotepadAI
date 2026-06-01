@@ -26,6 +26,7 @@
 #include <functional>
 
 class GitProcessRunner;
+class IGitProcessRunner;
 
 // Fetches a single file's content at a specific commit revision via
 //   git -c color.ui=never show <sha>:<relPath>
@@ -57,7 +58,7 @@ public:
 
 private:
     QString          m_repoRoot;
-    GitProcessRunner *m_runner = nullptr;
+    IGitProcessRunner *m_runner = nullptr;
     quint64          m_generation = 0;
 
     static constexpr qint64 kCapBytes = 5 * 1024 * 1024;

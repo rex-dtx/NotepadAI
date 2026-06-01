@@ -61,21 +61,14 @@ public:
                 forMainFrameOnly:YES];
             [config.userContentController addUserScript:fetchScript];
 
-            // Inject Trusted Types default policy at document start — before CSP
-            // headers are enforced. Allows page-agent innerHTML usage on strict sites.
-            NSString *ttPolicyJs = @"(function(){"
-                "if(!window.trustedTypes||!window.trustedTypes.createPolicy)return;"
-                "try{window.__nai_tt_policy=window.trustedTypes.createPolicy('default',{"
-                "createHTML:function(s){return s;},"
-                "createScript:function(s){return s;},"
-                "createScriptURL:function(s){return s;}"
-                "});}catch(e){}"
-                "})();";
-            WKUserScript *ttScript = [[WKUserScript alloc]
-                initWithSource:ttPolicyJs
-                injectionTime:WKUserScriptInjectionTimeAtDocumentStart
-                forMainFrameOnly:YES];
-            [config.userContentController addUserScript:ttScript];
+            // NOTE: We deliberately do NOT pre-create a Trusted Types 'default' policy at
+            // document start. 'default' is a per-realm singleton — claiming it first makes
+            // the page's own createPolicy('default') throw "already exists" (e.g.
+            // OWA/Outlook, Teams), which aborts their boot and leaves the page unreachable.
+            // Page-agent instead creates its policy lazily at run time (see
+            // executeCopilotCommand in WebViewWidget.cpp): it tries 'default', and on
+            // failure falls back to the named 'nai-page-agent' policy, degrading silently
+            // if even that is CSP-blocked.
 
             // Register message handler for copilot results
             m_msgHandler = [[CopilotMessageHandler alloc] init];

@@ -122,6 +122,19 @@ public slots:
 
     void renameFile();
 
+    // Rename a file/folder from the workspace file tree. Renames on disk
+    // (metadata-only; case-only renames on Windows go via a unique temp with
+    // rollback) and, only on success, rebases every open editor under the old
+    // path via ScintillaNext::updatePathAfterMove so tabs follow the move
+    // without a buffer rewrite. Returns true on success.
+    bool renameWorkspaceEntry(const QString &oldPath, const QString &newPath, bool isDir);
+
+    // Disk-level rename for renameWorkspaceEntry. Plain QDir::rename, except a
+    // case-only rename (caseOnly==true) on a case-insensitive FS goes via a
+    // guaranteed-unique temp name with rollback to the original on partial
+    // failure so the entry is never stranded. Returns true on success.
+    bool renameOnDisk(const QString &oldClean, const QString &newClean, bool caseOnly);
+
     void moveCurrentFileToTrash();
     void moveFileToTrash(ScintillaNext *editor);
 

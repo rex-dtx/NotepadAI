@@ -32,6 +32,7 @@
 #include <memory>
 
 class GitProcessRunner;
+class IGitProcessRunner;
 class GitWatcher;
 
 // Two-stage fetch for the commit detail tab:
@@ -114,7 +115,7 @@ private:
     static void parseTrailers(GitCommitDetail &out);
 
     QString          m_repoRoot;
-    GitProcessRunner *m_runner = nullptr;
+    IGitProcessRunner *m_runner = nullptr;
 
     // LRU cache. QCache uses a "cost" budget; here every entry costs 1 so
     // the budget is the row count.

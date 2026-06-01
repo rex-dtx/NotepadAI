@@ -31,6 +31,8 @@
 struct _LIBSSH2_SESSION;
 struct _LIBSSH2_CHANNEL;
 struct _LIBSSH2_AGENT;
+struct _LIBSSH2_SFTP;
+struct _LIBSSH2_SFTP_HANDLE;
 
 namespace remote {
 
@@ -61,14 +63,27 @@ public:
     Step execOrShell(int channelId, const QString &command) override;
     qint64 chWrite(int channelId, const QByteArray &bytes) override;
     ReadResult chRead(int channelId) override;
+    ReadResult chReadStderr(int channelId) override;
     int chExitStatus(int channelId) override;
     void closeChannel(int channelId) override;
+
+    SftpOpenResult sftpInit() override;
+    void sftpShutdown() override;
+    SftpOpenResult sftpOpen(const QString &path, bool forWrite) override;
+    ReadResult sftpRead(int handleId) override;
+    qint64 sftpWrite(int handleId, const QByteArray &bytes) override;
+    void sftpClose(int handleId) override;
+    SftpOpenResult sftpOpendir(const QString &path) override;
+    SftpDirEntry sftpReaddir(int handleId) override;
+    void sftpClosedir(int handleId) override;
+    SftpStatResult sftpStat(const QString &path) override;
 
     qintptr socketFd() const override { return m_sock; }
     void disconnect() override;
 
 private:
     _LIBSSH2_CHANNEL *channel(int channelId) const { return m_channels.value(channelId, nullptr); }
+    _LIBSSH2_SFTP_HANDLE *sftpHandle(int handleId) const { return m_sftpHandles.value(handleId, nullptr); }
 
     _LIBSSH2_SESSION *m_session = nullptr;
     _LIBSSH2_AGENT *m_agent = nullptr;
@@ -78,6 +93,12 @@ private:
     int m_nextChannelId = 1;
     void *m_agentPrevId = nullptr; // last-tried agent identity (auth walk)
     bool m_libssh2Inited = false;
+
+    // SFTP state — the single reused session (D1) plus its open file/dir
+    // handles keyed by the int ids this transport hands out.
+    _LIBSSH2_SFTP *m_sftp = nullptr;
+    QHash<int, _LIBSSH2_SFTP_HANDLE *> m_sftpHandles;
+    int m_nextSftpHandleId = 1;
 };
 
 } // namespace remote

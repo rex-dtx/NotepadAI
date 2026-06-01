@@ -25,6 +25,9 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
+#include <utility>
+
 namespace remote {
 
 // Filesystem-access seam used by the workspace file tree and the editor's
@@ -51,6 +54,37 @@ class IFileSystemBackend : public QObject
 public:
     explicit IFileSystemBackend(QObject *parent = nullptr) : QObject(parent) {}
     ~IFileSystemBackend() override = default;
+
+    // True for an SFTP-backed remote backend, false for the QFile-backed local
+    // one. The editor's async open/save path keys off this to decide whether a
+    // buffer is a remote (ssh://) buffer; see ScintillaNext::isRemote().
+    virtual bool isRemote() const { return false; }
+
+    // Result-delivery callbacks for the async API. Invoked exactly once. `ok` is
+    // the I/O-success flag; `error` carries a human reason when !ok. Defined on
+    // the interface so a caller (editor open/save) can use one async contract
+    // over both backends: the local QFile-backed backend fires them SYNCHRONOUSLY
+    // inline (so a local open/save behaves exactly as a blocking call), the
+    // remote SFTP backend posts to its worker and fires them later on the UI
+    // thread.
+    using ReadCallback = std::function<void(bool ok, const QByteArray &data, const QString &error)>;
+    using WriteCallback = std::function<void(bool ok, const QString &error)>;
+
+    // Async read/write. The default implementations delegate to the synchronous
+    // readFile/writeFile and fire the callback inline — correct and zero-cost for
+    // the local backend. The remote backend overrides them to go through its
+    // worker thread (never blocking the UI on the network).
+    virtual void readFileAsync(const QString &path, ReadCallback cb)
+    {
+        bool ok = false;
+        QByteArray data = readFile(path, &ok);
+        if (cb) cb(ok, data, ok ? QString() : QStringLiteral("read failed"));
+    }
+    virtual void writeFileAsync(const QString &path, const QByteArray &data, WriteCallback cb)
+    {
+        const bool ok = writeFile(path, data);
+        if (cb) cb(ok, ok ? QString() : QStringLiteral("write failed"));
+    }
 
     // Synchronous read/write/stat. `ok` (when non-null) reports success vs an
     // I/O error (as opposed to a simply-absent file, which is not an error for

@@ -41,6 +41,9 @@
 Q_DECLARE_LOGGING_CATEGORY(lcAcp)
 
 class QTimer;
+class IAcpProcessChannel;
+
+namespace remote { class ExecutionContext; }
 
 class AcpConnection : public QObject
 {
@@ -53,6 +56,21 @@ public:
     // Spawn the agent child process. Asynchronous — the `initialized()` signal
     // fires after `initialize` + `session/new` complete successfully.
     void spawn(const AcpAgentDefinition &agent, const QString &workingDirectory);
+
+    // Factory for the SSH exec-channel transport (D8). It builds an
+    // IAcpProcessChannel that runs the agent on the remote host (cwd = the
+    // remote workspace root). Injected by the app layer so AcpConnection never
+    // links the SSH stack directly — the parameter is the abstract
+    // ExecutionContext; the builder downcasts and pulls the connection out.
+    using RemoteChannelBuilder = std::function<IAcpProcessChannel *(
+        remote::ExecutionContext *ctx, const AcpAgentDefinition &agent,
+        const QString &remoteCwd, QObject *parent)>;
+
+    // Mark this connection's NEXT spawn() as remote: probe the binary on `ctx`'s
+    // host and, if present, build the agent's transport via `builder` (cwd =
+    // workingDirectory passed to spawn, captured at spawn — not re-resolved). A
+    // null ctx / builder leaves the connection on the local QProcess path.
+    void setRemoteSpawn(remote::ExecutionContext *ctx, RemoteChannelBuilder builder);
 
     // Auto-approve policy provider — Group 4 will hand a lambda that queries
     // the registry at request time so the latest policy is always observed.
@@ -71,9 +89,10 @@ public:
     QStringList debugLog() const { return m_debugLog; }
     void clearDebugLog();
 
-    // Test seam — invokes handleProcessFinished as if the underlying QProcess
-    // had exited with the given code/status. Used by exit/restart tests so the
-    // suite doesn't need to spawn a real subprocess.
+    // Test seam — invokes handleProcessFinished as if the underlying transport
+    // (QProcess locally, the SSH exec channel remotely) had exited with the given
+    // code/status. Used by exit/restart tests so the suite doesn't need to spawn
+    // a real subprocess.
     void simulateProcessFinished(int exitCode, QProcess::ExitStatus status)
     {
         handleProcessFinished(exitCode, status);
@@ -131,13 +150,25 @@ signals:
     void fileWrittenOnDisk(const QString &canonicalPath);
 
 private slots:
-    void handleStdoutReady();
-    void handleStderrReady();
-    void handleProcessError(QProcess::ProcessError err);
+    void handleStdoutReady(const QByteArray &chunk);
+    void handleStderrReady(const QByteArray &chunk);
+    void handleProcessError(QProcess::ProcessError err, const QString &message);
     void handleProcessFinished(int exitCode, QProcess::ExitStatus status);
 
 private:
     using Callback = std::function<void(const QJsonValue &result, const QJsonValue &error)>;
+
+    // Build the local QProcess transport for `agent`/`workingDirectory` and start
+    // it (the prior spawn() body, now behind the IAcpProcessChannel seam). Does
+    // all the spawn debug logging so a local session logs exactly as before.
+    void spawnLocal(const AcpAgentDefinition &agent, const QString &workingDirectory);
+    // Probe the agent binary on the remote host (`command -v <binary>`); present →
+    // build the SSH transport via m_remoteChannelBuilder and start it; absent →
+    // emit a clear error and STOP (no local fallback). cwd captured at spawn.
+    void spawnRemote(const AcpAgentDefinition &agent, const QString &workingDirectory);
+    // Wire an IAcpProcessChannel's signals into this connection and adopt it as
+    // m_channel. Shared by the local and remote paths.
+    void adoptChannel(IAcpProcessChannel *channel);
 
     void initializeHandshake();
     void sendInitialize();
@@ -193,7 +224,9 @@ private:
 
     void appendTerminalOutput(TerminalState &state, const QByteArray &chunk);
 
-    QProcess *m_process = nullptr;
+    IAcpProcessChannel *m_channel = nullptr; // owned (child); local or SSH transport
+    remote::ExecutionContext *m_execContext = nullptr; // not owned; set for remote spawn
+    RemoteChannelBuilder m_remoteChannelBuilder;       // app-injected; SSH transport factory
     QByteArray m_stdoutBuffer;
     QByteArray m_stderrBuffer;
 

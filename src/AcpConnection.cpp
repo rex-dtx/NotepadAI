@@ -18,6 +18,10 @@
 
 #include "AcpConnection.h"
 
+#include "IAcpProcessChannel.h"
+#include "LocalAcpProcessChannel.h"
+#include "remote/ExecutionContext.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -131,12 +135,20 @@ AcpConnection::~AcpConnection()
     }
     m_terminals.clear();
 
-    if (m_process) {
-        if (m_process->state() != QProcess::NotRunning) {
-            m_process->kill();
-            m_process->waitForFinished(1000);
-        }
+    // Kill the agent transport while this object is still whole, so a final
+    // finished()/error chunk can't fire into a half-destroyed connection. The
+    // channel is a child QObject and is deleted with us; the local adapter's
+    // own destructor still does the kill+brief-join (behavior unchanged).
+    if (m_channel) {
+        m_channel->disconnect(this);
+        m_channel->kill();
     }
+}
+
+void AcpConnection::setRemoteSpawn(remote::ExecutionContext *ctx, RemoteChannelBuilder builder)
+{
+    m_execContext = ctx;
+    m_remoteChannelBuilder = std::move(builder);
 }
 
 void AcpConnection::setAutoApprovePolicyProvider(std::function<QString()> provider)
@@ -148,19 +160,35 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
 {
     m_agent = agent;
     m_workingDir = workingDirectory;
-    m_workingDirCanonical = QFileInfo(workingDirectory).canonicalFilePath();
-    if (m_workingDirCanonical.isEmpty()) {
+
+    // Working-dir identity for the path sandbox. For a remote workspace the path
+    // lives on another machine, so a local QFileInfo::canonicalFilePath would
+    // return empty / a wrong local path — keep it lexical instead (the remote
+    // agent enforces its own fs boundaries; our sandbox guards the local fs path
+    // which is irrelevant remotely).
+    const bool remote = m_execContext && m_execContext->isRemote() && m_remoteChannelBuilder;
+    if (remote) {
         m_workingDirCanonical = QDir::cleanPath(workingDirectory);
+    } else {
+        m_workingDirCanonical = QFileInfo(workingDirectory).canonicalFilePath();
+        if (m_workingDirCanonical.isEmpty()) {
+            m_workingDirCanonical = QDir::cleanPath(workingDirectory);
+        }
     }
 
-    m_process = new QProcess(this);
-    m_process->setWorkingDirectory(workingDirectory);
+    if (remote) {
+        spawnRemote(agent, workingDirectory);
+    } else {
+        spawnLocal(agent, workingDirectory);
+    }
+}
 
+void AcpConnection::spawnLocal(const AcpAgentDefinition &agent, const QString &workingDirectory)
+{
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     for (auto it = agent.env.constBegin(); it != agent.env.constEnd(); ++it) {
         env.insert(it.key(), it.value());
     }
-    m_process->setProcessEnvironment(env);
 
 #ifdef Q_OS_WIN
     const bool isPosix = false;
@@ -169,26 +197,10 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
         resolved = agent.command;
     }
     const auto argv = AcpProtocol::buildSpawnArgv(agent.command, agent.args, isPosix, resolved);
-    m_process->setCreateProcessArgumentsModifier(
-        [](QProcess::CreateProcessArguments *a) {
-            if (a) {
-                a->flags |= CREATE_NEW_PROCESS_GROUP;
-            }
-        });
 #else
     const bool isPosix = true;
     const auto argv = AcpProtocol::buildSpawnArgv(agent.command, agent.args, isPosix);
 #endif
-
-    m_process->setProgram(argv.program);
-#ifdef Q_OS_WIN
-    if (!argv.nativeArgumentsLine.isEmpty()) {
-        m_process->setNativeArguments(argv.nativeArgumentsLine);
-    } else
-#endif
-    {
-        m_process->setArguments(argv.arguments);
-    }
 
     {
         QStringList envOverrides;
@@ -211,18 +223,76 @@ void AcpConnection::spawn(const AcpAgentDefinition &agent, const QString &workin
 #endif
     }
 
-    connect(m_process, &QProcess::readyReadStandardOutput, this, &AcpConnection::handleStdoutReady);
-    connect(m_process, &QProcess::readyReadStandardError, this, &AcpConnection::handleStderrReady);
-    connect(m_process, &QProcess::errorOccurred, this, &AcpConnection::handleProcessError);
-    connect(m_process,
-            static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-            this,
-            &AcpConnection::handleProcessFinished);
-    connect(m_process, &QProcess::started, this, &AcpConnection::initializeHandshake);
-    connect(m_process, &QProcess::started, this,
-            [this]() { appendDebugLog(QStringLiteral("process: started")); });
+    adoptChannel(new LocalAcpProcessChannel(argv, env, workingDirectory, this));
+    m_channel->start();
+}
 
-    m_process->start();
+void AcpConnection::spawnRemote(const AcpAgentDefinition &agent, const QString &workingDirectory)
+{
+    appendDebugLog(QStringLiteral("spawn: remote host=%1 cwd=%2")
+                       .arg(m_execContext->displayName(), workingDirectory));
+
+    // Binary availability probe (D8/10.3): `command -v <binary>` over a one-shot
+    // exec on the host. Present (exit 0) → spawn; absent → clear error and STOP,
+    // never a local fallback (a local agent with a remote cwd is meaningless).
+    const QStringList probeArgv{
+        QStringLiteral("command"), QStringLiteral("-v"), agent.command};
+    appendDebugLog(QStringLiteral("spawn: probing remote binary: command -v %1").arg(agent.command));
+
+    QPointer<AcpConnection> self(this);
+    const QString host = m_execContext->displayName();
+    const QString agentName = agent.name.isEmpty() ? agent.command : agent.name;
+
+    m_execContext->exec(
+        QString(), probeArgv, QByteArray(), /*timeoutMs=*/15000,
+        [self, host, agentName, agent, workingDirectory](
+            int exitCode, const QByteArray &out, const QByteArray &err) {
+            if (!self) {
+                return;
+            }
+            if (exitCode != 0) {
+                self->appendDebugLog(
+                    QStringLiteral("spawn: remote binary probe failed (exit=%1) err=%2")
+                        .arg(exitCode)
+                        .arg(QString::fromUtf8(err).trimmed()));
+                const QString friendly =
+                    QStringLiteral("Agent '%1' not found on remote host %2. "
+                                   "Install it on the remote or open a local workspace.")
+                        .arg(agentName, host);
+                emit self->errorOccurred(AcpErrorClassifier::AcpErrorKind::SpawnFailed, friendly);
+                return;
+            }
+            self->appendDebugLog(
+                QStringLiteral("spawn: remote binary found: %1").arg(QString::fromUtf8(out).trimmed()));
+
+            IAcpProcessChannel *channel = self->m_remoteChannelBuilder(
+                self->m_execContext, agent, workingDirectory, self.data());
+            if (!channel) {
+                emit self->errorOccurred(
+                    AcpErrorClassifier::AcpErrorKind::SpawnFailed,
+                    QStringLiteral("Could not open an SSH exec channel for agent '%1' on %2.")
+                        .arg(agentName, host));
+                return;
+            }
+            self->adoptChannel(channel);
+            self->m_channel->start();
+        });
+}
+
+void AcpConnection::adoptChannel(IAcpProcessChannel *channel)
+{
+    m_channel = channel;
+    connect(m_channel, &IAcpProcessChannel::readyReadStdout,
+            this, &AcpConnection::handleStdoutReady);
+    connect(m_channel, &IAcpProcessChannel::readyReadStderr,
+            this, &AcpConnection::handleStderrReady);
+    connect(m_channel, &IAcpProcessChannel::errorOccurred,
+            this, &AcpConnection::handleProcessError);
+    connect(m_channel, &IAcpProcessChannel::finished,
+            this, &AcpConnection::handleProcessFinished);
+    connect(m_channel, &IAcpProcessChannel::started, this, &AcpConnection::initializeHandshake);
+    connect(m_channel, &IAcpProcessChannel::started, this,
+            [this]() { appendDebugLog(QStringLiteral("process: started")); });
 }
 
 void AcpConnection::initializeHandshake()
@@ -380,7 +450,7 @@ void AcpConnection::sendNewSession()
 
 int AcpConnection::sendRequest(const char *method, const QJsonValue &params, const Callback &cb)
 {
-    if (!m_process || m_process->state() == QProcess::NotRunning) {
+    if (!m_channel || !m_channel->isRunning()) {
         appendDebugLog(QStringLiteral("send-request: dropped (process not running) method=%1")
                            .arg(QString::fromLatin1(method)));
         if (cb) {
@@ -398,25 +468,25 @@ int AcpConnection::sendRequest(const char *method, const QJsonValue &params, con
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
     appendDebugFrameLog("→", bytes);
-    m_process->write(bytes);
+    m_channel->write(bytes);
     return id;
 }
 
 void AcpConnection::sendNotification(const char *method, const QJsonValue &params)
 {
-    if (!m_process || m_process->state() == QProcess::NotRunning) {
+    if (!m_channel || !m_channel->isRunning()) {
         return;
     }
     QJsonObject obj = makeRpcEnvelope(QJsonValue(QJsonValue::Undefined), QString::fromLatin1(method), params);
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
     appendDebugFrameLog("→", bytes);
-    m_process->write(bytes);
+    m_channel->write(bytes);
 }
 
 void AcpConnection::sendResponse(const QJsonValue &id, const QJsonValue &result)
 {
-    if (!m_process || m_process->state() == QProcess::NotRunning) {
+    if (!m_channel || !m_channel->isRunning()) {
         return;
     }
     QJsonObject obj;
@@ -426,12 +496,12 @@ void AcpConnection::sendResponse(const QJsonValue &id, const QJsonValue &result)
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
     appendDebugFrameLog("→", bytes);
-    m_process->write(bytes);
+    m_channel->write(bytes);
 }
 
 void AcpConnection::sendErrorResponse(const QJsonValue &id, int code, const QString &message)
 {
-    if (!m_process || m_process->state() == QProcess::NotRunning) {
+    if (!m_channel || !m_channel->isRunning()) {
         return;
     }
     QJsonObject err;
@@ -444,7 +514,7 @@ void AcpConnection::sendErrorResponse(const QJsonValue &id, int code, const QStr
     QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     bytes.append('\n');
     appendDebugFrameLog("→", bytes);
-    m_process->write(bytes);
+    m_channel->write(bytes);
 }
 
 void AcpConnection::sendPrompt(const QString &text, const QList<QPair<QByteArray, QString>> &images)
@@ -577,12 +647,9 @@ void AcpConnection::setConfigOption(const QString &id, const QJsonValue &value)
 
 // ---------- Stdio dispatch ----------------------------------------------
 
-void AcpConnection::handleStdoutReady()
+void AcpConnection::handleStdoutReady(const QByteArray &chunk)
 {
-    if (!m_process) {
-        return;
-    }
-    m_stdoutBuffer.append(m_process->readAllStandardOutput());
+    m_stdoutBuffer.append(chunk);
     const QStringList frames = AcpProtocol::acpExtractFrames(m_stdoutBuffer);
     for (const QString &frame : frames) {
         appendDebugFrameLog("←", frame.toUtf8());
@@ -590,12 +657,9 @@ void AcpConnection::handleStdoutReady()
     }
 }
 
-void AcpConnection::handleStderrReady()
+void AcpConnection::handleStderrReady(const QByteArray &chunk)
 {
-    if (!m_process) {
-        return;
-    }
-    m_stderrBuffer.append(m_process->readAllStandardError());
+    m_stderrBuffer.append(chunk);
     // Emit per-line via qWarning, line-buffered.
     while (true) {
         const int nl = m_stderrBuffer.indexOf('\n');
@@ -1203,7 +1267,7 @@ void AcpConnection::handleExtMethod(const QJsonValue &id, const QJsonObject &par
 
 // ---------- Process errors ----------------------------------------------
 
-void AcpConnection::handleProcessError(QProcess::ProcessError err)
+void AcpConnection::handleProcessError(QProcess::ProcessError err, const QString &message)
 {
     QString raw;
     switch (err) {
@@ -1214,7 +1278,7 @@ void AcpConnection::handleProcessError(QProcess::ProcessError err)
         raw = QStringLiteral("Agent process crashed");
         break;
     default:
-        raw = m_process ? m_process->errorString() : QStringLiteral("Process error");
+        raw = message.isEmpty() ? QStringLiteral("Process error") : message;
         break;
     }
     appendDebugLog(QStringLiteral("process: errorOccurred kind=%1 raw=%2").arg(int(err)).arg(raw));

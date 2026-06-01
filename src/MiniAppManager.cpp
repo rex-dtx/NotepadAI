@@ -194,9 +194,14 @@ void MiniAppManager::launchApp(const MiniAppDefinition &def)
 
     // Debug context menu on tab
     dw->tabWidget()->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(dw->tabWidget(), &QWidget::customContextMenuRequested, this, [this, instance, dw](const QPoint &pos) {
+    connect(dw->tabWidget(), &QWidget::customContextMenuRequested, this,
+            [this, instance = QPointer<MiniAppInstance>(instance),
+             dw = QPointer<ads::CDockWidget>(dw)](const QPoint &pos) {
+        if (!instance || !dw) return;
         QMenu menu;
-        menu.addAction(tr("Debug Info..."), this, [instance, dw]() {
+        menu.addAction(tr("Debug Info..."), this,
+                       [instance, dw]() {
+            if (!instance || !dw) return;
             QDialog dlg(dw);
             dlg.setWindowTitle(QStringLiteral("Mini App Debug — %1").arg(instance->appName()));
             dlg.resize(500, 400);
@@ -212,7 +217,9 @@ void MiniAppManager::launchApp(const MiniAppDefinition &def)
             auto *mainWin = qobject_cast<MainWindow *>(parent());
             AiAgentDock *aiDock = mainWin ? mainWin->activeAiDock() : nullptr;
             if (aiDock && !instance->cdpHttpUrl().isEmpty()) {
-                menu.addAction(tr("Send to AI"), this, [instance, aiDock]() {
+                menu.addAction(tr("Send to AI"), this,
+                               [instance, aiDock = QPointer<AiAgentDock>(aiDock)]() {
+                    if (!instance || !aiDock) return;
                     const QString cdpUrl = instance->cdpHttpUrl();
                     QString currentPage;
                     if (auto *wv = instance->webViewWidget()) {
@@ -234,7 +241,9 @@ void MiniAppManager::launchApp(const MiniAppDefinition &def)
                     aiDock->raise();
                 });
             }
-            QAction *cdpAction = menu.addAction(tr("Copy CDP URL"), this, [instance]() {
+            QAction *cdpAction = menu.addAction(tr("Copy CDP URL"), this,
+                                                [instance]() {
+                if (!instance) return;
                 QApplication::clipboard()->setText(instance->cdpHttpUrl());
             });
             cdpAction->setEnabled(!instance->cdpHttpUrl().isEmpty());
@@ -316,15 +325,16 @@ void MiniAppManager::shutdown()
     }
     m_quickBrowserTabs.clear();
 
-    for (MiniAppInstance *inst : m_instances) {
+    // destroy() emits finished() → onInstanceFinished(), which does
+    // m_instances.removeOne(inst) — mutating the list we'd be iterating. Snapshot
+    // and clear up front so the walk is stable and the removeOne becomes a no-op.
+    // Mirrors AcpAgentManager::shutdown()'s snapshot-then-teardown pattern.
+    const QList<MiniAppInstance *> instances = m_instances;
+    m_instances.clear();
+    for (MiniAppInstance *inst : instances) {
         inst->destroy();
     }
-    // Wait briefly for processes to exit
-    for (MiniAppInstance *inst : m_instances) {
-        Q_UNUSED(inst)
-    }
-    qDeleteAll(m_instances);
-    m_instances.clear();
+    qDeleteAll(instances);
 }
 
 void MiniAppManager::sweepStaleQuickBrowserData()
@@ -419,6 +429,21 @@ void MiniAppManager::launchQuickBrowser(const QUrl &url, bool enableCdp,
     tab.userDataPath = userDataPath;
     m_quickBrowserTabs.append(tab);
 
+    // Compact the tracking list when the dock is destroyed. The `closed` lambda
+    // below prunes on user-close, but a dock torn down by other paths (app
+    // shutdown, area collapse) only emits destroyed() — without this, a stale
+    // entry whose webView QPointer has auto-nulled would linger and be walked by
+    // the warm focusChanged loop. Backward-index skip-null+match removal mirrors
+    // TerminalManager::m_docks.
+    connect(dw, &QObject::destroyed, this, [this](QObject *obj) {
+        for (int i = m_quickBrowserTabs.size() - 1; i >= 0; --i) {
+            if (m_quickBrowserTabs[i].webView.isNull() ||
+                m_quickBrowserTabs[i].dockWidget == obj) {
+                m_quickBrowserTabs.removeAt(i);
+            }
+        }
+    });
+
     // Wire tab close → cleanup
     connect(dw, &ads::CDockWidget::closed, this, [this, webView, dw, userDataPath]() {
         webView->destroy();
@@ -494,12 +519,17 @@ void MiniAppManager::launchQuickBrowser(const QUrl &url, bool enableCdp,
     });
 
     dw->tabWidget()->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(dw->tabWidget(), &QWidget::customContextMenuRequested, this, [this, webView, dw](const QPoint &pos) {
+    connect(dw->tabWidget(), &QWidget::customContextMenuRequested, this,
+            [this, webView = QPointer<WebViewWidget>(webView),
+             dw = QPointer<ads::CDockWidget>(dw)](const QPoint &pos) {
+        if (!webView || !dw) return;
         QMenu menu;
         auto *mainWin = qobject_cast<MainWindow *>(parent());
         AiAgentDock *aiDock = mainWin ? mainWin->activeAiDock() : nullptr;
         if (aiDock && !webView->cdpHttpUrl().isEmpty()) {
-            menu.addAction(tr("Send to AI"), this, [webView, aiDock]() {
+            menu.addAction(tr("Send to AI"), this,
+                           [webView, aiDock = QPointer<AiAgentDock>(aiDock)]() {
+                if (!webView || !aiDock) return;
                 const QString cdpUrl = webView->cdpHttpUrl();
                 QString currentPage;
                 const QString url = webView->currentUrl();
@@ -519,7 +549,9 @@ void MiniAppManager::launchQuickBrowser(const QUrl &url, bool enableCdp,
                 aiDock->raise();
             });
         }
-        QAction *cdpAction = menu.addAction(tr("Copy CDP URL"), this, [webView]() {
+        QAction *cdpAction = menu.addAction(tr("Copy CDP URL"), this,
+                                            [webView]() {
+            if (!webView) return;
             QApplication::clipboard()->setText(webView->cdpHttpUrl());
         });
         cdpAction->setEnabled(!webView->cdpHttpUrl().isEmpty());

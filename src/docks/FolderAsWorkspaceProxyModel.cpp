@@ -18,8 +18,9 @@
 
 #include "FolderAsWorkspaceProxyModel.h"
 
+#include "../remote/IWorkspaceFsModel.h"
+
 #include <QDir>
-#include <QFileSystemModel>
 
 // ---------------------------------------------------------------------------
 // Core mapping overrides — O(1) hot path. No map consulted; every transform is
@@ -113,23 +114,21 @@ void FolderAsWorkspaceProxyModel::fetchMore(const QModelIndex &parent)
 // colors and native-separator tooltips keep working unchanged.
 
 // ---------------------------------------------------------------------------
-// QFileSystemModel-specific helpers — map the proxy index to source first.
+// IWorkspaceFsModel-specific helpers — map the proxy index to source first.
 // ---------------------------------------------------------------------------
 
 QString FolderAsWorkspaceProxyModel::filePath(const QModelIndex &proxyIdx) const
 {
-    auto *fs = qobject_cast<QFileSystemModel *>(sourceModel());
-    if (!fs)
+    if (!m_fs)
         return {};
-    return fs->filePath(mapToSource(proxyIdx));
+    return m_fs->filePath(mapToSource(proxyIdx));
 }
 
 bool FolderAsWorkspaceProxyModel::isDir(const QModelIndex &proxyIdx) const
 {
-    auto *fs = qobject_cast<QFileSystemModel *>(sourceModel());
-    if (!fs)
+    if (!m_fs)
         return false;
-    return fs->isDir(mapToSource(proxyIdx));
+    return m_fs->isDir(mapToSource(proxyIdx));
 }
 
 // ---------------------------------------------------------------------------
@@ -140,11 +139,10 @@ void FolderAsWorkspaceProxyModel::setRootSourcePath(const QString &dir)
 {
     m_pendingRootPath = dir;
     beginResetModel();
-    auto *fs = qobject_cast<QFileSystemModel *>(sourceModel());
-    // QFileSystemModel::index(path) is valid synchronously for an existing
-    // directory; only rowCount()/children are async (the gatherer thread fills
-    // them in and emits directoryLoaded). So R is set synchronously here.
-    m_root = fs ? QPersistentModelIndex(fs->index(dir)) : QPersistentModelIndex();
+    // index(path) is valid synchronously for an existing dir on the local model
+    // (only rowCount()/children are async), and for the remote model the root
+    // node is created synchronously in setRootPath() too — so R is set here.
+    m_root = m_fs ? QPersistentModelIndex(m_fs->indexForPath(dir)) : QPersistentModelIndex();
     m_rootPtr = m_root.isValid() ? m_root.internalPointer() : nullptr;
     endResetModel();
 }
@@ -156,6 +154,11 @@ void FolderAsWorkspaceProxyModel::setSourceModel(QAbstractItemModel *sourceModel
 
     // Base wiring first (header bookkeeping + the 7 base-connected signals).
     QAbstractProxyModel::setSourceModel(sourceModel);
+
+    // Recover the path-based interface from the concrete model. A cross-cast on
+    // the polymorphic source: works for FolderAsWorkspaceFsModel (local) and
+    // RemoteFileSystemModel (remote), both of which inherit IWorkspaceFsModel.
+    m_fs = dynamic_cast<remote::IWorkspaceFsModel *>(sourceModel);
 
     if (!sourceModel)
         return;
@@ -184,15 +187,16 @@ void FolderAsWorkspaceProxyModel::setSourceModel(QAbstractItemModel *sourceModel
             this, &FolderAsWorkspaceProxyModel::onModelReset);
 
     // columnsInserted/columnsRemoved are deliberately NOT forwarded: the proxy
-    // is fixed at 1 column and the source column set is static at 4.
+    // is fixed at 1 column and the source column set is static.
 
     // Defensive fallback for a pathological slow/network root where index(dir)
     // was not synchronously resolvable: re-derive R on the first directoryLoaded
-    // for the pending root path. Normal local directories never hit this.
-    if (auto *fs = qobject_cast<QFileSystemModel *>(sourceModel)) {
-        connect(fs, &QFileSystemModel::directoryLoaded,
-                this, &FolderAsWorkspaceProxyModel::onSourceDirectoryLoaded);
-    }
+    // for the pending root path. Connected by signature (string-based) because
+    // directoryLoaded is not on QAbstractItemModel — it lives on the concrete
+    // model (QFileSystemModel or RemoteFileSystemModel), both with the identical
+    // `directoryLoaded(QString)` shape. Normal roots never hit this.
+    connect(sourceModel, SIGNAL(directoryLoaded(QString)),
+            this, SLOT(onSourceDirectoryLoaded(QString)));
 }
 
 void FolderAsWorkspaceProxyModel::onSourceDirectoryLoaded(const QString &loadedPath)
@@ -205,10 +209,9 @@ void FolderAsWorkspaceProxyModel::onSourceDirectoryLoaded(const QString &loadedP
     if (m_pendingRootPath.isEmpty()
         || QDir::cleanPath(loadedPath) != QDir::cleanPath(m_pendingRootPath))
         return;
-    auto *fs = qobject_cast<QFileSystemModel *>(sourceModel());
-    if (!fs)
+    if (!m_fs)
         return;
-    const QModelIndex r = fs->index(loadedPath);
+    const QModelIndex r = m_fs->indexForPath(loadedPath);
     if (!r.isValid())
         return;
     beginResetModel();

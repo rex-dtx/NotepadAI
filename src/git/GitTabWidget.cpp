@@ -26,6 +26,7 @@
 #include "GitHistoryView.h"
 #include "GitOperationManager.h"
 #include "GitRepoModel.h"
+#include "GitRunnerFactory.h"
 #include "GitStatusEntry.h"
 #include "GitStatusModel.h"
 #include "GitTabSegmentedBar.h"
@@ -799,6 +800,7 @@ void GitTabWidget::onMenuButtonClicked()
     if (!m_controller || m_controller->currentRepo().isEmpty()) return;
 
     QMenu menu(this);
+    menu.setToolTipsVisible(true); // so the remote interactive-rebase tooltip shows
     const QStringList remotes = m_controller->remotes();
     const bool hasRemote = !remotes.isEmpty();
 
@@ -851,7 +853,16 @@ void GitTabWidget::onMenuButtonClicked()
     QAction *aIRebase = menu.addAction(tr("Interactive Rebase..."));
     aMerge->setEnabled(opIdle);
     aRebase->setEnabled(opIdle);
-    aIRebase->setEnabled(opIdle);
+    // Interactive rebase is unavailable on remote workspaces (D7): the
+    // notepadai-editor helper set as GIT_SEQUENCE_EDITOR must IPC back to this
+    // local window, which a remote host cannot reach. Non-interactive merge /
+    // rebase work remotely, so only this one action is gated off.
+    const bool remoteRepo = GitRunnerFactory::isRemoteRepo(m_workspaceRoot);
+    aIRebase->setEnabled(opIdle && !remoteRepo);
+    if (remoteRepo) {
+        aIRebase->setToolTip(tr("Interactive rebase is unavailable on remote SSH "
+                                "workspaces. Other git operations work remotely."));
+    }
 
     connect(aMerge, &QAction::triggered, this, &GitTabWidget::mergeRequested);
     connect(aRebase, &QAction::triggered, this, &GitTabWidget::rebaseRequested);

@@ -30,6 +30,8 @@
 
 class QTimer;
 
+class QObject;
+
 class IGitProcessRunner
 {
 public:
@@ -44,6 +46,24 @@ public:
                      Callback cb) = 0;
     virtual void cancel() = 0;
     virtual bool isRunning() const = 0;
+
+    // --- runner controls used by the fetcher / history hot paths -------------
+    // Both the local (QProcess) and remote (SSH exec channel) runners honor
+    // these so callers can hold an IGitProcessRunner* without downcasting:
+    //   * setMaxOutputBytes — cap buffered stdout; on overflow the op is aborted
+    //     and the callback fires with GitProcessRunner::kExitTruncated + the
+    //     partial bytes. 0 = unlimited.
+    //   * cancelAsync — non-blocking cancel for spam-friendly callers (history
+    //     refresh): tears down the in-flight op without waiting and DROPS the
+    //     pending callback; callers guard with a generation token. After it
+    //     returns, isRunning()==false and a new run() may be issued immediately.
+    //   * asQObject — the runner's QObject identity, so callers can connect to
+    //     progressLine / deleteLater() against the interface (the interface
+    //     itself cannot carry Qt signals).
+    virtual void setMaxOutputBytes(qint64 bytes) = 0;
+    virtual qint64 maxOutputBytes() const = 0;
+    virtual void cancelAsync() = 0;
+    virtual QObject *asQObject() = 0;
 };
 
 class GitProcessRunner : public QObject, public IGitProcessRunner
@@ -68,13 +88,16 @@ public:
     // who care about late chunks must guard with a generation token.
     // After cancelAsync() returns, isRunning() == false and a new run() can
     // be issued in the same event-loop tick.
-    void cancelAsync();
+    void cancelAsync() override;
+
+    // QObject identity for interface-typed callers (progressLine / deleteLater).
+    QObject *asQObject() override { return this; }
 
     // Optional stdout byte cap. When the buffered stdout exceeds this size
     // the process is killed and the callback is invoked with the truncated
     // bytes + a special exit code (kExitTruncated). 0 = unlimited (default).
-    void setMaxOutputBytes(qint64 bytes) { m_maxOutputBytes = bytes; }
-    qint64 maxOutputBytes() const { return m_maxOutputBytes; }
+    void setMaxOutputBytes(qint64 bytes) override { m_maxOutputBytes = bytes; }
+    qint64 maxOutputBytes() const override { return m_maxOutputBytes; }
 
     // Sentinel exit codes (in addition to the process's own).
     static constexpr int kExitCancelled = -2;   // cancel() was invoked

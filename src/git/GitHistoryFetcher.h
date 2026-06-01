@@ -30,6 +30,7 @@
 #include <cstdint>
 
 class GitProcessRunner;
+class IGitProcessRunner;
 class GitWatcher;
 
 // Owns the streaming `git log` lifecycle for one repository / branch scope.
@@ -113,7 +114,7 @@ private:
     bool             m_allBranches = false;
     bool             m_reachedEnd  = false;
 
-    GitProcessRunner *m_runner = nullptr;
+    IGitProcessRunner *m_runner = nullptr;
 
     // Generation token bumped on every refetch / loadMore / cancel. Pending
     // callbacks check against this and drop themselves if stale.

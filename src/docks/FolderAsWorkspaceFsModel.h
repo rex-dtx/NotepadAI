@@ -23,6 +23,8 @@
 #include <QSet>
 #include <QString>
 
+#include "../remote/IWorkspaceFsModel.h"
+
 class PathStatusIndex;
 struct GitDiffPalette;
 
@@ -33,9 +35,16 @@ struct GitDiffPalette;
 //   2) Git decoration colours for file + folder rows, driven by an externally-
 //      owned PathStatusIndex pointer and a light/dark palette flag.
 //
+// It also implements remote::IWorkspaceFsModel — the minimal path-based contract
+// the dock + proxy bind to — so the SAME dock/proxy can drive this local model or
+// the SFTP-backed RemoteFileSystemModel interchangeably (D2). The interface
+// methods are thin forwarders to the QFileSystemModel originals; the local tree's
+// behaviour is byte-for-byte unchanged. QFileSystemModel already emits the
+// `directoryLoaded(QString)` signal the interface contract requires.
+//
 // The model never owns the PathStatusIndex — the dock owns it and must call
 // setStatusIndex(nullptr) before the index is destroyed.
-class FolderAsWorkspaceFsModel : public QFileSystemModel
+class FolderAsWorkspaceFsModel : public QFileSystemModel, public remote::IWorkspaceFsModel
 {
     Q_OBJECT
 
@@ -43,6 +52,19 @@ public:
     using QFileSystemModel::QFileSystemModel;
 
     QVariant data(const QModelIndex &index, int role) const override;
+
+    // --- remote::IWorkspaceFsModel ------------------------------------------
+    // Thin forwarders to the QFileSystemModel originals. setRootPath() and
+    // rootPath() intentionally re-declare names also present on QFileSystemModel:
+    // the interface overrides win through the IWorkspaceFsModel vtable while the
+    // base implementations stay reachable via QFileSystemModel:: inside the .cpp.
+    // setRootPath returns void here (the dock ignores the base's QModelIndex).
+    QModelIndex indexForPath(const QString &path) const override;
+    QString filePath(const QModelIndex &index) const override;
+    bool isDir(const QModelIndex &index) const override;
+    void setRootPath(const QString &path) override;
+    QString rootPath() const override;
+    QAbstractItemModel *asModel() override { return this; }
 
     // Decoration plumbing. Pure setters; the dock controls when to emit
     // dataChanged via notifyPathsChanged.

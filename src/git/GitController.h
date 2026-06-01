@@ -172,7 +172,7 @@ private:
     QString m_workspaceRoot;
     State m_state = State::Idle;
     IGitProcessRunner *m_runner = nullptr;
-    GitProcessRunner *m_realRunner = nullptr;     // owned when not test-injected
+    IGitProcessRunner *m_realRunner = nullptr;    // owned when not test-injected
     GitRepoModel *m_repos;
     GitStatusModel *m_status;
     GitWatcher *m_watcher;

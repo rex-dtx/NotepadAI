@@ -41,7 +41,14 @@
 //   - Hand-written, isInSubtree-filtered signal forwarding: out-of-subtree
 //     watcher events (e.g. a sibling project under the root's real parent) are
 //     dropped so the fixed single top row is never corrupted.
-class QFileSystemModel;
+//
+// Source model: bound via the remote::IWorkspaceFsModel interface (the minimal
+// path-based contract — indexForPath/filePath/isDir/setRootPath), so the proxy
+// drives EITHER the local QFileSystemModel-backed FolderAsWorkspaceFsModel OR the
+// SFTP-backed RemoteFileSystemModel with the SAME synthetic-root math. The
+// interface never widened the proxy's dependency: it only ever needed index(path)
+// + filePath() + isDir() from the concrete model, which now arrive via the seam.
+namespace remote { class IWorkspaceFsModel; }
 
 class FolderAsWorkspaceProxyModel : public QAbstractProxyModel
 {
@@ -55,7 +62,7 @@ public:
     // serves the old root against a moved source.
     void setRootSourcePath(const QString &dir);
 
-    // QFileSystemModel-specific helpers (not on QAbstractProxyModel). They map a
+    // IWorkspaceFsModel-specific helpers (not on QAbstractProxyModel). They map a
     // proxy index to source and delegate, so dock touch-points reading the file
     // path / dir-ness off a VIEW index call these instead of the source model.
     QString filePath(const QModelIndex &proxyIdx) const;
@@ -73,6 +80,14 @@ public:
     void fetchMore(const QModelIndex &parent) override;
 
     void setSourceModel(QAbstractItemModel *sourceModel) override;
+
+private slots:
+    // Defensive re-derive of R on the source's directoryLoaded for the pending
+    // root path — used only for a pathological slow/network root where the
+    // synchronous index(dir) was not resolvable. Declared as a slot so the
+    // string-based connect resolves it against either concrete model's
+    // directoryLoaded(QString) signal. Normal local/remote roots never hit it.
+    void onSourceDirectoryLoaded(const QString &loadedPath);
 
 private:
     // True iff `s` is the root or a descendant of the root. O(depth), cold path
@@ -94,11 +109,15 @@ private:
                          QAbstractItemModel::LayoutChangeHint hint);
     void onModelAboutToBeReset();
     void onModelReset();
-    void onSourceDirectoryLoaded(const QString &loadedPath);
 
     QPersistentModelIndex m_root;       // R — source index of the workspace root
     void *m_rootPtr = nullptr;          // R.internalPointer(), the node discriminator
     QString m_pendingRootPath;          // path last handed to setRootSourcePath
+    // The source model recovered as the path-based interface (indexForPath /
+    // filePath / isDir / setRootPath). dynamic_cast'd once in setSourceModel; the
+    // synthetic-root math uses it instead of a QFileSystemModel* cast so the proxy
+    // works unchanged over both the local and remote model.
+    remote::IWorkspaceFsModel *m_fs = nullptr;
 
     // layoutAboutToBeChanged → layoutChanged persistent-index remap snapshots.
     // The proxy-side list is what we hand to changePersistentIndexList as the OLD
