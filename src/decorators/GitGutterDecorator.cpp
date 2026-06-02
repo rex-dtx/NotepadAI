@@ -442,7 +442,7 @@ void GitGutterDecorator::startTopLevelDiscovery()
     }
 
     const QString dir = isRemote
-        ? QFileInfo(m_lastResolvedPosixPath).absolutePath()
+        ? remote::posixParentPath(m_lastResolvedPosixPath)
         : QFileInfo(m_lastResolvedFile).absolutePath();
     if (dir.isEmpty() || (!isRemote && !QDir(dir).exists())) {
         m_topLevelChecked = true;

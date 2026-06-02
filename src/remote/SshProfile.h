@@ -159,6 +159,14 @@ inline SshUri parseSshUri(const QString &s)
     return out;
 }
 
+inline QString posixParentPath(const QString &path)
+{
+    if (path.isEmpty())
+        return QString();
+    const int slash = path.lastIndexOf(QLatin1Char('/'));
+    return slash > 0 ? path.left(slash) : QStringLiteral("/");
+}
+
 } // namespace remote
 
 #endif // REMOTE_SSHPROFILE_H
