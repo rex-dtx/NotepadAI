@@ -59,6 +59,19 @@ add_subdirectory(supertinycron)
 add_subdirectory(mbedtls)
 add_subdirectory(libssh2)
 
+CPMAddPackage(
+    NAME sentry
+    GITHUB_REPOSITORY getsentry/sentry-native
+    VERSION 0.7.17
+    GIT_TAG 0.7.17
+    OPTIONS
+        "SENTRY_BACKEND inproc"
+        "SENTRY_INTEGRATION_QT ON"
+        "SENTRY_BUILD_EXAMPLES OFF"
+        "SENTRY_BUILD_TESTS OFF"
+    EXCLUDE_FROM_ALL YES
+)
+
 if(WIN32)
     add_subdirectory(webview2)
 endif()

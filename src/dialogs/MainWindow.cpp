@@ -27,6 +27,8 @@
 #include "UndoAction.h"
 #include "ui_MainWindow.h"
 
+#include <sentry.h>
+
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QStringList>
@@ -2020,6 +2022,12 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
             m_sshDebugDialog->show();
             m_sshDebugDialog->raise();
             m_sshDebugDialog->activateWindow();
+        });
+
+        QAction *sentryTestAction = debugMenu->addAction(tr("Test Sentry"));
+        connect(sentryTestAction, &QAction::triggered, this, []() {
+            sentry_capture_event(sentry_value_new_message_event(
+                SENTRY_LEVEL_INFO, "custom", "It works!"));
         });
     }
 #endif

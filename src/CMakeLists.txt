@@ -618,6 +618,7 @@ target_link_libraries(NotepadAI
         md4c
         supertinycron
         libssh2
+        sentry
 )
 
 target_compile_definitions(NotepadAI

@@ -29,6 +29,8 @@
 #include <cstring>
 #include <cstdlib>
 
+#include <sentry.h>
+
 #include "CrashHandler.h"
 #include "DataPaths.h"
 #include "NotepadNextApplication.h"
@@ -162,6 +164,19 @@ int main(int argc, char *argv[])
     if (dataSource != DataPaths::Source::Default) {
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dataDir);
     }
+
+    // --- Sentry crash reporting ---
+    sentry_options_t *sentryOptions = sentry_options_new();
+    sentry_options_set_dsn(sentryOptions, "https://2cfaca32d5fe89c28270072dcee0c305@o294128.ingest.us.sentry.io/4511496856272896");
+    const std::string sentryDbPath = (dataDir + QStringLiteral("/NotepadAI/.sentry-native")).toStdString();
+    sentry_options_set_database_path(sentryOptions, sentryDbPath.c_str());
+    const std::string sentryRelease = std::string("NotepadAI@") + APP_VERSION;
+    sentry_options_set_release(sentryOptions, sentryRelease.c_str());
+#ifndef NDEBUG
+    sentry_options_set_debug(sentryOptions, 1);
+#endif
+    sentry_init(sentryOptions);
+    auto sentryClose = qScopeGuard([] { sentry_close(); });
 
     // --- SingleApplication userData based on data dir ---
     // When using a custom data dir, hash the path to create a unique identity.
