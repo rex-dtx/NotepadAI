@@ -165,6 +165,18 @@ public:
     virtual int chExitStatus(int channelId) = 0;
     virtual void closeChannel(int channelId) = 0;
 
+    // Non-blocking channel-close teardown. closeChannel() initiates the SSH
+    // CHANNEL_CLOSE handshake; in non-blocking mode libssh2 may not be able to
+    // flush + free the channel immediately (LIBSSH2_ERROR_EAGAIN). When that
+    // happens the transport RETAINS the channel and finishes freeing it on
+    // subsequent pumpChannelCloses() calls. hasPendingChannelCloses() reports
+    // whether any teardown is still in flight so the worker keeps a timer armed
+    // to drive it to completion even when the socket is otherwise quiet — a
+    // half-freed channel pins its receive window and stalls the whole session.
+    // Default no-ops: test fakes close synchronously and never defer.
+    virtual void pumpChannelCloses() {}
+    virtual bool hasPendingChannelCloses() const { return false; }
+
     // --- SFTP ops (D1a) ------------------------------------------------------
     // Open the SFTP session for `lane` over the live connection (D1a opens one
     // per lane — Bulk and Meta — so the two never block each other). handleId in
@@ -174,6 +186,10 @@ public:
     // Tear BOTH SFTP sessions down (frees any dangling file/dir handles first).
     // Idempotent; safe to call even if sftpInit never succeeded on either lane.
     virtual void sftpShutdown() = 0;
+    // Tear down only the Bulk SFTP session (Meta is unaffected). Used to reinit
+    // a wedged bulk lane after a load timeout without disrupting file-tree ops.
+    // Ignores EAGAIN — the session enters deferred close if unresponsive.
+    virtual void sftpShutdownBulk() {}
 
     // File ops. sftpOpen: forWrite=false → O_RDONLY; forWrite=true →
     // O_WRONLY|O_CREAT|O_TRUNC with mode 0644. Returns a file handle id on Ok.
@@ -218,6 +234,11 @@ public:
 
     // Tear down session + socket. After this, no other method is called.
     virtual void disconnect() = 0;
+
+    // Last libssh2 session-level errno (LIBSSH2_ERROR_* values). Returns 0 when
+    // not connected or when the transport is a test stub. Used by diagnostic
+    // log events to distinguish session-level EAGAIN from SFTP-protocol EAGAIN.
+    virtual int lastErrno() const { return 0; }
 };
 
 } // namespace remote

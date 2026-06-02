@@ -94,6 +94,16 @@ public:
     virtual FileStat stat(const QString &path) = 0;
     virtual QStringList readdir(const QString &path) = 0;
 
+    // Diagnostic hook. Appends `message` to whatever log the backend maintains
+    // (for the remote backend: the SSH connection's rolling debug log; for the
+    // local backend: no-op). Called by ScintillaNext to stamp the load-timeout
+    // event directly into the SSH log so it can be correlated with worker state.
+    virtual void logEvent(const QString &) {}
+
+    // Cancel a pending async read by reqId. No-op if the op has already
+    // completed or the backend is local. Safe to call after timeout fires.
+    virtual void cancelReadAsync(quint64 /*reqId*/) {}
+
 signals:
     // Emitted when a watched directory's contents change. Local backend wires
     // this to a filesystem watcher; remote (P2) derives it from SFTP polling

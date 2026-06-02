@@ -104,9 +104,53 @@ RemoteFsBackend::~RemoteFsBackend()
 // the SAME op (fresh reqId, same path) after a bounded backoff. writeFileAsync
 // (mutating) is intentionally NOT retried — fail-no-replay.
 
+void RemoteFsBackend::logEvent(const QString &message)
+{
+    if (m_connection) m_connection->appendDebugLog(message);
+}
+
+void RemoteFsBackend::cancelReadAsync(quint64 reqId)
+{
+    if (!m_connection || reqId == 0) return;
+    // Remove the pending callback so a late sftpReadDone for this reqId is
+    // silently discarded rather than firing after the timeout.
+    m_readCallbacks.remove(reqId);
+    m_connection->sftpCancelBulk(reqId);
+}
+
 void RemoteFsBackend::readFileAsync(const QString &path, ReadCallback cb)
 {
     readFileAttempt(path, std::move(cb), 0);
+}
+
+quint64 RemoteFsBackend::readFileAsyncTracked(const QString &path, ReadCallback cb)
+{
+    if (!m_connection) {
+        if (cb) cb(false, QByteArray(), tr("No SSH connection"));
+        return 0;
+    }
+    const quint64 reqId = ++m_nextReqId;
+    if (cb) {
+        ReadCallback userCb = std::move(cb);
+        ReadCallback wrapped =
+            [this, path, userCb = std::move(userCb)](
+                bool ok, const QByteArray &data, const QString &error) mutable {
+                if (!ok && isTransientError(error)) {
+                    // On transient failure use the normal retry path (attempt=1
+                    // since attempt=0 already ran). kMaxRetries still applies.
+                    QTimer::singleShot(
+                        backoffForAttempt(0), this,
+                        [this, path, userCb = std::move(userCb)]() mutable {
+                            readFileAttempt(path, std::move(userCb), 1);
+                        });
+                    return;
+                }
+                if (userCb) userCb(ok, data, error);
+            };
+        m_readCallbacks.insert(reqId, std::move(wrapped));
+    }
+    m_connection->sftpRead(reqId, path);
+    return reqId;
 }
 
 void RemoteFsBackend::readFileAttempt(const QString &path, ReadCallback cb, int attempt)

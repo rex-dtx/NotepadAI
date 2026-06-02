@@ -182,6 +182,9 @@ public slots:
     void requestSftpRename(quint64 reqId, const QString &oldPath, const QString &newPath);
     void requestSftpMkdir(quint64 reqId, const QString &path);
     void requestSftpUnlink(quint64 reqId, const QString &path);
+    // Cancel a timed-out bulk SFTP read: shuts down the bulk SFTP lane (so its
+    // stuck open_state is reset) and fails the op, unblocking the FIFO queue.
+    void requestSftpCancelBulk(quint64 reqId);
 
     // --- exec request slots (D6/D8) ------------------------------------------
     // Posted from the UI thread (queued) by SshConnection on behalf of
@@ -242,6 +245,14 @@ signals:
     void execStdoutChunk(quint64 reqId, const QByteArray &chunk);
     void execStderrChunk(quint64 reqId, const QByteArray &chunk);
     void execDone(quint64 reqId, int exitStatus);
+
+    // --- diagnostic signal ---------------------------------------------------
+    // Low-volume debug events emitted from the worker thread. SshConnection
+    // relays them into its appendDebugLog so they appear in the SSH debug dialog
+    // alongside the existing UI-thread log entries. Only emitted when the event
+    // is operationally significant (SFTP lane stall, abandoned exec drain, etc.)
+    // — not on every socket edge.
+    void debugEvent(const QString &line);
 
 private slots:
     void onSocketActivity();

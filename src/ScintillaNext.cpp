@@ -23,6 +23,7 @@
 #include "ScintillaCommenter.h"
 
 #include "remote/IFileSystemBackend.h"
+#include "remote/RemoteFsBackend.h"
 
 #include "ByteArrayUtils.h"
 #include "uchardet.h"
@@ -35,10 +36,15 @@
 #include <QTextCodec>
 #include <QTimer>
 
+#include <memory>
 #include <utility>
 
 
 const int CHUNK_SIZE = 1024 * 1024 * 4; // Not sure what is best
+
+// SFTP session init on a cold connection can exceed 30s on slow servers, so
+// give the remote load 60s before declaring failure (matches kTimeoutStatus).
+static constexpr int kRemoteLoadTimeoutMs = 60'000;
 
 inline const QByteArray BOM_UTF8    = QByteArray::fromHex("EFBBBF");
 inline const QByteArray BOM_UTF16LE = QByteArray::fromHex("FFFE");
@@ -217,13 +223,47 @@ void ScintillaNext::loadInto(LoadCallback cb)
     if (!loadTimeoutTimer) {
         loadTimeoutTimer = new QTimer(this);
         loadTimeoutTimer->setSingleShot(true);
+    } else {
+        // Disconnect any previous timeout slot (e.g. from a prior retryLoad call)
+        // so we never accumulate duplicate connections on the same timer.
+        QObject::disconnect(loadTimeoutTimer, &QTimer::timeout, this, nullptr);
+        loadTimeoutTimer->stop();
     }
 
     QPointer<ScintillaNext> guard(this);
-    fsBackend->readFileAsync(remoteFilePath, [this, guard, cb](bool ok, const QByteArray &data,
+    QPointer<remote::IFileSystemBackend> backendGuard(fsBackend);
+
+    // Wrap cb so it fires at most once — both the SFTP callback and the timeout
+    // timer capture it. In the late-arrival recovery scenario the timer fires first
+    // (with ok=false) and then the SFTP bytes arrive (ok=true); without this guard
+    // the caller's callback would be invoked twice.
+    auto sharedCb = std::make_shared<LoadCallback>(std::move(cb));
+    auto fireCb = [sharedCb](bool ok, const QString &err) {
+        if (sharedCb && *sharedCb) {
+            LoadCallback f = std::move(*sharedCb);
+            *sharedCb = {};
+            f(ok, err);
+        }
+    };
+
+    // Use the tracked variant for remote backends so we can cancel on timeout.
+    // For local backends (no cancel needed) the regular path is fine.
+    auto *remoteFsBackend = qobject_cast<remote::RemoteFsBackend *>(fsBackend);
+    loadReqId = 0;
+    auto readCb = [this, guard, fireCb](bool ok, const QByteArray &data,
                                                                const QString &error) {
         if (!guard) return; // editor closed mid-load
+
+        // If the timeout already fired AND the read also failed, we are done: the
+        // error placeholder is already in the editor from the timer path. If the
+        // read succeeded despite a late arrival (ok==true), fall through and recover
+        // — overwrite the placeholder with the real content so the user is not stuck
+        // staring at "Load timed out" when the bytes are available.
+        const bool timedOut = (loadStatus == LoadState::Error);
+        if (timedOut && !ok) return; // timer won, read failed → nothing to recover
+
         if (loadTimeoutTimer) loadTimeoutTimer->stop();
+        loadReqId = 0;
 
         if (!ok) {
             loadStatus = LoadState::Error;
@@ -238,13 +278,15 @@ void ScintillaNext::loadInto(LoadCallback cb)
                 setReadOnly(true);
                 setSavePoint();
             }
-            if (cb) cb(false, error);
+            fireCb(false, error);
             emit loadFailed(error);
             return;
         }
 
-        // Leave the read-only placeholder, fill from the received bytes using the
-        // exact same detection + fill as the local readFromDisk path.
+        // Fill from the received bytes using the exact same detection + fill as
+        // the local readFromDisk path. This path also covers the late-arrival
+        // recovery case (timedOut==true): overwrite the error placeholder with
+        // the real content.
         setReadOnly(false);
         {
             const QSignalBlocker blocker(this);
@@ -259,20 +301,35 @@ void ScintillaNext::loadInto(LoadCallback cb)
 
         if (!filled) {
             const QString err = tr("Document error while loading");
-            if (cb) cb(false, err);
+            fireCb(false, err);
             emit loadFailed(err);
             return;
         }
 
-        if (cb) cb(true, QString());
+        fireCb(true, QString());
         emit loaded();
-    });
+    };
+
+    if (remoteFsBackend) {
+        loadReqId = remoteFsBackend->readFileAsyncTracked(remoteFilePath, std::move(readCb));
+    } else {
+        fsBackend->readFileAsync(remoteFilePath, std::move(readCb));
+    }
 
     // 30-second timeout: if the read callback never fires, transition to error.
-    connect(loadTimeoutTimer, &QTimer::timeout, this, [this, guard, cb]() {
+    connect(loadTimeoutTimer, &QTimer::timeout, this, [this, guard, backendGuard, fireCb]() {
         if (!guard) return;
         if (loadStatus != LoadState::Loading) return;
         loadStatus = LoadState::Error;
+        if (backendGuard) {
+            backendGuard->logEvent(QStringLiteral("load-timeout: path=%1").arg(remoteFilePath));
+            // Cancel the stuck SFTP op so it is dequeued from the bulk lane,
+            // unblocking all subsequent file opens on this SSH session.
+            if (loadReqId != 0) {
+                backendGuard->cancelReadAsync(loadReqId);
+                loadReqId = 0;
+            }
+        }
         {
             const QSignalBlocker blocker(this);
             setUndoCollection(false);
@@ -284,10 +341,10 @@ void ScintillaNext::loadInto(LoadCallback cb)
             setSavePoint();
         }
         const QString err = tr("Load timed out");
-        if (cb) cb(false, err);
+        fireCb(false, err);
         emit loadFailed(err);
     }, Qt::SingleShotConnection);
-    loadTimeoutTimer->start(30000);
+    loadTimeoutTimer->start(kRemoteLoadTimeoutMs);
 }
 
 void ScintillaNext::retryLoad(LoadCallback cb)

@@ -83,11 +83,20 @@ public:
     // SFTP-backed → remote.
     bool isRemote() const override { return true; }
 
+    // Forwards message to SshConnection::appendDebugLog so the ScintillaNext
+    // load-timeout event appears in the SSH debug log alongside worker state.
+    void logEvent(const QString &message) override;
+    // Cancel a pending bulk SFTP read by reqId: reinits the bulk lane and fails
+    // the stuck op so subsequent reads are not blocked behind it.
+    void cancelReadAsync(quint64 reqId) override;
+
     // --- async SFTP API (the real remote contract) --------------------------
     // readFileAsync/writeFileAsync override IFileSystemBackend's async methods so
     // the editor's open/save path drives them polymorphically; statAsync/
     // readdirAsync are remote-only extensions used by the file tree.
     void readFileAsync(const QString &path, ReadCallback cb) override;
+    // Like readFileAsync but returns the reqId so the caller can cancel it later.
+    quint64 readFileAsyncTracked(const QString &path, ReadCallback cb);
     void writeFileAsync(const QString &path, const QByteArray &data, WriteCallback cb) override;
     void statAsync(const QString &path, StatCallback cb);
     void readdirAsync(const QString &path, ReaddirCallback cb);

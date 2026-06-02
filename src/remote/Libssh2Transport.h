@@ -22,6 +22,8 @@
 #include <QByteArray>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QList>
+#include <QSet>
 #include <QString>
 
 #include "ISshTransport.h"
@@ -68,9 +70,12 @@ public:
     ReadResult chReadStderr(int channelId) override;
     int chExitStatus(int channelId) override;
     void closeChannel(int channelId) override;
+    void pumpChannelCloses() override;
+    bool hasPendingChannelCloses() const override;
 
     SftpOpenResult sftpInit(SftpLane lane) override;
     void sftpShutdown() override;
+    void sftpShutdownBulk() override;
     SftpOpenResult sftpOpen(SftpLane lane, const QString &path, bool forWrite) override;
     ReadResult sftpRead(SftpLane lane, int handleId) override;
     qint64 sftpWrite(SftpLane lane, int handleId, const QByteArray &bytes) override;
@@ -87,6 +92,7 @@ public:
 
     qintptr socketFd() const override { return m_sock; }
     void disconnect() override;
+    int lastErrno() const override;
 
 private:
     _LIBSSH2_CHANNEL *channel(int channelId) const { return m_channels.value(channelId, nullptr); }
@@ -101,6 +107,11 @@ private:
     QByteArray m_hostKey;
     QHash<int, _LIBSSH2_CHANNEL *> m_channels;
     int m_nextChannelId = 1;
+    // Channels whose close handshake could not complete synchronously (libssh2
+    // returned EAGAIN). pumpChannelCloses() retries libssh2_channel_free on each
+    // until it succeeds; until then the channel must NOT be dropped (a half-freed
+    // channel keeps its receive window open and stalls the whole session).
+    QList<_LIBSSH2_CHANNEL *> m_closingChannels;
     void *m_agentPrevId = nullptr; // last-tried agent identity (auth walk)
     bool m_libssh2Inited = false;
 
@@ -114,6 +125,7 @@ private:
     _LIBSSH2_SFTP *m_sftpBulk = nullptr;
     _LIBSSH2_SFTP *m_sftpMeta = nullptr;
     QHash<int, _LIBSSH2_SFTP_HANDLE *> m_sftpHandles;
+    QSet<int> m_bulkHandleIds; // handleIds opened on the Bulk lane
     int m_nextSftpHandleId = 1;
 
     // Non-blocking connect state (FIX-4). connectSocket is re-entrant: the first

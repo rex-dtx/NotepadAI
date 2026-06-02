@@ -2485,6 +2485,9 @@ void MainWindow::openFolderAsWorkspacePath(const QString &dir, bool showGitTab)
         remote::ExecutionContext *ctx = nullptr;
         if (contexts && uri.valid) {
             ctx = contexts->remoteContext(uri.profileId);
+            if (!ctx) {
+                ctx = contexts->connect(uri.profileId);
+            }
         }
         if (ctx) {
             wireSshDockToContext(dock, ctx);
@@ -2521,6 +2524,19 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
     connect(dock, &FolderAsWorkspaceDock::aboutToBeClosed, this,
             [this](const QString &path, FolderAsWorkspaceDock *self) {
         if (path.isEmpty() || !self) return;
+
+        // Tear down the SSH connection when an SSH workspace closes so the
+        // bulk SFTP lane (and any wedged ops) is fully reset. Without this,
+        // the SshConnection stays alive in State::Ready and re-opening the
+        // same workspace returns the same wedged context.
+        if (remote::isSshUri(path)) {
+            if (remote::ExecutionContextRegistry *reg = app ? app->getExecutionContextRegistry() : nullptr) {
+                const remote::SshUri uri = remote::parseSshUri(path);
+                if (uri.valid) {
+                    reg->disconnect(uri.profileId);
+                }
+            }
+        }
         const WorkspaceStateSnapshot snap = self->captureState();
         m_workspaceStateMemo.insert(QDir::cleanPath(path), snap);
         persistOneWorkspaceState(snap);

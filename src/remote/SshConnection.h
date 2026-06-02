@@ -120,6 +120,9 @@ public:
     quint64 execStart(const QString &command, const QByteArray &stdinPayload,
                       remote::ExecKind kind);
     void execCancel(quint64 reqId);
+    // Cancel a pending bulk SFTP read. Reinitializes the bulk lane so subsequent
+    // reads are not blocked behind the timed-out op (FIFO wedge fix).
+    void sftpCancelBulk(quint64 reqId);
     // Append more bytes to an in-flight exec op's stdin (D8). Unlike the one-shot
     // execStart(stdinPayload) feed used by the git runner, a long-lived ACP agent
     // session keeps writing JSON-RPC frames over the channel's whole life, so the
@@ -191,7 +194,7 @@ private:
 
     // SSH debug log ring buffer. UI-thread-only. appendDebugLog() prefixes a
     // timestamp, appends, trims overflow, and emits debugLogAppended.
-    static constexpr int kDebugLogMaxLines     = 2000;
+    static constexpr int kDebugLogMaxLines     = 5000;
     static constexpr int kDebugLogLineMaxChars = 4096;
     QStringList m_debugLog;
 };

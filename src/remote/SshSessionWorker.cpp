@@ -343,6 +343,17 @@ void SshSessionWorker::pump()
     // them after the interactive pump so a large git output never starves the
     // terminal channels (and SFTP is serviced via onSocketActivity/serviceSftp).
     serviceExec();
+    // Drive any deferred channel-close handshakes to completion. A channel whose
+    // close returned EAGAIN keeps its receive window pinned until fully freed,
+    // which would otherwise stall every other channel (incl. SFTP) on this
+    // session. Keep the maintenance timer armed while any remain so the close
+    // flushes even if the socket goes quiet.
+    if (m_transport->hasPendingChannelCloses()) {
+        m_transport->pumpChannelCloses();
+        if (m_transport->hasPendingChannelCloses()) {
+            armMaintenanceTimer();
+        }
+    }
 }
 
 void SshSessionWorker::advanceConnect()
@@ -723,6 +734,11 @@ void SshSessionWorker::finishChannel(int logicalId, int exitStatus)
         advanceChannelSetup();
         serviceExec();
     }
+    // If the channel's close handshake deferred (EAGAIN), keep the timer armed
+    // so pumpChannelCloses() drives it to completion even on a quiet socket.
+    if (!m_lost && m_transport->hasPendingChannelCloses()) {
+        armMaintenanceTimer();
+    }
 }
 
 // --- FIX-3: keepalive tick ---------------------------------------------------
@@ -803,8 +819,14 @@ void SshSessionWorker::onMaintenanceTick()
             advanceChannelSetup();
             serviceExec(); // exec ops also have backoff
         }
-        // Stop the timer if no more backoff retries are pending.
-        if (!hasBackoffReady()) {
+        // Drive deferred channel closes (their flush needs the socket pumped even
+        // when no read/write edge is firing).
+        if (m_transport->hasPendingChannelCloses()) {
+            m_transport->pumpChannelCloses();
+        }
+        // Stop the timer only when there is nothing left to drive — neither a
+        // backoff retry nor an in-flight channel close.
+        if (!hasBackoffReady() && !m_transport->hasPendingChannelCloses()) {
             stopMaintenanceTimer();
         }
     }
@@ -862,6 +884,13 @@ void SshSessionWorker::onSocketActivity()
     // A single readable/writable edge -> one bounded pump sweep. Not recursive.
     pump();
     // The SFTP layer is multiplexed on the SAME socket.
+    const int sftpBulkPending = m_sftpBulkQueue.size();
+    const int sftpMetaPending = m_sftpMetaQueue.size();
+    const int execPending = m_execOps.size();
+    if (sftpBulkPending > 0 || sftpMetaPending > 0 || execPending > 0) {
+        emit debugEvent(QStringLiteral("socket-activity: bulk=%1 meta=%2 exec=%3")
+                            .arg(sftpBulkPending).arg(sftpMetaPending).arg(execPending));
+    }
     serviceSftp();
     // Exec channels share the same socket too.
     serviceExec();
@@ -958,6 +987,48 @@ void SshSessionWorker::requestSftpUnlink(quint64 reqId, const QString &path)
     enqueueSftpOp(std::move(op));
 }
 
+void SshSessionWorker::requestSftpCancelBulk(quint64 reqId)
+{
+    // Find the op in the bulk queue. The cancel is a no-op if it already
+    // completed (reqId not in queue) — correct behaviour given the UI→worker
+    // cross-thread ordering: the op may have resolved between the timer fire
+    // and this queued invocation arriving.
+    int idx = -1;
+    for (int i = 0; i < m_sftpBulkQueue.size(); ++i) {
+        if (m_sftpBulkQueue[i].reqId == reqId) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        emit debugEvent(QStringLiteral("sftp-cancel-bulk-noop: req=%1 (already resolved)").arg(reqId));
+        return;
+    }
+
+    SftpOp op = m_sftpBulkQueue.takeAt(idx);
+    emit debugEvent(QStringLiteral("sftp-cancel-bulk: req=%1 phase=%2")
+                        .arg(reqId).arg(static_cast<int>(op.phase)));
+
+    // If a file handle was open (Transfer phase), it will be orphaned on the
+    // server side — acceptable given the server is unresponsive (that's why
+    // the timeout fired). The bulk lane reinit below closes the underlying
+    // SFTP session channel, which the server will eventually see as a close.
+
+    // Fail the op so RemoteFsBackend::onReadResult discards it (callback
+    // was already removed on the UI side by cancelReadAsync).
+    failSftpOp(op, tr("Cancelled"));
+
+    // Reinit the bulk lane: shut it down so libssh2's open_state is reset to
+    // idle. The next enqueueSftpOp → serviceSftpLane → ensureSftpLaneInited
+    // will open a fresh LIBSSH2_SFTP session and the queue drains normally.
+    m_transport->sftpShutdownBulk();
+    m_sftpBulkInited = false;
+
+    // Any remaining ops in the bulk queue can now proceed once the new session
+    // is established. Kick serviceSftp to start that process.
+    serviceSftp();
+}
+
 void SshSessionWorker::enqueueSftpOp(SftpOp op)
 {
     if (m_lost || m_state == State::Disconnected || m_state == State::Failed) {
@@ -1005,6 +1076,10 @@ void SshSessionWorker::serviceSftpLane(SftpLane lane, QList<SftpOp> &queue, bool
     while (!queue.isEmpty()) {
         const ISshTransport::Step initStep = ensureSftpLaneInited(lane, inited);
         if (initStep == ISshTransport::Step::Again) {
+            emit debugEvent(QStringLiteral("sftp-lane-init-again: lane=%1 queue=%2 errno=%3")
+                                .arg(lane == SftpLane::Bulk ? "bulk" : "meta")
+                                .arg(queue.size())
+                                .arg(m_transport->lastErrno()));
             return;
         }
         if (initStep == ISshTransport::Step::Error) {
@@ -1014,6 +1089,11 @@ void SshSessionWorker::serviceSftpLane(SftpLane lane, QList<SftpOp> &queue, bool
         }
         SftpOp &op = queue.first();
         if (!advanceSftpOp(lane, op)) {
+            emit debugEvent(QStringLiteral("sftp-lane-again: lane=%1 req=%2 phase=%3 errno=%4")
+                                .arg(lane == SftpLane::Bulk ? "bulk" : "meta")
+                                .arg(op.reqId)
+                                .arg(static_cast<int>(op.phase))
+                                .arg(m_transport->lastErrno()));
             return; // EAGAIN mid-op: resume on the next socket edge
         }
         queue.removeFirst(); // finished (a *Done signal was emitted)
@@ -1028,6 +1108,8 @@ bool SshSessionWorker::advanceSftpOp(SftpLane lane, SftpOp &op)
     case SftpKind::Stat: {
         const ISshTransport::SftpStatResult r = m_transport->sftpStat(tl, op.path);
         if (r.step == ISshTransport::Step::Again) {
+            emit debugEvent(QStringLiteral("sftp-stat-again: req=%1 path=%2")
+                                .arg(op.reqId).arg(op.path));
             return false;
         }
         m_sawInboundSinceKeepalive = true; // FIX-3
@@ -1047,6 +1129,8 @@ bool SshSessionWorker::advanceSftpOp(SftpLane lane, SftpOp &op)
         if (op.phase == SftpPhase::NeedOpen) {
             const ISshTransport::SftpOpenResult r = m_transport->sftpOpen(tl, op.path, /*forWrite=*/false);
             if (r.step == ISshTransport::Step::Again) {
+                emit debugEvent(QStringLiteral("sftp-read-open-again: req=%1 path=%2")
+                                    .arg(op.reqId).arg(op.path));
                 return false;
             }
             if (r.step == ISshTransport::Step::Error) {
@@ -1055,6 +1139,8 @@ bool SshSessionWorker::advanceSftpOp(SftpLane lane, SftpOp &op)
             }
             op.handleId = r.handleId;
             op.phase = SftpPhase::Transfer;
+            emit debugEvent(QStringLiteral("sftp-read-opened: req=%1 handle=%2")
+                                .arg(op.reqId).arg(op.handleId));
         }
         for (;;) {
             ISshTransport::ReadResult rr = m_transport->sftpRead(tl, op.handleId);
@@ -1075,6 +1161,8 @@ bool SshSessionWorker::advanceSftpOp(SftpLane lane, SftpOp &op)
                 return true;
             }
             if (rr.again) {
+                emit debugEvent(QStringLiteral("sftp-read-again: req=%1 buffered=%2")
+                                    .arg(op.reqId).arg(op.buffer.size()));
                 return false;
             }
         }
@@ -1280,7 +1368,7 @@ void SshSessionWorker::requestExec(quint64 reqId, const QString &command,
 
 void SshSessionWorker::requestExecCancel(quint64 reqId)
 {
-    // Remove from sub-queues if still queued.
+    // Remove from sub-queues if still queued (never admitted → no channel to close).
     for (int i = 0; i < m_shortQueue.size(); ++i) {
         if (m_shortQueue[i].source == OpenerSource::ExecOp && m_shortQueue[i].execReqId == reqId) {
             m_shortQueue.removeAt(i);
@@ -1298,13 +1386,31 @@ void SshSessionWorker::requestExecCancel(quint64 reqId)
         if (m_execOps[i].reqId != reqId) {
             continue;
         }
-        if (m_execOps[i].transportId >= 0 && !m_lost) {
+        if (m_execOps[i].transportId < 0) {
+            // Still in NeedOpen phase — no channel open yet, safe to drop.
+            emit debugEvent(QStringLiteral("exec-abandon: req=%1 phase=pre-open (dropped)")
+                                .arg(reqId));
+        } else {
+            // Channel is open. Initiate the close handshake. closeChannel() is
+            // non-blocking: if the SSH CHANNEL_CLOSE cannot flush immediately the
+            // transport retains the channel and finishes freeing it via
+            // pumpChannelCloses(); we arm the maintenance timer below so that
+            // flush completes even if the socket goes quiet. A half-freed channel
+            // pins its receive window and would otherwise stall SFTP + everything
+            // else on this session.
+            emit debugEvent(QStringLiteral("exec-abandon: req=%1 phase=%2 (close)")
+                                .arg(reqId)
+                                .arg(static_cast<int>(m_execOps[i].phase)));
             m_transport->closeChannel(m_execOps[i].transportId);
         }
         m_execOps.removeAt(i);
         // A freed slot may let a queued open proceed.
         if (!m_lost && m_state == State::Ready) {
             admitPending();
+        }
+        // Keep the timer running until any deferred close fully flushes.
+        if (!m_lost && m_transport->hasPendingChannelCloses()) {
+            armMaintenanceTimer();
         }
         return;
     }

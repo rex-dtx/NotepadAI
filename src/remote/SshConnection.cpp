@@ -207,6 +207,10 @@ void SshConnection::init(std::unique_ptr<ISshTransport> transport)
                                    .arg(reqId).arg(exitStatus));
                 emit execDone(reqId, exitStatus);
             });
+    connect(m_worker, &SshSessionWorker::debugEvent, this,
+            [this](const QString &line) {
+                appendDebugLog(line);
+            });
 
     m_thread->start();
 }
@@ -425,6 +429,13 @@ void SshConnection::execCancel(quint64 reqId)
 {
     appendDebugLog(QStringLiteral("exec-cancel: req=%1").arg(reqId));
     QMetaObject::invokeMethod(m_worker, "requestExecCancel", Qt::QueuedConnection,
+                              Q_ARG(quint64, reqId));
+}
+
+void SshConnection::sftpCancelBulk(quint64 reqId)
+{
+    appendDebugLog(QStringLiteral("sftp-cancel-bulk: req=%1").arg(reqId));
+    QMetaObject::invokeMethod(m_worker, "requestSftpCancelBulk", Qt::QueuedConnection,
                               Q_ARG(quint64, reqId));
 }
 

@@ -240,6 +240,7 @@ private:
     remote::IFileSystemBackend *fsBackend = nullptr;
     QString remoteUriString;   // ssh://<profileId><remotePath> identity
     QString remoteFilePath;    // POSIX path handed to the backend
+    quint64 loadReqId = 0;     // reqId of the in-flight SFTP read (0 = none)
     LoadState loadStatus = LoadState::Idle;
     QTimer *loadTimeoutTimer = nullptr;
 

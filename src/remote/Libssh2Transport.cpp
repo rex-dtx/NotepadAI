@@ -503,9 +503,45 @@ void Libssh2Transport::closeChannel(int channelId)
 {
     LIBSSH2_CHANNEL *ch = channel(channelId);
     if (!ch) return;
-    libssh2_channel_close(ch);
-    libssh2_channel_free(ch);
+    // Remove from the live map immediately so no read/write sweep touches it
+    // again, but do NOT assume the SSH CHANNEL_CLOSE handshake completes now.
+    // In non-blocking mode libssh2_channel_close / _free return EAGAIN while the
+    // close packet is still flushing; if we dropped the pointer here the channel
+    // would be leaked inside libssh2 with its receive window pinned open, which
+    // stalls the whole session (the server stops sending once the window fills).
     m_channels.remove(channelId);
+    // libssh2_channel_free() internally drives the close handshake (it calls
+    // close if not already closed), so a single retry loop on free() is enough.
+    const int rc = libssh2_channel_free(ch);
+    if (rc == LIBSSH2_ERROR_EAGAIN) {
+        m_closingChannels.append(ch); // finish in pumpChannelCloses()
+        return;
+    }
+    // rc == 0 (freed) or a hard error — either way the channel is gone. On a
+    // fatal error there is nothing more we can safely do with the pointer.
+}
+
+void Libssh2Transport::pumpChannelCloses()
+{
+    if (m_closingChannels.isEmpty()) {
+        return;
+    }
+    // Retry libssh2_channel_free on each still-closing channel. Anything that is
+    // no longer EAGAIN (freed OK, or hard error) is removed from the retry set.
+    for (int i = 0; i < m_closingChannels.size();) {
+        LIBSSH2_CHANNEL *ch = m_closingChannels.at(i);
+        const int rc = libssh2_channel_free(ch);
+        if (rc == LIBSSH2_ERROR_EAGAIN) {
+            ++i; // still flushing; revisit on the next pump
+        } else {
+            m_closingChannels.removeAt(i); // freed or hard error → done with it
+        }
+    }
+}
+
+bool Libssh2Transport::hasPendingChannelCloses() const
+{
+    return !m_closingChannels.isEmpty();
 }
 
 Libssh2Transport::SftpOpenResult Libssh2Transport::sftpInit(SftpLane lane)
@@ -540,7 +576,7 @@ void Libssh2Transport::sftpShutdown()
         }
     }
     m_sftpHandles.clear();
-    // D1a: tear BOTH lane sessions down.
+    m_bulkHandleIds.clear();
     if (m_sftpBulk) {
         libssh2_sftp_shutdown(m_sftpBulk);
         m_sftpBulk = nullptr;
@@ -549,6 +585,20 @@ void Libssh2Transport::sftpShutdown()
         libssh2_sftp_shutdown(m_sftpMeta);
         m_sftpMeta = nullptr;
     }
+}
+
+void Libssh2Transport::sftpShutdownBulk()
+{
+    if (!m_sftpBulk) return;
+    // Close open bulk handles first. Best-effort — ignore EAGAIN (server may be
+    // unresponsive; this only runs on a 60s load timeout).
+    for (int id : m_bulkHandleIds) {
+        LIBSSH2_SFTP_HANDLE *h = m_sftpHandles.take(id);
+        if (h) libssh2_sftp_close_handle(h);
+    }
+    m_bulkHandleIds.clear();
+    libssh2_sftp_shutdown(m_sftpBulk); // non-blocking (api_block_mode=0)
+    m_sftpBulk = nullptr;
 }
 
 Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(SftpLane lane,
@@ -574,6 +624,7 @@ Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpen(SftpLane lane,
     if (h) {
         const int id = m_nextSftpHandleId++;
         m_sftpHandles.insert(id, h);
+        if (lane == SftpLane::Bulk) m_bulkHandleIds.insert(id);
         out.step = Step::Ok;
         out.handleId = id;
         return out;
@@ -629,6 +680,7 @@ void Libssh2Transport::sftpClose(SftpLane lane, int handleId)
     if (!h) return;
     libssh2_sftp_close_handle(h);
     m_sftpHandles.remove(handleId);
+    m_bulkHandleIds.remove(handleId);
 }
 
 Libssh2Transport::SftpOpenResult Libssh2Transport::sftpOpendir(SftpLane lane, const QString &path)
@@ -763,6 +815,11 @@ int Libssh2Transport::sendKeepalive()
     return secondsToNext;
 }
 
+int Libssh2Transport::lastErrno() const
+{
+    return m_session ? libssh2_session_last_errno(m_session) : 0;
+}
+
 void Libssh2Transport::disconnect()
 {
     // Tear the SFTP layer down first (frees its handles + the implicit channel)
@@ -775,6 +832,15 @@ void Libssh2Transport::disconnect()
         }
     }
     m_channels.clear();
+    // Channels still mid-close (deferred frees): one best-effort free each. Any
+    // remaining EAGAIN is moot — libssh2_session_free below reclaims every
+    // channel the session still tracks, so this only avoids a redundant retry.
+    for (LIBSSH2_CHANNEL *ch : m_closingChannels) {
+        if (ch) {
+            libssh2_channel_free(ch);
+        }
+    }
+    m_closingChannels.clear();
 
     if (m_agent) {
         libssh2_agent_disconnect(m_agent);

@@ -261,15 +261,19 @@ void FolderAsWorkspaceDock::useRemoteBackend(remote::RemoteFsBackend *backend)
     if (!backend) return;
 
     // Idempotency guard for the reconnect path: if the dock already has a remote
-    // model backed by this same backend (same connection), skip the full rebuild.
-    // The model's existing tree is stale after a drop, but setRootPath (called by
-    // the caller right after) triggers a re-root + re-fetch that refreshes it.
-    if (!model && fsModel) {
-        // Already remote — check if the backend is the same object.
-        if (auto *existing = qobject_cast<remote::RemoteFileSystemModel *>(fsModel->asModel())) {
-            Q_UNUSED(existing);
-            // Already wired to a remote model. The caller will setRootPath to
-            // re-root the tree. No rebuild needed.
+    // model AND it is backed by the same backend object (same connection), skip
+    // the full rebuild — setRootPath (called by the caller right after) will
+    // re-root and refresh the stale tree cheaply.
+    //
+    // When `backend != m_remoteBackend` the old SshConnection was torn down and a
+    // brand-new RemoteFsBackend was created (ExecutionContextRegistry::connect
+    // deletes the old entry before making a new one). The old RemoteFileSystemModel
+    // holds a QPointer<RemoteFsBackend> that is now null, so every listing call
+    // returns "No SSH connection". We must fall through and rebuild with the new
+    // backend.
+    if (!model && fsModel && backend == m_remoteBackend) {
+        if (qobject_cast<remote::RemoteFileSystemModel *>(fsModel->asModel())) {
+            // Same backend, same model — re-root is sufficient.
             return;
         }
     }
@@ -288,6 +292,23 @@ void FolderAsWorkspaceDock::useRemoteBackend(remote::RemoteFsBackend *backend)
         model->deleteLater();
         model = nullptr;
     }
+
+    // When reconnecting with a new backend (old connection was torn down and
+    // replaced), the old RemoteFileSystemModel and RemoteDirectoryWatcher still
+    // exist as children of this dock, but their captured QPointer<RemoteFsBackend>
+    // has been nulled out by the delete in ExecutionContextRegistry::disconnect.
+    // Tear them down so the new model and watcher are built cleanly.
+    if (auto *oldRemoteModel =
+            qobject_cast<remote::RemoteFileSystemModel *>(fsModel ? fsModel->asModel() : nullptr)) {
+        oldRemoteModel->deleteLater();
+        fsModel = nullptr; // proxy source already cleared above; prevent dangling use
+    }
+    if (m_remoteWatcher) {
+        m_remoteWatcher->stop();
+        m_remoteWatcher->deleteLater();
+        m_remoteWatcher = nullptr;
+    }
+    m_remoteBackend = nullptr;
 
     // Build the SFTP-backed model. The lister adapts RemoteFsBackend::readdirAsync
     // (async, results queued to the UI thread) to the model's ListFn, converting
