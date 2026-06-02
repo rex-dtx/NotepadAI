@@ -20,6 +20,7 @@
 #include "TerminalWidget.h"
 
 #include "remote/ExecutionContext.h"
+#include "remote/RemoteExecutionContext.h"
 
 #include <QCloseEvent>
 #include <QDir>
@@ -83,9 +84,18 @@ void TerminalDock::init(const QString &shell, const QString &cwd)
     setWidget(m_terminal);
 
     if (m_taskCommand.isEmpty()) {
-        QString cwdBasename = QFileInfo(QDir::cleanPath(cwd)).fileName();
-        if (cwdBasename.isEmpty()) cwdBasename = cwd;
-        setWindowTitle(tr("Terminal — %1").arg(cwdBasename));
+        QString initialTitle;
+        if (auto *rctx = qobject_cast<remote::RemoteExecutionContext *>(m_context.data())) {
+            const remote::SshProfile &p = rctx->profile();
+            initialTitle = p.username.isEmpty() ? p.host
+                                                : (p.username + QLatin1Char('@') + p.host);
+        }
+        if (initialTitle.isEmpty()) {
+            QString cwdBasename = QFileInfo(QDir::cleanPath(cwd)).fileName();
+            if (cwdBasename.isEmpty()) cwdBasename = cwd;
+            initialTitle = cwdBasename;
+        }
+        setWindowTitle(tr("Terminal — %1").arg(initialTitle));
 
         connect(m_terminal, &TerminalWidget::titleChanged, this, [this](const QString &t) {
             if (!t.isEmpty()) {

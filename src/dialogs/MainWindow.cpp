@@ -4952,9 +4952,12 @@ void MainWindow::setupSshMenu()
             || ctx->state() != remote::ExecutionContext::State::Connected) {
             return; // gated in aboutToShow; bail with no silent fallback
         }
-        // Default remote cwd = lastRemotePath or remote home, normalized.
-        const QString cwd = ctx->resolveCwd(QString());
-        terminalManager->openRemoteTerminal(ctx, cwd, QString());
+        // "Open Remote Terminal" has no associated directory. Pass an empty cwd
+        // so SshPtyProcess skips the `cd` entirely and the SSH session starts in
+        // the remote user's $HOME by default. resolveCwd("") is intentionally
+        // NOT used here — it would pick up the profile's lastRemotePath, which
+        // may be a local path that doesn't exist on the remote host.
+        terminalManager->openRemoteTerminal(ctx, QString(), QString());
     });
 
     // Crash breadcrumbs for the new actions (the ActionAddedFilter also catches
