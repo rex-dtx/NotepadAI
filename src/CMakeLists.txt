@@ -642,3 +642,15 @@ install(TARGETS NotepadAI
     RUNTIME DESTINATION bin
     BUNDLE DESTINATION .
 )
+if(UNIX AND NOT APPLE)
+    install(FILES $<TARGET_FILE:NotepadAI>
+        DESTINATION bin
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    )
+elseif(APPLE)
+    install(CODE "
+        execute_process(COMMAND \${CMAKE_COMMAND} -E copy_directory
+            \"$<TARGET_BUNDLE_DIR:NotepadAI>\"
+            \"\${CMAKE_INSTALL_PREFIX}/NotepadAI.app\")
+    ")
+endif()
