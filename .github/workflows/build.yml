@@ -113,6 +113,16 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Upload Sentry Debug Symbols
+        if: matrix.qt_version == '6.8'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          npm install -g @sentry/cli
+          sentry-cli debug-files upload --include-sources build/
+
       - name: Build Windows Targets
         if: runner.os == 'Windows'
         run: cmake --build build --target package zip installer --parallel

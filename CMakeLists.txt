@@ -21,11 +21,16 @@ if(MSVC)
     add_compile_definitions(_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
     add_compile_options(/guard:cf)
     add_link_options(/guard:cf)
+    # Emit PDB in all configs so Sentry can symbolicate release crash reports.
+    add_compile_options(/Zi)
+    add_link_options(/DEBUG:FULL /OPT:REF /OPT:ICF)
 endif()
 
 if(UNIX AND NOT APPLE)
-    add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2)
+    add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2 -g)
     add_link_options(-Wl,-z,relro -Wl,-z,now)
+elseif(APPLE)
+    add_compile_options(-g)
 endif()
 
 find_package(Qt6 6.5
