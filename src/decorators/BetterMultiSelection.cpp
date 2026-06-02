@@ -200,7 +200,7 @@ void BetterMultiSelection::SetSelections(const QVector<Selection> &selections) {
     }
 }
 
-void BetterMultiSelection::EditSelections(std::function<void(Selection &selection)> edit) {
+void BetterMultiSelection::EditSelections(const std::function<void(Selection &selection)> &edit) {
     auto selections = GetSelections();
 
     editor->clearSelections();

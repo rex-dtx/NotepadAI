@@ -37,6 +37,7 @@
 #include "ShutdownDiagnostics.h"
 
 int main(int argc, char *argv[])
+try
 {
     // Install crash handlers before anything else so faults during early init
     // (Qt plugin load, settings parse, ...) still produce a crash_report.txt.
@@ -218,4 +219,12 @@ int main(int argc, char *argv[])
 
         return 0;
     }
+}
+catch (const std::exception &e) {
+    qCritical("Unhandled exception in main: %s", e.what());
+    return 1;
+}
+catch (...) {
+    qCritical("Unhandled unknown exception in main");
+    return 1;
 }

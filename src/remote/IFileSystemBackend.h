@@ -74,13 +74,13 @@ public:
     // readFile/writeFile and fire the callback inline — correct and zero-cost for
     // the local backend. The remote backend overrides them to go through its
     // worker thread (never blocking the UI on the network).
-    virtual void readFileAsync(const QString &path, ReadCallback cb)
+    virtual void readFileAsync(const QString &path, const ReadCallback &cb)
     {
         bool ok = false;
         QByteArray data = readFile(path, &ok);
         if (cb) cb(ok, data, ok ? QString() : QStringLiteral("read failed"));
     }
-    virtual void writeFileAsync(const QString &path, const QByteArray &data, WriteCallback cb)
+    virtual void writeFileAsync(const QString &path, const QByteArray &data, const WriteCallback &cb)
     {
         const bool ok = writeFile(path, data);
         if (cb) cb(ok, ok ? QString() : QStringLiteral("write failed"));

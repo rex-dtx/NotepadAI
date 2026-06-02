@@ -34,14 +34,14 @@ class ApplicationSetting
 public:
     ApplicationSetting(const char * const key, T defaultValue = T())
         : mKey(key)
-        , mDefault(defaultValue)
+        , mDefault(std::move(defaultValue))
         , mCallable(Q_NULLPTR)
     {}
 
     ApplicationSetting(const char * const key, std::function<T()> callable)
         : mKey(key)
         , mDefault(T())
-        , mCallable(callable)
+        , mCallable(std::move(callable))
     {}
 
     inline T getDefault() const { return mCallable ? mCallable() : mDefault ; }

@@ -166,16 +166,16 @@ private:
     // RemoteExecutionContext is available; falls back to SFTP walk otherwise.
     void walkRemoteDir(const QString &remoteDirPath, const QString &localDirPath,
                        const QString &relBase, GitignoreFilter filter,
-                       std::shared_ptr<int> pending, std::shared_ptr<bool> failed);
+                       const std::shared_ptr<int> &pending, const std::shared_ptr<bool> &failed);
     // Fast path: single SSH exec of `find` — one round-trip for the whole tree.
     // Only called for GitignoreFilter::None.
     void walkRemoteDirExec(const QString &remoteDirPath, const QString &localDirPath,
-                           std::shared_ptr<int> pending, std::shared_ptr<bool> failed);
+                           const std::shared_ptr<int> &pending, const std::shared_ptr<bool> &failed);
     // Slow (SFTP) path: serial readdirAsync calls, one per directory.
     // Used when gitignore filtering is needed or exec is unavailable.
     void walkRemoteDirSftp(const QString &remoteDirPath, const QString &localDirPath,
                            const QString &relBase, GitignoreFilter filter,
-                           std::shared_ptr<int> pending, std::shared_ptr<bool> failed);
+                           const std::shared_ptr<int> &pending, const std::shared_ptr<bool> &failed);
     void downloadWalkDone();
 
     // Kick off downloading the next file in m_downloadManifest at m_manifestIdx.
@@ -186,7 +186,7 @@ private:
 
     // --- Archive-based batch download (fast path for 2+ files when tar is available) ---
     void downloadViaArchive();
-    void probeRemoteTar(std::function<void(bool)> callback);
+    void probeRemoteTar(const std::function<void(bool)> &callback);
     void createRemoteArchive();
     void onArchiveCreated(int exitCode, const QByteArray &out, const QByteArray &err);
     void streamArchiveToLocal();
@@ -213,7 +213,7 @@ private:
                            const QList<RemoteDirEntry> &entries, const QString &error);
     void uploadNextFile();
     void onFileUploaded(const QString &remotePath, bool ok, const QString &error);
-    void ensureRemoteDir(const QString &remoteDirPath, std::function<void(bool)> callback);
+    void ensureRemoteDir(const QString &remoteDirPath, const std::function<void(bool)> &callback);
 
     // --- State ---------------------------------------------------------------
 

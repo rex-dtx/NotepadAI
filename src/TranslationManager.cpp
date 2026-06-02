@@ -71,7 +71,7 @@ void TranslationManager::loadSystemDefaultTranslation()
     loadTranslation(QLocale(QLocale::system().name()));
 }
 
-void TranslationManager::loadTranslation(QLocale locale)
+void TranslationManager::loadTranslation(const QLocale &locale)
 {
     qInfo(Q_FUNC_INFO);
 
@@ -82,14 +82,14 @@ void TranslationManager::loadTranslation(QLocale locale)
 
         if (translator->load(locale, filename, QStringLiteral("_"), path)) {
             if (QCoreApplication::installTranslator(translator.get())) {
-                qInfo() << "Loaded translation" << translator.get()->filePath();
+                qInfo() << "Loaded translation" << translator->filePath();
                 translators.append(translator.release());
             }
         }
     }
 }
 
-void TranslationManager::loadTranslation(QString localeName)
+void TranslationManager::loadTranslation(const QString &localeName)
 {
     loadTranslation(QLocale(localeName));
 }

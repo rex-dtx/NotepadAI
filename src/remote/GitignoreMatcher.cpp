@@ -95,7 +95,7 @@ bool GitignoreMatcher::matchRule(const GitignoreRule &rule, const QString &relPa
         // For simplicity, match against the full relPath using the anchored pattern.
         // If rule.dir is non-empty, strip the rule.dir prefix from relPath first.
         // (rule.dir may be empty when it equals the workspace root itself.)
-        QString matchPath = relPath;
+        const QString &matchPath = relPath;
         // rule.dir is an absolute path; to find what part of relPath is under it,
         // we'd need the workspace root. Instead we keep it simple: the anchored
         // pattern is matched against both the full relPath and the portion after

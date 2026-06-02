@@ -101,7 +101,7 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
     connect(ui->fcbDefaultFont, &QFontComboBox::currentFontChanged, this, [=](const QFont &f) {
         settings->setFontName(f.family());
     });
-    connect(settings, &ApplicationSettings::fontNameChanged, this, [=](QString fontName){
+    connect(settings, &ApplicationSettings::fontNameChanged, this, [=](const QString &fontName){
         ui->fcbDefaultFont->setCurrentFont(QFont(fontName));
     });
 
@@ -121,7 +121,7 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
     connect(ui->comboBoxLineEndings, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [=](int index) {
         settings->setDefaultEOLMode(ui->comboBoxLineEndings->itemData(index).toString());
     });
-    connect(settings, &ApplicationSettings::defaultEOLModeChanged, this, [=](QString defaultEOLMode) {
+    connect(settings, &ApplicationSettings::defaultEOLModeChanged, this, [=](const QString &defaultEOLMode) {
         int index = ui->comboBoxLineEndings->findData(defaultEOLMode);
         ui->comboBoxLineEndings->setCurrentIndex(index == -1 ? 0 : index);
     });
@@ -140,7 +140,7 @@ PreferencesDialog::PreferencesDialog(ApplicationSettings *settings, QWidget *par
     connect(ui->fcbChatFont, &QFontComboBox::currentFontChanged, this, [=](const QFont &f) {
         settings->setChatFontFamily(f.family());
     });
-    connect(settings, &ApplicationSettings::chatFontFamilyChanged, this, [=](QString name) {
+    connect(settings, &ApplicationSettings::chatFontFamilyChanged, this, [=](const QString &name) {
         ui->fcbChatFont->setCurrentFont(QFont(name));
     });
 

@@ -95,7 +95,7 @@ void parseCommandLine(QCommandLineParser &parser, const QStringList &args)
     parser.process(args);
 }
 
-static QString toLocalFileName(const QString file)
+static QString toLocalFileName(const QString &file)
 {
     QUrl fileUrl(file);
     return fileUrl.isValid() && fileUrl.isLocalFile() ? fileUrl.toLocalFile() : file;

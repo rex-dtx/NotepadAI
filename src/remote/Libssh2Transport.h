@@ -31,11 +31,13 @@
 // Forward-declare the libssh2 opaque types so this header does not require the
 // vendored libssh2 sources to be present just to parse it. The .cpp includes
 // <libssh2.h> for the real definitions.
-struct _LIBSSH2_SESSION;
-struct _LIBSSH2_CHANNEL;
-struct _LIBSSH2_AGENT;
-struct _LIBSSH2_SFTP;
-struct _LIBSSH2_SFTP_HANDLE;
+// NOLINTBEGIN(bugprone-reserved-identifier) — names must match libssh2 ABI exactly
+struct _LIBSSH2_SESSION;   // NOLINT(bugprone-reserved-identifier)
+struct _LIBSSH2_CHANNEL;   // NOLINT(bugprone-reserved-identifier)
+struct _LIBSSH2_AGENT;     // NOLINT(bugprone-reserved-identifier)
+struct _LIBSSH2_SFTP;      // NOLINT(bugprone-reserved-identifier)
+struct _LIBSSH2_SFTP_HANDLE; // NOLINT(bugprone-reserved-identifier)
+// NOLINTEND(bugprone-reserved-identifier)
 
 namespace remote {
 

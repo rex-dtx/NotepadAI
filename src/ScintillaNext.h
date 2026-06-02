@@ -46,7 +46,7 @@ public:
         return range.cpMin != INVALID_POSITION && range.cpMax != INVALID_POSITION;
     }
 
-    explicit ScintillaNext(QString name, QWidget *parent = Q_NULLPTR);
+    explicit ScintillaNext(const QString &name, QWidget *parent = Q_NULLPTR);
     virtual ~ScintillaNext();
 
     static ScintillaNext *fromFile(const QString &filePath, bool tryToCreate=false);
@@ -95,7 +95,7 @@ public:
     LoadState loadState() const { return loadStatus; }
 
     static QString eolModeToString(int eolMode);
-    static int stringToEolMode(QString eolMode);
+    static int stringToEolMode(const QString &eolMode);
 
     int allocateIndicator(const QString &name);
 

@@ -197,8 +197,8 @@ void RemoteGitProcessRunner::onExecDone(quint64 reqId, int exitStatus)
 void RemoteGitProcessRunner::finish(int exit, const QByteArray &out, const QByteArray &err)
 {
     Callback cb = std::move(m_cb);
-    const QByteArray outCopy = out;
-    const QByteArray errCopy = err;
+    const QByteArray &outCopy = out;
+    const QByteArray &errCopy = err;
     reset();
     if (cb) cb(exit, outCopy, errCopy);
 }

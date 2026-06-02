@@ -189,7 +189,7 @@ void EditorInspectorDock::updateEditorInfo(ScintillaNext *editor)
     ui->treeWidget->resizeColumnToContents(0);
 }
 
-void EditorInspectorDock::newItem(QTreeWidgetItem *parent, const QString &label, EditorFunction func)
+void EditorInspectorDock::newItem(QTreeWidgetItem *parent, const QString &label, const EditorFunction &func)
 {
     QTreeWidgetItem *item = new QTreeWidgetItem(parent);
     item->setText(0, label);

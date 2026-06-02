@@ -294,11 +294,11 @@ void RemoteTransferManager::buildDownloadManifest(const QStringList &remotePaths
     auto anyFailed   = std::make_shared<bool>(false);
 
     for (auto it = byParent.cbegin(); it != byParent.cend(); ++it) {
-        const QString parentDir       = it.key();
-        const QList<PathEntry> wanted = it.value();
+        const QString &parentDir       = it.key();
+        const QList<PathEntry> &wanted = it.value();
 
         QPointer<RemoteTransferManager> guard(this);
-        const QString lDest = localDestDir;
+        const QString &lDest = localDestDir;
         const GitignoreFilter gf = filter;
 
         m_backend->readdirAsync(parentDir,
@@ -367,8 +367,8 @@ void RemoteTransferManager::walkRemoteDir(const QString &remoteDirPath,
                                           const QString &localDirPath,
                                           const QString &relBase,
                                           GitignoreFilter filter,
-                                          std::shared_ptr<int> pending,
-                                          std::shared_ptr<bool> failed)
+                                          const std::shared_ptr<int> &pending,
+                                          const std::shared_ptr<bool> &failed)
 {
     // Fast path: use a single `find` exec for the whole tree (one round-trip).
     // Requires filter==None (exec path doesn't read .gitignore files) and an
@@ -387,8 +387,8 @@ void RemoteTransferManager::walkRemoteDir(const QString &remoteDirPath,
 
 void RemoteTransferManager::walkRemoteDirExec(const QString &remoteDirPath,
                                               const QString &localDirPath,
-                                              std::shared_ptr<int> pending,
-                                              std::shared_ptr<bool> failed)
+                                              const std::shared_ptr<int> &pending,
+                                              const std::shared_ptr<bool> &failed)
 {
     if (m_cancelled || !m_backend) {
         if (--(*pending) == 0) downloadWalkDone();
@@ -424,8 +424,8 @@ void RemoteTransferManager::walkRemoteDirExec(const QString &remoteDirPath,
     };
 
     QPointer<RemoteTransferManager> guard(this);
-    const QString rDir = remoteDirPath;
-    const QString lDir = localDirPath;
+    const QString &rDir = remoteDirPath;
+    const QString &lDir = localDirPath;
 
     ctx->exec(QString(), argv, QByteArray(), 30000,
         [guard, rDir, lDir, pending, failed]
@@ -492,8 +492,8 @@ void RemoteTransferManager::walkRemoteDirSftp(const QString &remoteDirPath,
                                               const QString &localDirPath,
                                               const QString &relBase,
                                               GitignoreFilter filter,
-                                              std::shared_ptr<int> pending,
-                                              std::shared_ptr<bool> failed)
+                                              const std::shared_ptr<int> &pending,
+                                              const std::shared_ptr<bool> &failed)
 {
     if (m_cancelled || !m_backend) {
         if (--(*pending) == 0) downloadWalkDone();
@@ -501,9 +501,9 @@ void RemoteTransferManager::walkRemoteDirSftp(const QString &remoteDirPath,
     }
 
     QPointer<RemoteTransferManager> guard(this);
-    const QString rDir = remoteDirPath;
-    const QString lDir = localDirPath;
-    const QString rel  = relBase;
+    const QString &rDir = remoteDirPath;
+    const QString &lDir = localDirPath;
+    const QString &rel  = relBase;
     const GitignoreFilter gf = filter;
 
     m_backend->readdirAsync(remoteDirPath,
@@ -636,7 +636,7 @@ void RemoteTransferManager::downloadViaArchive()
     });
 }
 
-void RemoteTransferManager::probeRemoteTar(std::function<void(bool)> callback)
+void RemoteTransferManager::probeRemoteTar(const std::function<void(bool)> &callback)
 {
     auto *ctx = qobject_cast<RemoteExecutionContext *>(m_backend ? m_backend->parent() : nullptr);
     if (!ctx) {
@@ -1154,7 +1154,7 @@ void RemoteTransferManager::runConflictDetection(const QString &remoteDestDir)
 
     for (const QString &dir : std::as_const(parentDirs)) {
         QPointer<RemoteTransferManager> guard(this);
-        const QString d = dir;
+        const QString &d = dir;
         m_backend->readdirAsync(dir,
             [guard, d](bool ok, const QList<RemoteDirEntry> &entries, const QString &error) {
                 if (guard.isNull()) return;
@@ -1305,7 +1305,7 @@ void RemoteTransferManager::uploadNextFile()
 }
 
 void RemoteTransferManager::ensureRemoteDir(const QString &remoteDirPath,
-                                             std::function<void(bool)> callback)
+                                             const std::function<void(bool)> &callback)
 {
     if (m_createdDirs.contains(remoteDirPath)) {
         if (callback) callback(true);
@@ -1313,7 +1313,7 @@ void RemoteTransferManager::ensureRemoteDir(const QString &remoteDirPath,
     }
 
     QPointer<RemoteTransferManager> guard(this);
-    const QString dir = remoteDirPath;
+    const QString &dir = remoteDirPath;
 
     // Check parent first (recursive ensure).
     const int slash = remoteDirPath.lastIndexOf(QLatin1Char('/'));

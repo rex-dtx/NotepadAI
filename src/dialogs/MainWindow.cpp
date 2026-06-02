@@ -3207,7 +3207,7 @@ void MainWindow::registerWorkspaceDock(FolderAsWorkspaceDock *dock)
                     }
                 } else {
                     relPath = absPath;
-                    const QString prefix = wsRoot;
+                    const QString &prefix = wsRoot;
                     if (!prefix.isEmpty() && relPath.startsWith(prefix)) {
                         relPath = relPath.mid(prefix.length());
                         if (relPath.startsWith(QLatin1Char('/')) || relPath.startsWith(QLatin1Char('\\')))
@@ -4917,7 +4917,7 @@ void MainWindow::checkForUpdates(bool silent)
             QString qtSuffix = QStringLiteral("qt%1%2").arg(QT_VERSION_MAJOR).arg(QT_VERSION_MINOR);
             QString downloadUrl;
             QJsonArray assets = obj.value("assets").toArray();
-            for (const QJsonValue &val : assets) {
+            for (const auto &val : assets) {
                 QString name = val.toObject().value("name").toString();
                 if (name.contains(qtSuffix) && name.contains("win64") && name.endsWith(".zip")) {
                     downloadUrl = val.toObject().value("browser_download_url").toString();
@@ -4925,7 +4925,7 @@ void MainWindow::checkForUpdates(bool silent)
                 }
             }
             if (downloadUrl.isEmpty()) {
-                for (const QJsonValue &val : assets) {
+                for (const auto &val : assets) {
                     QString name = val.toObject().value("name").toString();
                     if (name.contains(qtSuffix) && name.contains("Installer") && name.endsWith(".exe")) {
                         downloadUrl = val.toObject().value("browser_download_url").toString();

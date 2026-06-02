@@ -59,7 +59,7 @@ signals:
 public:
     inline TabsQuickActionsBar(QWidget *parent = nullptr) : TabsQuickActionsBar(Button::All, parent) { }
     explicit TabsQuickActionsBar(const Buttons &visibileButtons = Button::All, QWidget *parent = nullptr);
-    virtual ~TabsQuickActionsBar() = default;
+    ~TabsQuickActionsBar() override = default;
 
     inline Buttons getVisibileButtons() const { return visibileButtons; }
     void setVisibileButtons(const Buttons &buttons);

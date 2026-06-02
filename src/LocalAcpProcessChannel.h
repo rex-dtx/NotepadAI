@@ -46,7 +46,7 @@ public:
     // unchanged). On Windows, argv.nativeArgumentsLine (when non-empty) is
     // applied via setNativeArguments, mirroring the prior inline code.
     LocalAcpProcessChannel(AcpProtocol::SpawnArgv argv,
-                           QProcessEnvironment env,
+                           const QProcessEnvironment &env,
                            QString workingDirectory,
                            QObject *parent = nullptr);
     ~LocalAcpProcessChannel() override;

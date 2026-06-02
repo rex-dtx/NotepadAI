@@ -60,6 +60,8 @@ bool SurroundSelection::eventFilter(QObject *obj, QEvent *event)
             case Qt::Key_BracketRight:
                 surroundSelections('[', ']');
                 return true;
+            default:
+                break;
             }
         }
     }

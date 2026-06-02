@@ -26,6 +26,10 @@ It's still Notepad++ at heart: a tabbed, splittable interface (Qt Advanced Docki
 
 ### Extras worth knowing
 
+You can connect to a remote machine over SSH and work on it like a local folder — the file tree, terminal, git, and AI agents all route through the connection. Transfers happen over SFTP with conflict detection and a progress UI.
+
+CSV and TSV files open in a sortable, filterable spreadsheet preview that handles large files without loading them entirely into memory.
+
 You can define mini-apps — small HTML/JS tools that run in a native WebView inside the editor. Scheduled tasks fire AI agent sessions on a cron schedule. And you can keep several folder-as-workspace roots open at the same time.
 
 ## Installation

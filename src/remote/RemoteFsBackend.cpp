@@ -129,12 +129,12 @@ void RemoteFsBackend::cancelReadAsync(quint64 reqId)
     m_connection->sftpCancelBulk(reqId);
 }
 
-void RemoteFsBackend::readFileAsync(const QString &path, ReadCallback cb)
+void RemoteFsBackend::readFileAsync(const QString &path, const ReadCallback &cb)
 {
-    readFileAttempt(path, std::move(cb), 0);
+    readFileAttempt(path, cb, 0);
 }
 
-quint64 RemoteFsBackend::readFileAsyncTracked(const QString &path, ReadCallback cb)
+quint64 RemoteFsBackend::readFileAsyncTracked(const QString &path, const ReadCallback &cb)
 {
     if (!m_connection) {
         if (cb) cb(false, QByteArray(), tr("No SSH connection"));
@@ -142,7 +142,7 @@ quint64 RemoteFsBackend::readFileAsyncTracked(const QString &path, ReadCallback 
     }
     const quint64 reqId = ++m_nextReqId;
     if (cb) {
-        ReadCallback userCb = std::move(cb);
+        ReadCallback userCb = cb;
         ReadCallback wrapped =
             [this, path, userCb = std::move(userCb)](
                 bool ok, const QByteArray &data, const QString &error) mutable {
@@ -158,23 +158,23 @@ quint64 RemoteFsBackend::readFileAsyncTracked(const QString &path, ReadCallback 
                 }
                 if (userCb) userCb(ok, data, error);
             };
-        m_readCallbacks.insert(reqId, std::move(wrapped));
+        m_readCallbacks.insert(reqId, wrapped);
     }
     m_connection->sftpRead(reqId, path);
     return reqId;
 }
 
 quint64 RemoteFsBackend::readFileStreamAsync(const QString &path,
-                                              StreamChunkCallback chunkCb,
-                                              StreamDoneCallback doneCb)
+                                              const StreamChunkCallback &chunkCb,
+                                              const StreamDoneCallback &doneCb)
 {
     if (!m_connection) {
         if (doneCb) doneCb(false, tr("No SSH connection"));
         return 0;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (chunkCb) m_streamChunkCallbacks.insert(reqId, std::move(chunkCb));
-    if (doneCb)  m_streamDoneCallbacks.insert(reqId, std::move(doneCb));
+    if (chunkCb) m_streamChunkCallbacks.insert(reqId, chunkCb);
+    if (doneCb)  m_streamDoneCallbacks.insert(reqId, doneCb);
     m_connection->sftpStreamRead(reqId, path);
     return reqId;
 }
@@ -206,20 +206,20 @@ void RemoteFsBackend::readFileAttempt(const QString &path, ReadCallback cb, int 
                 }
                 if (userCb) userCb(ok, data, error);
             };
-        m_readCallbacks.insert(reqId, std::move(wrapped));
+        m_readCallbacks.insert(reqId, wrapped);
     }
     m_connection->sftpRead(reqId, path);
 }
 
 void RemoteFsBackend::writeFileAsync(const QString &path, const QByteArray &data,
-                                     WriteCallback cb)
+                                     const WriteCallback &cb)
 {
     if (!m_connection) {
         if (cb) cb(false, tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_writeCallbacks.insert(reqId, std::move(cb));
+    if (cb) m_writeCallbacks.insert(reqId, cb);
     m_connection->sftpWrite(reqId, path, data);
 }
 
@@ -251,7 +251,7 @@ void RemoteFsBackend::statAttempt(const QString &path, StatCallback cb, int atte
                 }
                 if (userCb) userCb(ok, stat, error);
             };
-        m_statCallbacks.insert(reqId, std::move(wrapped));
+        m_statCallbacks.insert(reqId, wrapped);
     }
     m_connection->sftpStat(reqId, path);
 }
@@ -284,42 +284,42 @@ void RemoteFsBackend::readdirAttempt(const QString &path, ReaddirCallback cb, in
                 }
                 if (userCb) userCb(ok, entries, error);
             };
-        m_readdirCallbacks.insert(reqId, std::move(wrapped));
+        m_readdirCallbacks.insert(reqId, wrapped);
     }
     m_connection->sftpReaddir(reqId, path);
 }
 
 void RemoteFsBackend::renameAsync(const QString &oldPath, const QString &newPath,
-                                   MutateCallback cb)
+                                   const MutateCallback &cb)
 {
     if (!m_connection) {
         if (cb) cb(false, tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_mutateCallbacks.insert(reqId, std::move(cb));
+    if (cb) m_mutateCallbacks.insert(reqId, cb);
     m_connection->sftpRename(reqId, oldPath, newPath);
 }
 
-void RemoteFsBackend::mkdirAsync(const QString &path, MutateCallback cb)
+void RemoteFsBackend::mkdirAsync(const QString &path, const MutateCallback &cb)
 {
     if (!m_connection) {
         if (cb) cb(false, tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_mutateCallbacks.insert(reqId, std::move(cb));
+    if (cb) m_mutateCallbacks.insert(reqId, cb);
     m_connection->sftpMkdir(reqId, path);
 }
 
-void RemoteFsBackend::unlinkAsync(const QString &path, MutateCallback cb)
+void RemoteFsBackend::unlinkAsync(const QString &path, const MutateCallback &cb)
 {
     if (!m_connection) {
         if (cb) cb(false, tr("No SSH connection"));
         return;
     }
     const quint64 reqId = ++m_nextReqId;
-    if (cb) m_mutateCallbacks.insert(reqId, std::move(cb));
+    if (cb) m_mutateCallbacks.insert(reqId, cb);
     m_connection->sftpUnlink(reqId, path);
 }
 

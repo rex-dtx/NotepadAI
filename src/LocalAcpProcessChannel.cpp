@@ -27,12 +27,12 @@
 #endif
 
 LocalAcpProcessChannel::LocalAcpProcessChannel(AcpProtocol::SpawnArgv argv,
-                                               QProcessEnvironment env,
+                                               const QProcessEnvironment &env,
                                                QString workingDirectory,
                                                QObject *parent)
     : IAcpProcessChannel(parent)
     , m_argv(std::move(argv))
-    , m_env(std::move(env))
+    , m_env(env)
     , m_workingDirectory(std::move(workingDirectory))
 {
 }

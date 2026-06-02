@@ -43,7 +43,7 @@ static QString RandomSessionFileName()
 }
 
 // QList<int> cannot be automatically serialized to/from QSettings (i.e. QVariant) so turn it to a QVariantList
-static QVariantList QListToQVariantList(const QList<int> intList)
+static QVariantList QListToQVariantList(const QList<int> &intList)
 {
     QVariantList vl;
     for (const int i : intList){

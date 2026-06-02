@@ -184,7 +184,7 @@ void RemoteDirectoryWatcher::onPolled(const QString &path, bool ok,
     if (it == m_cache.end()) {
         // First sighting: seed the baseline silently. The model already listed
         // this dir when it was expanded — that IS the baseline, not a change.
-        m_cache.insert(path, std::move(fresh));
+        m_cache.insert(path, fresh);
         return;
     }
 

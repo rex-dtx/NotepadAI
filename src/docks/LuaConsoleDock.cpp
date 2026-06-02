@@ -283,7 +283,7 @@ void LuaConsoleDock::historyPrevious()
     input->scrollToEnd();
 }
 
-void LuaConsoleDock::historyAdd(QString line)
+void LuaConsoleDock::historyAdd(const QString &line)
 {
     if (!line.isEmpty()) {
         if (history.isEmpty() || history.last() != line) {

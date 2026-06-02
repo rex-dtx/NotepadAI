@@ -98,21 +98,21 @@ public:
     // readFileAsync/writeFileAsync override IFileSystemBackend's async methods so
     // the editor's open/save path drives them polymorphically; statAsync/
     // readdirAsync are remote-only extensions used by the file tree.
-    void readFileAsync(const QString &path, ReadCallback cb) override;
+    void readFileAsync(const QString &path, const ReadCallback &cb) override;
     // Like readFileAsync but returns the reqId so the caller can cancel it later.
-    quint64 readFileAsyncTracked(const QString &path, ReadCallback cb);
+    quint64 readFileAsyncTracked(const QString &path, const ReadCallback &cb);
     // Streaming read: chunkCb fires for each chunk; doneCb fires once on completion.
     // Returns the reqId (usable with cancelReadAsync). The bulk SFTP lane is used.
     quint64 readFileStreamAsync(const QString &path,
-                                StreamChunkCallback chunkCb,
-                                StreamDoneCallback doneCb);
-    void writeFileAsync(const QString &path, const QByteArray &data, WriteCallback cb) override;
+                                const StreamChunkCallback &chunkCb,
+                                const StreamDoneCallback &doneCb);
+    void writeFileAsync(const QString &path, const QByteArray &data, const WriteCallback &cb) override;
     void statAsync(const QString &path, StatCallback cb);
     void readdirAsync(const QString &path, ReaddirCallback cb);
     // Mutating ops — no retry; fail-no-replay.
-    void renameAsync(const QString &oldPath, const QString &newPath, MutateCallback cb);
-    void mkdirAsync(const QString &path, MutateCallback cb);
-    void unlinkAsync(const QString &path, MutateCallback cb);
+    void renameAsync(const QString &oldPath, const QString &newPath, const MutateCallback &cb);
+    void mkdirAsync(const QString &path, const MutateCallback &cb);
+    void unlinkAsync(const QString &path, const MutateCallback &cb);
 
     // D12 read-only auto-retry classifier. Returns true when `error` is a
     // TRANSIENT (connection/session-level) worker failure that an idempotent

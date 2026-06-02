@@ -142,6 +142,8 @@ void EditorConfigAppDecorator::ensureFinalNewline()
             case SC_EOL_LF:
                 editor->appendText(1, "\n");
                 break;
+            default:
+                break;
         }
     }
 }

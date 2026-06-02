@@ -110,7 +110,7 @@ static bool isNewlineCharacter(char c)
     return c == '\n' || c == '\r';
 }
 
-ScintillaNext::ScintillaNext(QString name, QWidget *parent) :
+ScintillaNext::ScintillaNext(const QString &name, QWidget *parent) :
     ScintillaEdit(parent),
     name(name),
     indicatorResources(INDICATOR_MAX + 1)
@@ -414,7 +414,7 @@ QString ScintillaNext::eolModeToString(int eolMode)
         return QString(); // unknown
 }
 
-int ScintillaNext::stringToEolMode(QString eolMode)
+int ScintillaNext::stringToEolMode(const QString &eolMode)
 {
     if (eolMode == QStringLiteral("crlf"))
         return SC_EOL_CRLF;
@@ -745,8 +745,6 @@ void ScintillaNext::omitModifications()
     // so pop-up will be displayed only once per file modifications.
     updateTimestamp();
     setTemporary(true);
-
-    return;
 }
 
 QFileDevice::FileError ScintillaNext::saveAs(const QString &newFilePath)

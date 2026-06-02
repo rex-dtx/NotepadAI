@@ -24,7 +24,7 @@
 #include <QStandardPaths>
 
 #define CREATE_SETTING(group, name, lname, type, default) \
-ApplicationSetting<type> name{#group "/" #name, default};\
+ApplicationSetting<type> name{#group "/" #name, (default)}; /* NOLINT(bugprone-macro-parentheses) */\
     type ApplicationSettings::lname() const\
 {\
         return get(name);\

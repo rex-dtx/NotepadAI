@@ -163,6 +163,8 @@ QVariant LanguageStylesModel::data(const QModelIndex &index, int role) const
             case 6:
             case 8:
                 return Qt::AlignCenter;
+            default:
+                break;
         }
     }
     else if (role == Qt::DecorationRole) {
@@ -263,6 +265,8 @@ Qt::ItemFlags LanguageStylesModel::flags(const QModelIndex &index) const
         case 17: // Changeable
         case 18: // Hotspot
             return default_flags | Qt::ItemIsEditable;
+        default:
+            break;
     }
 
     return default_flags;

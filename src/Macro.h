@@ -30,7 +30,7 @@ public:
     ~Macro();
 
     void addMacroStep(Scintilla::Message message, Scintilla::uptr_t wParam, Scintilla::sptr_t lParam);
-    void addMacroStep(MacroStep step);
+    void addMacroStep(const MacroStep &step);
 
     int size() const { return steps.size(); }
 

@@ -180,7 +180,7 @@ void LanguageInspectorDock::updatePropertyInfo(ScintillaNext *editor)
         ui->tblProperties->setRowCount(propertyNamesList.count());
 
         for (int i = 0; i < propertyNamesList.count(); ++i) {
-            const auto property = propertyNamesList[i];
+            const auto &property = propertyNamesList[i];
 
             QTableWidgetItem *prop = new QTableWidgetItem(property);
             QTableWidgetItem *type = new QTableWidgetItem(property_type_to_string(editor->propertyType(property.toLatin1().constData())));

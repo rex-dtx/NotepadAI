@@ -621,7 +621,7 @@ void SshSessionWorker::readSweep()
             }
             if (!r.data.isEmpty()) {
                 m_sawInboundSinceKeepalive = true; // FIX-3: track activity
-                emit dataReady(logicalId, std::move(r.data));
+                emit dataReady(logicalId, r.data);
             }
             if (r.eof) {
                 m_sawInboundSinceKeepalive = true; // FIX-3
@@ -1107,7 +1107,7 @@ bool SshSessionWorker::advanceSftpOp(SftpLane lane, SftpOp &op)
         m_sawInboundSinceKeepalive = true; // FIX-3
         if (r.step == ISshTransport::Step::Error) {
             emit sftpStatDone(op.reqId, /*ok=*/true, /*exists=*/false, /*isDir=*/false,
-                              /*size=*/0, /*mtime=*/0, QString());
+                              /*size=*/0, /*mtimeSecs=*/0, QString());
             return true;
         }
         const ISshTransport::SftpAttrs &a = r.attrs;
@@ -1145,7 +1145,7 @@ bool SshSessionWorker::advanceSftpOp(SftpLane lane, SftpOp &op)
             if (rr.eof) {
                 m_transport->sftpClose(tl, op.handleId);
                 op.handleId = -1;
-                emit sftpReadDone(op.reqId, /*ok=*/true, std::move(op.buffer), QString());
+                emit sftpReadDone(op.reqId, /*ok=*/true, op.buffer, QString());
                 return true;
             }
             if (rr.again) {
@@ -1610,7 +1610,7 @@ bool SshSessionWorker::advanceExecOp(ExecOp &op)
                 }
                 if (!r.data.isEmpty()) {
                     m_sawInboundSinceKeepalive = true; // FIX-3
-                    emit execStdoutChunk(op.reqId, std::move(r.data));
+                    emit execStdoutChunk(op.reqId, r.data);
                 }
                 if (r.eof) {
                     op.stdoutEof = true;
@@ -1634,7 +1634,7 @@ bool SshSessionWorker::advanceExecOp(ExecOp &op)
                 }
                 if (!r.data.isEmpty()) {
                     m_sawInboundSinceKeepalive = true; // FIX-3
-                    emit execStderrChunk(op.reqId, std::move(r.data));
+                    emit execStderrChunk(op.reqId, r.data);
                 }
                 if (r.eof) {
                     op.stderrEof = true;

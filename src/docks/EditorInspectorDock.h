@@ -49,7 +49,7 @@ private slots:
     void updateEditorInfo(ScintillaNext *editor);
 
 private:
-    void newItem(QTreeWidgetItem *parent, const QString &label, EditorFunction func);
+    void newItem(QTreeWidgetItem *parent, const QString &label, const EditorFunction &func);
     void disconnectFromEditor();
 
     Ui::EditorInspectorDock *ui;

@@ -144,6 +144,8 @@ void EditorInfoStatusBar::updateEol(ScintillaNext *editor)
     case SC_EOL_LF:
         eolFormat->setText(tr("Unix (LF)"));
         break;
+    default:
+        break;
     }
 }
 
