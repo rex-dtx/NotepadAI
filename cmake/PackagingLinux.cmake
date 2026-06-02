@@ -46,9 +46,6 @@ endif()
 message(STATUS "Using qmake for AppImage packaging: ${APPIMAGE_QMAKE}")
 list(APPEND APPIMAGE_ENV_VARS QMAKE=${APPIMAGE_QMAKE})
 
-install(TARGETS NotepadAI
-    RUNTIME DESTINATION bin
-)
 install(FILES
     ${PROJECT_SOURCE_DIR}/deploy/linux/NotepadAI.desktop
     DESTINATION share/applications

@@ -638,3 +638,7 @@ set_target_properties(notepadai-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 install(TARGETS notepadai-editor RUNTIME DESTINATION bin)
+install(TARGETS NotepadAI
+    RUNTIME DESTINATION bin
+    BUNDLE DESTINATION .
+)

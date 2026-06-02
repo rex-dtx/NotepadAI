@@ -20,10 +20,6 @@ set_target_properties(NotepadAI PROPERTIES
     MACOSX_BUNDLE_ICON_FILE NotepadAI.icns
 )
 
-install(TARGETS NotepadAI
-    BUNDLE DESTINATION .
-)
-
 install(FILES ${APP_ICON_MACOS}
     DESTINATION NotepadAI.app/Contents/Resources
 )
