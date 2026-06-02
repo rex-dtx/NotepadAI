@@ -53,18 +53,37 @@ set(LIBSSH2_NO_DEPRECATED  OFF CACHE BOOL "" FORCE)
 # libssh2 as an in-tree static lib and never `make install`/package it, so its
 # install(EXPORT "libssh2-targets") is dead weight — and worse, it pulls our
 # PUBLIC mbedcrypto link into the export set, failing the CMake generate step
-# ("target mbedcrypto is not in any export set"). Shadowing the built-ins with
-# empty functions is scoped to this directory and its add_subdirectory children
-# (the vendored libssh2 tree) and does NOT leak to sibling targets like mbedtls.
-# Lives in the wrapper so it survives re-vendoring. EXCLUDE_FROM_ALL only drops
-# libssh2 from the default build target; it does NOT suppress install/export
-# generation, which is why this override is required.
+# ("target mbedcrypto is not in any export set").
+#
+# CMake command overrides are GLOBAL, not directory-scoped: a bare
+# `function(install)` here leaks into every directory processed afterwards
+# (including src/), silently turning the app's own install(TARGETS) rules into
+# no-ops and breaking AppImage/dmg packaging. So we override ONCE and gate the
+# body on a flag: while NN_SUPPRESS_INSTALL is on (across the libssh2
+# add_subdirectory) the override is a no-op; once cleared, it delegates to
+# CMake's preserved built-in (_install/_export), so sibling directories get real
+# install rules again. (A second `function(install)` to "restore" would not work
+# — the single-underscore preserved name would then point at the no-op, not the
+# built-in.) Lives in the wrapper so it survives re-vendoring. EXCLUDE_FROM_ALL
+# only drops libssh2 from the default build target; it does NOT suppress
+# install/export generation, which is why this override is required.
+set(NN_SUPPRESS_INSTALL ON CACHE INTERNAL "Gate for libssh2 install()/export() shadow")
 function(install)
+    if(NOT NN_SUPPRESS_INSTALL)
+        _install(${ARGN})
+    endif()
 endfunction()
 function(export)
+    if(NOT NN_SUPPRESS_INSTALL)
+        _export(${ARGN})
+    endif()
 endfunction()
 
 add_subdirectory("${NN_LIBSSH2_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/libssh2-build" EXCLUDE_FROM_ALL)
+
+# Re-enable real install()/export() for everything processed after libssh2
+# (notably src/, added later at the top level).
+set(NN_SUPPRESS_INSTALL OFF CACHE INTERNAL "Gate for libssh2 install()/export() shadow" FORCE)
 
 # Upstream's static target is "libssh2_static". Normalize to an INTERFACE alias
 # "libssh2" so src/CMakeLists.txt can link a stable name regardless of the
