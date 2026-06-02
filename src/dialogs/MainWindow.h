@@ -61,6 +61,7 @@ class MiniAppRegistry;
 class WorkspaceFileEnumerator;
 class QuickFileOpenDialog;
 namespace remote { class ExecutionContext; }
+class SshDebugDialog;
 struct ConflictEntry;
 struct GitStatusEntry;
 struct WorkspaceStateSnapshot;
@@ -361,6 +362,13 @@ private:
     void reconnectSshWorkspace(FolderAsWorkspaceDock *dock);
     void showConflictListDock(const QString &repoPath);
     void openConflictMergeViewer(const ConflictEntry &entry);
+
+#ifndef NDEBUG
+    // SSH transport debug log dialog (debug builds only). Rebound whenever the
+    // active SSH workspace changes via activeWorkspaceChanged.
+    QPointer<SshDebugDialog> m_sshDebugDialog;
+    void rebindSshDebugDialog();
+#endif
 };
 
 #endif // MAINWINDOW_H

@@ -124,6 +124,8 @@ void RemoteGitProcessRunner::onTimeout()
     }
     m_cancelled = true;
     if (m_connection && m_reqId != 0) {
+        m_connection->appendDebugLog(
+            QStringLiteral("git-timeout: req=%1").arg(m_reqId));
         m_connection->execCancel(m_reqId);
     }
     finish(GitProcessRunner::kExitCancelled, {}, QByteArrayLiteral("operation timed out"));

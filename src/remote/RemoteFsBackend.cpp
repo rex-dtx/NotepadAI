@@ -60,10 +60,31 @@ RemoteFsBackend::RemoteFsBackend(SshConnection *connection, QObject *parent)
                 this, &RemoteFsBackend::onStatResult);
         connect(m_connection, &SshConnection::sftpReaddirResult,
                 this, &RemoteFsBackend::onReaddirResult);
+        connect(m_connection, &SshConnection::connectionLost,
+                this, &RemoteFsBackend::onConnectionLost);
     }
 }
 
-RemoteFsBackend::~RemoteFsBackend() = default;
+RemoteFsBackend::~RemoteFsBackend()
+{
+    const QString reason = tr("Backend destroyed");
+    for (auto it = m_readCallbacks.begin(); it != m_readCallbacks.end(); ++it) {
+        if (it.value()) it.value()(false, QByteArray(), reason);
+    }
+    m_readCallbacks.clear();
+    for (auto it = m_writeCallbacks.begin(); it != m_writeCallbacks.end(); ++it) {
+        if (it.value()) it.value()(false, reason);
+    }
+    m_writeCallbacks.clear();
+    for (auto it = m_statCallbacks.begin(); it != m_statCallbacks.end(); ++it) {
+        if (it.value()) it.value()(false, FileStat(), reason);
+    }
+    m_statCallbacks.clear();
+    for (auto it = m_readdirCallbacks.begin(); it != m_readdirCallbacks.end(); ++it) {
+        if (it.value()) it.value()(false, QList<RemoteDirEntry>(), reason);
+    }
+    m_readdirCallbacks.clear();
+}
 
 // --- async API ---------------------------------------------------------------
 //
@@ -243,6 +264,31 @@ void RemoteFsBackend::onReaddirResult(quint64 reqId, bool ok,
     const ReaddirCallback cb = std::move(it.value());
     m_readdirCallbacks.erase(it);
     if (cb) cb(ok, entries, error);
+}
+
+void RemoteFsBackend::onConnectionLost(const QString &reason)
+{
+    const QString msg = tr("SSH connection lost: %1").arg(reason);
+    QHash<quint64, ReadCallback> reads = std::move(m_readCallbacks);
+    m_readCallbacks.clear();
+    for (auto &cb : reads) {
+        if (cb) cb(false, QByteArray(), msg);
+    }
+    QHash<quint64, WriteCallback> writes = std::move(m_writeCallbacks);
+    m_writeCallbacks.clear();
+    for (auto &cb : writes) {
+        if (cb) cb(false, msg);
+    }
+    QHash<quint64, StatCallback> stats = std::move(m_statCallbacks);
+    m_statCallbacks.clear();
+    for (auto &cb : stats) {
+        if (cb) cb(false, FileStat(), msg);
+    }
+    QHash<quint64, ReaddirCallback> dirs = std::move(m_readdirCallbacks);
+    m_readdirCallbacks.clear();
+    for (auto &cb : dirs) {
+        if (cb) cb(false, QList<RemoteDirEntry>(), msg);
+    }
 }
 
 // --- synchronous overrides (fail-closed for remote) --------------------------

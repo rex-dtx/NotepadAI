@@ -262,6 +262,8 @@ qt_add_executable(NotepadAI
 	dialogs/SshConnectDialog.h
 	dialogs/SshRemoteFolderPickerDialog.cpp
 	dialogs/SshRemoteFolderPickerDialog.h
+	dialogs/SshDebugDialog.h
+	dialogs/SshDebugDialog.cpp
 	docks/AiAgentDock.cpp
 	docks/AiAgentDock.h
 	docks/DebugLogDock.cpp

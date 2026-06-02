@@ -124,6 +124,14 @@ public:
     // open until the op finishes / is cancelled.
     void execWrite(quint64 reqId, const QByteArray &bytes);
 
+    // --- SSH debug log -------------------------------------------------------
+    // Bounded timestamped ring buffer of SSH transport events. Safe to read on
+    // the UI thread only (all writes happen there via queued relay lambdas and
+    // UI-thread call sites). Mirrors AcpConnection::m_debugLog exactly.
+    QStringList debugLog() const { return m_debugLog; }
+    void clearDebugLog();
+    void appendDebugLog(QString line);
+
 signals:
     void stateChanged(remote::SshConnection::State state);
     // Unknown host: prompt the user (first-connect TOFU is NOT silent).
@@ -140,6 +148,9 @@ signals:
     // immediately (the dynamic budget is full). The UI raises a "Waiting for an
     // available channel…" banner; the normal channelReady fires once a slot frees.
     void channelQueued(int logicalId);
+    // Emitted when a new SSH debug log line is appended. Dialog connects here
+    // for live tailing; zero cost when no listener is connected.
+    void debugLogAppended(const QString &line);
 
     // --- SFTP results (D1) — relayed queued from the worker ------------------
     void sftpReadResult(quint64 reqId, bool ok, const QByteArray &data, const QString &error);
@@ -171,6 +182,12 @@ private:
     // Monotonic reqId for exec ops (D6). Shared across every RemoteGitProcessRunner
     // (and ACP exec) on this connection so ids never collide between runners.
     quint64 m_nextExecReqId = 0;
+
+    // SSH debug log ring buffer. UI-thread-only. appendDebugLog() prefixes a
+    // timestamp, appends, trims overflow, and emits debugLogAppended.
+    static constexpr int kDebugLogMaxLines     = 2000;
+    static constexpr int kDebugLogLineMaxChars = 4096;
+    QStringList m_debugLog;
 };
 
 } // namespace remote

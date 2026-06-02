@@ -29,6 +29,7 @@
 
 #include <functional>
 
+class QTimer;
 namespace remote { class IFileSystemBackend; }
 
 
@@ -240,6 +241,7 @@ private:
     QString remoteUriString;   // ssh://<profileId><remotePath> identity
     QString remoteFilePath;    // POSIX path handed to the backend
     LoadState loadStatus = LoadState::Idle;
+    QTimer *loadTimeoutTimer = nullptr;
 
     bool readFromDisk(QFile &file);
     // Fill the buffer from already-read bytes, running the SAME BOM detection +

@@ -142,6 +142,7 @@ private:
                       qint64 size, qint64 mtimeSecs, const QString &error);
     void onReaddirResult(quint64 reqId, bool ok,
                          const QList<RemoteDirEntry> &entries, const QString &error);
+    void onConnectionLost(const QString &reason);
 
     QPointer<SshConnection> m_connection; // not owned (registry owns it)
     quint64 m_nextReqId = 0;              // monotonic; unique across all op kinds

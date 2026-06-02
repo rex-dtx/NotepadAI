@@ -103,6 +103,7 @@
 #include "remote/SshProfile.h"
 #include "remote/SshProfileRegistry.h"
 #include "SshConnectionManagerDialog.h"
+#include "SshDebugDialog.h"
 #include "SshConnectDialog.h"
 #include "SshRemoteFolderPickerDialog.h"
 
@@ -424,23 +425,32 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
         if (!hasRecents) return;
 
-        // Static head of the submenu = "Open Remote Folder via SSH..." + separator +
-        // "Open New Folder..." + separator (4 actions).
+        // Static head of the submenu = "Open New Folder..." + "Open Remote
+        // Folder via SSH..." + separator (3 actions).
         // Strip any previously-built recent entries before rebuilding.
-        while (ui->menuOpenFolderAsWorkspace->actions().size() > 4) {
+        while (ui->menuOpenFolderAsWorkspace->actions().size() > 3) {
             delete ui->menuOpenFolderAsWorkspace->actions().takeLast();
         }
 
-        int i = 0;
+        // Partition recents into remote and local for visual grouping.
+        QStringList remoteRecents, localRecents;
         for (const QString &path : recents->fileList()) {
-            ++i;
-            const QString prefix = QString("%1%2: ").arg(i < 10 ? "&" : "").arg(i);
+            if (remote::isSshUri(path))
+                remoteRecents.append(path);
+            else
+                localRecents.append(path);
+        }
 
-            if (remote::isSshUri(path)) {
-                // SSH recent entry: badge + "user@host:path" + live status read
-                // at render time from the execution context (NOT persisted).
+        int i = 0;
+
+        if (!remoteRecents.isEmpty()) {
+            ui->menuOpenFolderAsWorkspace->addSection(tr("Recent Remote"));
+            for (const QString &path : remoteRecents) {
+                ++i;
+                const QString prefix = QString("%1%2: ").arg(i < 10 ? "&" : "").arg(i);
+
                 const remote::SshUri uri = remote::parseSshUri(path);
-                QString display = path; // fallback if profile is gone
+                QString display = path;
                 if (uri.valid) {
                     remote::SshProfileRegistry *profiles =
                         app ? app->getSshProfileRegistry() : nullptr;
@@ -453,7 +463,6 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                     }
                 }
 
-                // Live status from the context state — never a stale persisted value.
                 QString status = tr("disconnected");
                 remote::ExecutionContextRegistry *contexts =
                     app ? app->getExecutionContextRegistry() : nullptr;
@@ -476,7 +485,6 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                 QAction *action = new QAction(
                     QString("%1%2  (%3)").arg(prefix, display, status),
                     ui->menuOpenFolderAsWorkspace);
-                // SSH badge — tinted to the palette so it follows light/dark theme.
                 action->setIcon(makeTintedIcon(QStringLiteral(":/icons/ssh-badge.svg"),
                                                palette().color(QPalette::ButtonText)));
                 action->setData(path);
@@ -484,19 +492,24 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                     openFolderAsWorkspacePath(path);
                 });
                 ui->menuOpenFolderAsWorkspace->addAction(action);
-                continue;
             }
+        }
 
-            // Local entry — rendered exactly as before (no badge, just the path).
-            const QString native = QDir::toNativeSeparators(path);
-            QAction *action = new QAction(
-                QString("%1%2").arg(prefix, native),
-                ui->menuOpenFolderAsWorkspace);
-            action->setData(path);
-            connect(action, &QAction::triggered, this, [this, path]() {
-                openFolderAsWorkspacePath(path);
-            });
-            ui->menuOpenFolderAsWorkspace->addAction(action);
+        if (!localRecents.isEmpty()) {
+            ui->menuOpenFolderAsWorkspace->addSection(tr("Recent Local"));
+            for (const QString &path : localRecents) {
+                ++i;
+                const QString prefix = QString("%1%2: ").arg(i < 10 ? "&" : "").arg(i);
+                const QString native = QDir::toNativeSeparators(path);
+                QAction *action = new QAction(
+                    QString("%1%2").arg(prefix, native),
+                    ui->menuOpenFolderAsWorkspace);
+                action->setData(path);
+                connect(action, &QAction::triggered, this, [this, path]() {
+                    openFolderAsWorkspacePath(path);
+                });
+                ui->menuOpenFolderAsWorkspace->addAction(action);
+            }
         }
     });
 
@@ -1981,6 +1994,26 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
                         diagAction->setChecked(enabled);
                     }
                 });
+
+        // SSH transport debug log. Shows connection lifecycle, SFTP ops, exec
+        // commands, and git timeouts for the currently active SSH workspace.
+        // Disabled when no SSH workspace is active.
+        QAction *sshDebugAction = debugMenu->addAction(tr("SSH Debug Log"));
+        sshDebugAction->setEnabled(remote::isSshUri(currentWorkspaceRoot()));
+        connect(this, &MainWindow::activeWorkspaceChanged, this,
+                [this, sshDebugAction](FolderAsWorkspaceDock *, FolderAsWorkspaceDock *) {
+                    sshDebugAction->setEnabled(remote::isSshUri(currentWorkspaceRoot()));
+                    rebindSshDebugDialog();
+                });
+        connect(sshDebugAction, &QAction::triggered, this, [this]() {
+            if (!m_sshDebugDialog) {
+                m_sshDebugDialog = new SshDebugDialog(this);
+                rebindSshDebugDialog();
+            }
+            m_sshDebugDialog->show();
+            m_sshDebugDialog->raise();
+            m_sshDebugDialog->activateWindow();
+        });
     }
 #endif
 
@@ -3130,6 +3163,18 @@ remote::ExecutionContext *MainWindow::activeExecutionContext() const
     }
     return registry->localContext();
 }
+
+#ifndef NDEBUG
+void MainWindow::rebindSshDebugDialog()
+{
+    if (!m_sshDebugDialog)
+        return;
+    remote::SshConnection *conn = nullptr;
+    if (auto *ctx = qobject_cast<remote::RemoteExecutionContext *>(activeExecutionContext()))
+        conn = ctx->connection();
+    m_sshDebugDialog->bindToConnection(conn);
+}
+#endif
 
 void MainWindow::onFileIndexReady(const QString &rootKey,
                                   std::shared_ptr<const FileIndexCache> snapshot)
@@ -4882,9 +4927,6 @@ void MainWindow::saveWorkspaceStatesOnly()
 
 void MainWindow::setupSshMenu()
 {
-    remote::SshProfileRegistry *profiles = app ? app->getSshProfileRegistry() : nullptr;
-    remote::ExecutionContextRegistry *contexts = app ? app->getExecutionContextRegistry() : nullptr;
-
     // Gate the SSH actions when the menu is about to show. "Open Remote
     // Terminal" is enabled only when a remote context is currently Connected
     // (the active SSH workspace, or the last one we connected to this session).
@@ -4897,25 +4939,6 @@ void MainWindow::setupSshMenu()
             remoteReady = true;
         }
         ui->actionOpenRemoteTerminal->setEnabled(remoteReady);
-    });
-
-    connect(ui->actionSshConnectionManager, &QAction::triggered, this, [this, profiles, contexts]() {
-        if (!profiles) return;
-        SshConnectionManagerDialog dlg(profiles, app ? app->getCredentialStore() : nullptr, this);
-        // When the user asks to connect from the manager, run the staged
-        // connect dialog and remember the resulting context for the terminal.
-        connect(&dlg, &SshConnectionManagerDialog::connectRequested, this,
-                [this, contexts](const QString &profileId) {
-                    if (!contexts) return;
-                    remote::RemoteExecutionContext *ctx = contexts->connect(profileId);
-                    if (!ctx) return;
-                    SshConnectDialog connectDlg(ctx, this);
-                    connectDlg.exec();
-                    if (ctx->state() == remote::ExecutionContext::State::Connected) {
-                        m_lastConnectedRemote = ctx;
-                    }
-                });
-        dlg.exec();
     });
 
     connect(ui->actionOpenRemoteTerminal, &QAction::triggered, this, [this]() {
@@ -4936,7 +4959,6 @@ void MainWindow::setupSshMenu()
 
     // Crash breadcrumbs for the new actions (the ActionAddedFilter also catches
     // these, but wire explicitly to be robust to ordering).
-    wireActionForCrashContext(ui->actionSshConnectionManager);
     wireActionForCrashContext(ui->actionOpenRemoteTerminal);
 
     // "Open Remote Folder via SSH…" — the first item of the Open Folder as
@@ -4954,8 +4976,8 @@ void MainWindow::openRemoteFolderViaSshFlow()
         app ? app->getExecutionContextRegistry() : nullptr;
     if (!profiles || !contexts) return;
 
-    // Step 1: profile selection (reuse the P1 CRUD/connection manager dialog).
-    // Stack-allocated modal, mirroring the actionSshConnectionManager handler.
+    // Step 1: profile selection (reuse the SSH Connection Manager dialog).
+    // Stack-allocated modal.
     SshConnectionManagerDialog dlg(profiles,
                                    app ? app->getCredentialStore() : nullptr, this);
 
@@ -4969,12 +4991,12 @@ void MainWindow::openRemoteFolderViaSshFlow()
         // Authenticating → Ready, with Cancel + error/Retry at each stage).
         remote::RemoteExecutionContext *ctx = contexts->connect(profileId);
         if (!ctx) return;
-        SshConnectDialog connectDlg(ctx, &dlg);
-        if (connectDlg.exec() != QDialog::Accepted
-            || ctx->state() != remote::ExecutionContext::State::Connected) {
-            // Cancel / failure: SshConnectDialog already showed the staged error +
-            // Retry. Nothing opened; leave the manager up so the user can retry.
-            return;
+        if (ctx->state() != remote::ExecutionContext::State::Connected) {
+            SshConnectDialog connectDlg(ctx, &dlg);
+            if (connectDlg.exec() != QDialog::Accepted
+                || ctx->state() != remote::ExecutionContext::State::Connected) {
+                return;
+            }
         }
         m_lastConnectedRemote = ctx;
 
@@ -5134,21 +5156,9 @@ void MainWindow::reconnectSshWorkspace(FolderAsWorkspaceDock *dock)
         app ? app->getExecutionContextRegistry() : nullptr;
     if (!contexts) return;
 
-    // registry->connect() returns the EXISTING context without re-dialing the
-    // socket if one is already present (e.g. after a mid-session drop), so we
-    // explicitly re-trigger connectToHost on its connection. For a never-created
-    // context, connect() builds it and starts the dial itself.
-    const bool existed = (contexts->remoteContext(uri.profileId) != nullptr);
     auto *ctx = contexts->connect(uri.profileId);
     if (!ctx) return;
 
-    if (existed) {
-        if (auto *rctx = qobject_cast<remote::RemoteExecutionContext *>(ctx)) {
-            if (remote::SshConnection *conn = rctx->connection()) {
-                conn->connectToHost();
-            }
-        }
-    }
     wireSshDockToContext(dock, ctx);
 }
 

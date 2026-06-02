@@ -75,9 +75,8 @@
      <property name="title">
       <string>Open Folder as Workspace...</string>
      </property>
-     <addaction name="actionOpenRemoteFolderSsh"/>
-     <addaction name="separator"/>
      <addaction name="actionOpenFolderAsWorkspaceNew"/>
+     <addaction name="actionOpenRemoteFolderSsh"/>
      <addaction name="separator"/>
     </widget>
     <addaction name="actionNew"/>
@@ -85,7 +84,6 @@
     <addaction name="actionOpenFolderasWorkspace"/>
     <addaction name="menuOpenFolderAsWorkspace"/>
     <addaction name="separator"/>
-    <addaction name="actionSshConnectionManager"/>
     <addaction name="actionOpenRemoteTerminal"/>
     <addaction name="actionReload"/>
     <addaction name="actionSave"/>
@@ -1103,11 +1101,6 @@
   <action name="actionOpenTerminalInWorkspace">
    <property name="text">
     <string>Open Terminal in Workspace</string>
-   </property>
-  </action>
-  <action name="actionSshConnectionManager">
-   <property name="text">
-    <string>SSH Connection Manager…</string>
    </property>
   </action>
   <action name="actionOpenRemoteTerminal">

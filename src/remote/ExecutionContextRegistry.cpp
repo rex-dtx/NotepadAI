@@ -53,8 +53,21 @@ RemoteExecutionContext *ExecutionContextRegistry::remoteContext(const QString &p
 
 RemoteExecutionContext *ExecutionContextRegistry::connect(const QString &profileId)
 {
-    if (auto existing = m_remotes.value(profileId).context) {
-        return existing;
+    if (auto it = m_remotes.find(profileId); it != m_remotes.end()) {
+        const Entry &entry = it.value();
+        const auto s = entry.connection ? entry.connection->state()
+                                        : SshConnection::State::Disconnected;
+        switch (s) {
+        case SshConnection::State::ConnectingSocket:
+        case SshConnection::State::Handshaking:
+        case SshConnection::State::AwaitingHostKey:
+        case SshConnection::State::Authenticating:
+        case SshConnection::State::Ready:
+            return entry.context;
+        default:
+            break;
+        }
+        disconnect(profileId);
     }
     if (!m_profiles || !m_profiles->contains(profileId)) {
         return nullptr;

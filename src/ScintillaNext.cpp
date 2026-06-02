@@ -33,6 +33,7 @@
 #include <QPointer>
 #include <QSaveFile>
 #include <QTextCodec>
+#include <QTimer>
 
 #include <utility>
 
@@ -213,10 +214,17 @@ void ScintillaNext::loadInto(LoadCallback cb)
 
     loadStatus = LoadState::Loading;
 
+    if (!loadTimeoutTimer) {
+        loadTimeoutTimer = new QTimer(this);
+        loadTimeoutTimer->setSingleShot(true);
+    }
+
     QPointer<ScintillaNext> guard(this);
     fsBackend->readFileAsync(remoteFilePath, [this, guard, cb](bool ok, const QByteArray &data,
                                                                const QString &error) {
         if (!guard) return; // editor closed mid-load
+        if (loadTimeoutTimer) loadTimeoutTimer->stop();
+
         if (!ok) {
             loadStatus = LoadState::Error;
             // Show the error in the (still read-only) placeholder.
@@ -259,6 +267,27 @@ void ScintillaNext::loadInto(LoadCallback cb)
         if (cb) cb(true, QString());
         emit loaded();
     });
+
+    // 30-second timeout: if the read callback never fires, transition to error.
+    connect(loadTimeoutTimer, &QTimer::timeout, this, [this, guard, cb]() {
+        if (!guard) return;
+        if (loadStatus != LoadState::Loading) return;
+        loadStatus = LoadState::Error;
+        {
+            const QSignalBlocker blocker(this);
+            setUndoCollection(false);
+            setReadOnly(false);
+            setText("");
+            const QByteArray msg = tr("Load timed out — the remote server did not respond").toUtf8();
+            appendText(msg.size(), msg.constData());
+            setReadOnly(true);
+            setSavePoint();
+        }
+        const QString err = tr("Load timed out");
+        if (cb) cb(false, err);
+        emit loadFailed(err);
+    }, Qt::SingleShotConnection);
+    loadTimeoutTimer->start(30000);
 }
 
 void ScintillaNext::retryLoad(LoadCallback cb)

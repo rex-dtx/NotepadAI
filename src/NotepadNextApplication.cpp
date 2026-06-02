@@ -63,6 +63,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPalette>
+#include <QStatusBar>
 #include <QStyle>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -326,6 +327,12 @@ bool NotepadNextApplication::init()
                 emit gitWorkingTreeDirtied(QDir::cleanPath(editor->getFilePath()));
         });
     });
+    connect(editorManager, &EditorManager::editorLoadFailed, window,
+            [this](ScintillaNext *editor, const QString &error) {
+                Q_UNUSED(editor);
+                window->statusBar()->showMessage(
+                    tr("Remote file load failed: %1").arg(error), 8000);
+            });
 
     {
         previewTabManager = new PreviewTabManager(this, window->getDockedEditor(), this);
