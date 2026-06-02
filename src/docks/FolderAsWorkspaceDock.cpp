@@ -476,16 +476,6 @@ void FolderAsWorkspaceDock::setupTransferManager(remote::RemoteFsBackend *backen
                     m_transferLogDialog->appendStatus(path, ok, error);
             });
 
-    // Wire dialog's progress bar cancel button to manager (deferred until dialog exists).
-    connect(m_transferManager, &remote::RemoteTransferManager::progressUpdated,
-            this, [this]() {
-                if (m_transferLogDialog && m_transferManager) {
-                    // Connect cancel only once.
-                    connect(m_transferLogDialog->progressBar(), &TransferProgressBar::cancelRequested,
-                            m_transferManager, &remote::RemoteTransferManager::cancel,
-                            Qt::UniqueConnection);
-                }
-            }, Qt::UniqueConnection);
 }
 
 QStringList FolderAsWorkspaceDock::selectedPaths() const{

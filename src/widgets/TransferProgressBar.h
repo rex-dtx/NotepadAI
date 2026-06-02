@@ -24,7 +24,6 @@
 class QHBoxLayout;
 class QLabel;
 class QProgressBar;
-class QPushButton;
 class QTimer;
 
 // TransferProgressBar — An inline progress widget for SFTP transfers.
@@ -66,17 +65,9 @@ public:
     // Programmatically trigger show (the 200ms delay is applied internally).
     void triggerShow();
 
-signals:
-    // Emitted when the user clicks the Cancel button.
-    void cancelRequested();
-
-private slots:
-    void onCancelClicked();
-
 private:
     QLabel *m_label = nullptr;
     QProgressBar *m_progressBar = nullptr;
-    QPushButton *m_cancelButton = nullptr;
     QTimer *m_showTimer = nullptr;
     QTimer *m_hideTimer = nullptr;
 

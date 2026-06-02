@@ -23,7 +23,6 @@
 #include <QLocale>
 #include <QPalette>
 #include <QProgressBar>
-#include <QPushButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -59,13 +58,6 @@ TransferProgressBar::TransferProgressBar(QWidget *parent)
     m_progressBar->setTextVisible(false);
     m_progressBar->setFixedHeight(6);
     row->addWidget(m_progressBar, 0);
-
-    m_cancelButton = new QPushButton(tr("Cancel"), this);
-    m_cancelButton->setFocusPolicy(Qt::StrongFocus);
-    // Small button: use the font at current size, just compact padding.
-    m_cancelButton->setFixedHeight(m_cancelButton->sizeHint().height() - 4);
-    connect(m_cancelButton, &QPushButton::clicked, this, &TransferProgressBar::onCancelClicked);
-    row->addWidget(m_cancelButton, 0);
 
     outerLayout->addLayout(row);
 
@@ -154,7 +146,6 @@ void TransferProgressBar::showCompleted(int fileCount)
     m_progressBar->setRange(0, 1);
     m_progressBar->setValue(1);
     m_label->setText(tr("Done — %1 file(s) transferred").arg(fileCount));
-    m_cancelButton->setVisible(false);
     setVisible(true);
     // Auto-hide after 2 seconds.
     m_hideTimer->start(2000);
@@ -166,7 +157,6 @@ void TransferProgressBar::showError(const QString &message)
     m_progressBar->setRange(0, 1);
     m_progressBar->setValue(0);
     m_label->setText(tr("Transfer error: %1").arg(message));
-    m_cancelButton->setVisible(false);
     setVisible(true);
     // Auto-hide after 5 seconds so the user can read the error.
     m_hideTimer->start(5000);
@@ -177,15 +167,8 @@ void TransferProgressBar::hideImmediate()
     m_showTimer->stop();
     m_hideTimer->stop();
     m_active = false;
-    m_cancelButton->setVisible(true);
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
     m_label->setText(QString());
     setVisible(false);
-}
-
-void TransferProgressBar::onCancelClicked()
-{
-    emit cancelRequested();
-    hideImmediate();
 }

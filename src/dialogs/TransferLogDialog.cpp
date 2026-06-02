@@ -69,7 +69,7 @@ TransferLogDialog::TransferLogDialog(QWidget *parent)
 
     buttonRow->addStretch(1);
 
-    m_closeButton = new QPushButton(tr("Close"), this);
+    m_closeButton = new QPushButton(tr("Cancel"), this);
     m_closeButton->setFocusPolicy(Qt::StrongFocus);
     connect(m_closeButton, &QPushButton::clicked, this, &QDialog::close);
     buttonRow->addWidget(m_closeButton);
