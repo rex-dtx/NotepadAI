@@ -103,7 +103,8 @@ LanguageInspectorDock::LanguageInspectorDock(MainWindow *parent) :
 
     connect(this, &QDockWidget::visibilityChanged, this, [=](bool visible) {
         if (visible) {
-            connectToEditor(parent->currentEditor());
+            if (ScintillaNext *editor = parent->currentEditor())
+                connectToEditor(editor);
             connect(parent, &MainWindow::editorActivated, this, &LanguageInspectorDock::connectToEditor);
         }
         else {

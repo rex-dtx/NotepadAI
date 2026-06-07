@@ -70,6 +70,7 @@ ColumnEditorDialog::~ColumnEditorDialog()
 void ColumnEditorDialog::insertTextStartingAtCurrentColumn(const std::function<QString ()> &f)
 {
     ScintillaNext *editor = parent->currentEditor();
+    if (!editor) return;
 
     if (editor->selectionMode() == SC_SEL_STREAM && editor->selections() == 1 && editor->selectionEmpty()) {
         const int currentPos = editor->selectionNCaret(0);

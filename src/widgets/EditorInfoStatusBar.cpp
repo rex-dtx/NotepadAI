@@ -54,6 +54,7 @@ EditorInfoStatusBar::EditorInfoStatusBar(QMainWindow *window) :
 
     connect(qobject_cast<StatusLabel*>(overType), &StatusLabel::clicked, w, [=]() {
         ScintillaNext *editor = w->currentEditor();
+        if (!editor) return;
         editor->editToggleOvertype();
         updateOverType(editor);
     });

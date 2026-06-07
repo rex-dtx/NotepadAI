@@ -54,8 +54,8 @@ FindReplaceDialog::FindReplaceDialog(ISearchResultsHandler *searchResults, MainW
     setWindowFlag(Qt::WindowContextHelpButtonHint, false);
     ui->setupUi(this);
 
-    // Get the current editor, and keep up the reference
-    setEditor(window->currentEditor());
+    if (ScintillaNext *editor = window->currentEditor())
+        setEditor(editor);
     connect(window, &MainWindow::editorActivated, this, &FindReplaceDialog::setEditor);
 
     tabBar = new QTabBar();

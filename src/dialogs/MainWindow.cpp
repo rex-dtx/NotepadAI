@@ -535,12 +535,16 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connect(ui->actionRename, &QAction::triggered, this, &MainWindow::renameFile);
 
     connect(ui->actionExportHtml, &QAction::triggered, this, [this]() {
-        HtmlConverter html(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        HtmlConverter html(editor);
         exportAsFormat(&html, QStringLiteral("HTML files (*.html)"));
     });
 
     connect(ui->actionExportRtf, &QAction::triggered, this, [this]() {
-        RtfConverter rtf(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        RtfConverter rtf(editor);
         exportAsFormat(&rtf, QStringLiteral("RTF Files (*.rtf)"));
     });
 
@@ -610,16 +614,19 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionBase64Encode, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         const QByteArray selection = editor->getSelText();
         editor->replaceSel(selection.toBase64().constData());
     });
     connect(ui->actionURLEncode, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         const QByteArray selection = editor->getSelText();
         editor->replaceSel(selection.toPercentEncoding().constData());
     });
     connect(ui->actionBase64Decode, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         const QByteArray selection = editor->getSelText();
         if (auto result = QByteArray::fromBase64Encoding(selection)) {
             editor->replaceSel((*result).constData());
@@ -627,11 +634,13 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
     connect(ui->actionURLDecode,&QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         const QByteArray selection = editor->getSelText();
         editor->replaceSel(QByteArray::fromPercentEncoding(selection).constData());
     });
     connect(ui->actionCopyURL, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         URLFinder *urlFinder = editor->findChild<URLFinder *>(QString(), Qt::FindDirectChildrenOnly);
         if (urlFinder && urlFinder->isEnabled()) {
             urlFinder->copyURLToClipboard(contextMenuPos);
@@ -696,17 +705,22 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connectEditorAction(ui->actionMoveSelectedLinesDown, &ScintillaNext::moveSelectedLinesDown);
 
     connect(ui->actionSplitLines, &QAction::triggered, this, [this]() {
-        currentEditor()->targetFromSelection();
-        currentEditor()->linesSplit(0);
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        editor->targetFromSelection();
+        editor->linesSplit(0);
     });
 
     connect(ui->actionJoinLines, &QAction::triggered, this, [this]()  {
-        currentEditor()->targetFromSelection();
-        currentEditor()->linesJoin();
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        editor->targetFromSelection();
+        editor->linesJoin();
     });
 
     connect(ui->actionRemoveEmptyLines, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         Finder f(editor);
         const UndoAction ua(editor);
 
@@ -725,31 +739,45 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connectEditorAction(ui->actionRemoveConsecutiveDuplicateLines, &ScintillaNext::removeConsecutiveDuplicateLines);
 
     connect(ui->actionReverseLineOrder, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(ReverseSorter(Sorter::Direction::Ascending));
     });
     connect(ui->actionSortLinesAsc, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(CaseSensitiveSorter(Sorter::Direction::Ascending));
     });
     connect(ui->actionSortLinesAscCaseInsensitive, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(CaseInsensitiveSorter(Sorter::Direction::Ascending));
     });
     connect(ui->actionSortLinesbyLengthAsc, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(LineLengthSorter(Sorter::Direction::Ascending));
     });
     connect(ui->actionSortLinesDesc, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(CaseSensitiveSorter(Sorter::Direction::Descending));
     });
     connect(ui->actionSortLinesDescCaseInsensitive, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(CaseInsensitiveSorter(Sorter::Direction::Descending));
     });
     connect(ui->actionSortLinesbyLengthDesc, &QAction::triggered, this, [=, this]() {
-        ScintillaSorter scintillaSorter(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        ScintillaSorter scintillaSorter(editor);
         scintillaSorter.sort(LineLengthSorter(Sorter::Direction::Descending));
     });
 
@@ -765,27 +793,28 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         columnEditor->activateWindow();
     });
 
-    connect(ui->actionUndo, &QAction::triggered, this, [=]() { currentEditor()->undo(); });
-    connect(ui->actionRedo, &QAction::triggered, this, [=]() { currentEditor()->redo(); });
+    connect(ui->actionUndo, &QAction::triggered, this, [=]() { if (auto *e = currentEditor()) e->undo(); });
+    connect(ui->actionRedo, &QAction::triggered, this, [=]() { if (auto *e = currentEditor()) e->redo(); });
     connect(ui->actionCut, &QAction::triggered, this, [=]() {
         if (!isEditorFocused() && forwardClipboardToFocusWidget("cut")) return;
-        currentEditor()->cutAllowLine();
+        if (auto *e = currentEditor()) e->cutAllowLine();
     });
     connect(ui->actionCopy, &QAction::triggered, this, [=]() {
         if (!isEditorFocused() && forwardClipboardToFocusWidget("copy")) return;
-        currentEditor()->copyAllowLine();
+        if (auto *e = currentEditor()) e->copyAllowLine();
     });
-    connect(ui->actionDelete, &QAction::triggered, this, [=]() { currentEditor()->clear(); });
+    connect(ui->actionDelete, &QAction::triggered, this, [=]() { if (auto *e = currentEditor()) e->clear(); });
     connect(ui->actionPaste, &QAction::triggered, this, [=]() {
         if (!isEditorFocused() && forwardClipboardToFocusWidget("paste")) return;
-        currentEditor()->paste();
+        if (auto *e = currentEditor()) e->paste();
     });
     connect(ui->actionSelectAll, &QAction::triggered, this, [=]() {
         if (!isEditorFocused() && forwardClipboardToFocusWidget("selectAll")) return;
-        currentEditor()->selectAll();
+        if (auto *e = currentEditor()) e->selectAll();
     });
     connect(ui->actionSelectNext, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
 
         editor->setSearchFlags(SCFIND_NONE);
         editor->targetWholeDocument();
@@ -793,6 +822,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
     connect(ui->actionCopyFullPath, &QAction::triggered, this, [this]() {
         auto editor = currentEditor();
+        if (!editor) return;
         if (editor->isFile()) {
             if (editor->isRemote()) {
                 QApplication::clipboard()->setText(editor->remotePath());
@@ -802,22 +832,29 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         }
     });
     connect(ui->actionCopyFileName, &QAction::triggered, this, [this]() {
-        QApplication::clipboard()->setText(currentEditor()->getName());
+        auto editor = currentEditor();
+        if (!editor) return;
+        QApplication::clipboard()->setText(editor->getName());
     });
     connect(ui->actionCopyFileDirectory, &QAction::triggered, this, [this]() {
         auto editor = currentEditor();
+        if (!editor) return;
         if (editor->isFile()) {
             QApplication::clipboard()->setText(editor->getPath());
         }
     });
 
     connect(ui->actionCopyAsHtml, &QAction::triggered, this, [this]() {
-        HtmlConverter html(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        HtmlConverter html(editor);
         copyAsFormat(&html, "text/html");
     });
 
     connect(ui->actionCopyAsRtf, &QAction::triggered, this, [this]() {
-        RtfConverter rtf(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        RtfConverter rtf(editor);
         copyAsFormat(&rtf, "Rich Text Format");
     });
 
@@ -826,8 +863,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     addAction(ui->actionToggleOverType);
     connect(ui->actionToggleOverType, &QAction::triggered, this, [this]() {
-        currentEditor()->editToggleOvertype();
-        ui->statusBar->refresh(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        editor->editToggleOvertype();
+        ui->statusBar->refresh(editor);
     });
 
     SearchResultsDock *srDock = new SearchResultsDock(this);
@@ -867,13 +906,16 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
 
     connect(ui->actionQuickFind, &QAction::triggered, this, [this]() {
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+
         QuickFindWidget *quickFind = findChild<QuickFindWidget *>(QString(), Qt::FindDirectChildrenOnly);
 
         if (quickFind == Q_NULLPTR) {
             quickFind = new QuickFindWidget(this);
         }
 
-        quickFind->setEditor(currentEditor());
+        quickFind->setEditor(editor);
         quickFind->setFocus();
         quickFind->show();
     });
@@ -888,6 +930,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionGoToLine, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         const int currentLine = editor->lineFromPosition(editor->currentPos()) + 1;
         const int maxLine = editor->lineCount();
         bool ok;
@@ -918,6 +961,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         if (markerAppDecorator && markerAppDecorator->isEnabled()) {
             if (sender()->property("MarkerNumber").isValid()) {
                 ScintillaNext *editor = currentEditor();
+                if (!editor) return;
                 markerAppDecorator->mark(editor, sender()->property("MarkerNumber").toInt());
             }
         }
@@ -929,6 +973,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         if (markerAppDecorator && markerAppDecorator->isEnabled()) {
             if (sender()->property("MarkerNumber").isValid()) {
                 ScintillaNext *editor = currentEditor();
+                if (!editor) return;
                 markerAppDecorator->clear(editor, sender()->property("MarkerNumber").toInt());
             }
         }
@@ -946,12 +991,15 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         MarkerAppDecorator *markerAppDecorator = app->findChild<MarkerAppDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (markerAppDecorator && markerAppDecorator->isEnabled()) {
-            markerAppDecorator->clearAll(currentEditor());
+            ScintillaNext *editor = currentEditor();
+            if (!editor) return;
+            markerAppDecorator->clearAll(editor);
         }
     });
 
     connect(ui->actionToggleBookmark, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -963,6 +1011,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionNextBookmark, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -978,6 +1027,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionClearBookmarks, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -987,6 +1037,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionInvertBookmarks, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -998,6 +1049,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionPreviousBookmark, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -1013,6 +1065,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionCutBookmarkedLines, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -1026,6 +1079,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionCopyBookmarkedLines, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -1039,6 +1093,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionDeleteBookmarkedLines, &QAction::triggered, this, [this]() {
         ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         BookMarkDecorator *bookMarkDecorator = editor->findChild<BookMarkDecorator*>(QString(), Qt::FindDirectChildrenOnly);
 
         if (bookMarkDecorator && bookMarkDecorator->isEnabled()) {
@@ -1165,7 +1220,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         for (ScintillaNext *editor : editors()) {
             editor->zoomIn();
         }
-        zoomLevel = currentEditor()->zoom();
+        if (auto *e = currentEditor()) zoomLevel = e->zoom();
 
         showEditorZoomLevelIndicator();
     });
@@ -1173,7 +1228,7 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         for (ScintillaNext *editor : editors()) {
             editor->zoomOut();
         }
-        zoomLevel = currentEditor()->zoom();
+        if (auto *e = currentEditor()) zoomLevel = e->zoom();
 
         showEditorZoomLevelIndicator();
     });
@@ -1282,7 +1337,9 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
     connect(ui->actionMacroRecording, &QAction::triggered, this, [this](bool b) {
         if (b) {
-            macroManager.startRecording(currentEditor());
+            ScintillaNext *editor = currentEditor();
+            if (!editor) return;
+            macroManager.startRecording(editor);
         }
         else {
             macroManager.stopRecording();
@@ -1310,7 +1367,9 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     });
 
     connect(ui->actionPlayback, &QAction::triggered, this, [this]() {
-        macroManager.replayCurrentMacro(currentEditor());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        macroManager.replayCurrentMacro(editor);
     });
 
     connect(ui->actionSaveCurrentRecordedMacro, &QAction::triggered, this, [=, this]() {
@@ -1345,10 +1404,12 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
             macroRunDialog = new MacroRunDialog(this, &macroManager);
 
             connect(macroRunDialog, &MacroRunDialog::execute, this, [this](Macro *macro, int times) {
+                ScintillaNext *editor = currentEditor();
+                if (!editor) return;
                 if (times > 0)
-                    macro->replay(currentEditor(), times);
+                    macro->replay(editor, times);
                 else if (times == -1)
-                    macro->replayTillEndOfFile(currentEditor());
+                    macro->replayTillEndOfFile(editor);
             });
         }
 
@@ -1377,7 +1438,9 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         }
 
         for (const Macro *m : macroManager.availableMacros()) {
-            ui->menuMacro->addAction(m->getName(), [=, this]() { m->replay(currentEditor()); });
+            ui->menuMacro->addAction(m->getName(), [=, this]() {
+                if (auto *e = currentEditor()) m->replay(e);
+            });
         }
     });
 
@@ -1428,7 +1491,9 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
 
 #ifdef Q_OS_WIN
     connect(ui->actionShowInExplorer, &QAction::triggered, this, [this]() {
-        QString filePath = QDir::toNativeSeparators(currentEditor()->getFileInfo().canonicalFilePath());
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
+        QString filePath = QDir::toNativeSeparators(editor->getFileInfo().canonicalFilePath());
         QStringList arguments = {"/select,", filePath};
         QProcess::startDetached("explorer", arguments);
     });
@@ -1437,8 +1502,10 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     ui->actionOpenTerminalHere->setText(ui->actionOpenTerminalHere->text().arg(terminalName));
 
     connect(ui->actionOpenTerminalHere, &QAction::triggered, this, [=, this]() {
+        ScintillaNext *editor = currentEditor();
+        if (!editor) return;
         QString command = app->getSettings()->value("App/TerminalCommand", "cmd").toString();
-        QString filePath = QDir::toNativeSeparators(currentEditor()->getFileInfo().dir().canonicalPath());
+        QString filePath = QDir::toNativeSeparators(editor->getFileInfo().dir().canonicalPath());
         QStringList arguments = {"/c", "start", "/d", filePath, command};
         QProcess::startDetached("cmd", arguments);
     });
@@ -3631,6 +3698,7 @@ FolderAsWorkspaceDock *MainWindow::resolveShowInWorkspaceDock(const QString &fil
 void MainWindow::reloadFile()
 {
     auto editor = currentEditor();
+    if (!editor) return;
 
     if (!editor->isFile() && !editor->isSavedToDisk()) {
         return;
@@ -3772,7 +3840,9 @@ void MainWindow::closeAllToRight()
 
 bool MainWindow::saveCurrentFile()
 {
-    return saveFile(currentEditor());
+    ScintillaNext *editor = currentEditor();
+    if (!editor) return false;
+    return saveFile(editor);
 }
 
 bool MainWindow::saveFile(ScintillaNext *editor)
@@ -3801,6 +3871,7 @@ bool MainWindow::saveCurrentFileAsDialog()
 {
     const QString filter = app->getFileDialogFilter();
     ScintillaNext *editor = currentEditor();
+    if (!editor) return false;
 
     QString selectedFilter = app->getFileDialogFilterForLanguage(editor->languageName);
     QString fileName = FileDialogHelpers::getSaveFileName(this, QString(), defaultDirectoryManager->getDefaultDirectory(), filter, &selectedFilter);
@@ -3819,7 +3890,9 @@ bool MainWindow::saveCurrentFileAsDialog()
 
 bool MainWindow::saveCurrentFileAs(const QString &fileName)
 {
-    return saveFileAs(currentEditor(), fileName);
+    ScintillaNext *editor = currentEditor();
+    if (!editor) return false;
+    return saveFileAs(editor, fileName);
 }
 
 bool MainWindow::saveFileAs(ScintillaNext *editor, const QString &fileName)
@@ -3840,7 +3913,9 @@ bool MainWindow::saveFileAs(ScintillaNext *editor, const QString &fileName)
 bool MainWindow::saveCopyAsDialog()
 {
     const QString filter = app->getFileDialogFilter();
-    const QString languageName = currentEditor()->languageName;
+    ScintillaNext *editor = currentEditor();
+    if (!editor) return false;
+    const QString languageName = editor->languageName;
 
     QString selectedFilter = app->getFileDialogFilterForLanguage(languageName);
     const QString fileName = FileDialogHelpers::getSaveFileName(this, tr("Save a Copy As"), defaultDirectoryManager->getDefaultDirectory(), filter, &selectedFilter);
@@ -3857,6 +3932,7 @@ bool MainWindow::saveCopyAsDialog()
 bool MainWindow::saveCopyAs(const QString &fileName)
 {
     auto editor = currentEditor();
+    if (!editor) return false;
 
     QFileDevice::FileError error = editor->saveCopyAs(fileName);
 
@@ -3906,6 +3982,7 @@ void MainWindow::copyAsFormat(Converter *converter, const QString &mimeType)
 {
     // This is not ideal as we are *assuming* the converter is currently associated with the currentEditor()
     ScintillaNext *editor = currentEditor();
+    if (!editor) return;
     QByteArray buffer;
     QTextStream stream(&buffer);
 
@@ -4021,6 +4098,7 @@ bool MainWindow::renameOnDisk(const QString &oldClean, const QString &newClean, 
 void MainWindow::renameFile()
 {
     ScintillaNext *editor = currentEditor();
+    if (!editor) return;
 
     if (editor->isFile()) {
         if (editor->isRemote()) {
@@ -4117,6 +4195,7 @@ void MainWindow::renameFile()
 void MainWindow::moveCurrentFileToTrash()
 {
     ScintillaNext *editor = currentEditor();
+    if (!editor) return;
 
     moveFileToTrash(editor);
 }
@@ -4143,8 +4222,11 @@ void MainWindow::moveFileToTrash(ScintillaNext *editor)
 
 void MainWindow::print()
 {
+    ScintillaNext *editor = currentEditor();
+    if (!editor) return;
+
     QPrintPreviewDialog printDialog(this, Qt::Window);
-    EditorPrintPreviewRenderer renderer(currentEditor());
+    EditorPrintPreviewRenderer renderer(editor);
 
     connect(&printDialog, &QPrintPreviewDialog::paintRequested, &renderer, &EditorPrintPreviewRenderer::render);
 
@@ -4163,6 +4245,7 @@ void MainWindow::print()
 void MainWindow::convertEOLs(int eolMode)
 {
     ScintillaNext *editor = currentEditor();
+    if (!editor) return;
 
     // TODO: does convertEOLs trigger SCN_MODIFIED notifications? If so can these be turned off to increase performance?
     editor->convertEOLs(eolMode);
@@ -4178,6 +4261,7 @@ void MainWindow::convertEOLs(int eolMode)
 void MainWindow::showFindReplaceDialog(int index)
 {
     ScintillaNext *editor = currentEditor();
+    if (!editor) return;
     FindReplaceDialog *frd = findChild<FindReplaceDialog *>(QString(), Qt::FindDirectChildrenOnly);
 
     if (frd == Q_NULLPTR) {
@@ -4586,8 +4670,10 @@ void MainWindow::showSaveErrorMessage(ScintillaNext *editor, QFileDevice::FileEr
 
 void MainWindow::showEditorZoomLevelIndicator()
 {
+    ScintillaNext *editor = currentEditor();
+    if (!editor) return;
     // Not sure if Scintilla's zoom level matches up to an exact percentage, but visibly this is close
-    FadingIndicator::showText(currentEditor(), tr("Zoom: %1%").arg(zoomLevel * 10 + 100));
+    FadingIndicator::showText(editor, tr("Zoom: %1%").arg(zoomLevel * 10 + 100));
 }
 
 MainWindow::UserSaveAction MainWindow::promptForSave(const QVector<ScintillaNext *> &editors)
@@ -5283,6 +5369,7 @@ void MainWindow::languageMenuTriggered()
 {
     const QAction *act = qobject_cast<QAction *>(sender());
     auto editor = currentEditor();
+    if (!editor) return;
     QVariant v = act->data();
 
     setLanguage(editor, v.toString());
