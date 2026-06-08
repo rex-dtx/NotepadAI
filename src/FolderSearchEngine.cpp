@@ -136,18 +136,16 @@ void FolderSearchEngine::startSearch(const QString &folderPath,
                 sink->cancelled.store(false);
                 // DFS runs on pool thread — must not capture raw `this`.
                 // Use the sink's enumerationDone + a file list field instead.
-                auto sinkCopy = sink;
-                QtConcurrent::run([folder, gen, sinkCopy]() {
-                    if (sinkCopy->generation.load(std::memory_order_relaxed) != gen) return;
+                QtConcurrent::run([folder, gen, sink]() {
+                    if (sink->generation.load(std::memory_order_relaxed) != gen) return;
                     auto cancel = std::make_shared<std::atomic<bool>>(false);
                     QStringList files = walkDfsFiltered(folder, cancel);
-                    if (sinkCopy->generation.load(std::memory_order_relaxed) != gen) return;
-                    // Store enumerated files in the sink for the UI timer to pick up
+                    if (sink->generation.load(std::memory_order_relaxed) != gen) return;
                     {
-                        QMutexLocker lock(&sinkCopy->mutex);
-                        sinkCopy->enumeratedFiles = std::move(files);
+                        QMutexLocker lock(&sink->mutex);
+                        sink->enumeratedFiles = std::move(files);
                     }
-                    sinkCopy->enumerationDone.store(true, std::memory_order_release);
+                    sink->enumerationDone.store(true, std::memory_order_release);
                 });
                 return;
             }

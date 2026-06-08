@@ -22,7 +22,7 @@ A full PTY terminal built on libvterm and libptyqt, with mouse reporting and a s
 
 ### The editor itself
 
-It's still Notepad++ at heart: a tabbed, splittable interface (Qt Advanced Docking System) with syntax highlighting for 80+ languages through vendored Scintilla and Lexilla. Macro recording and playback, session management, and an embedded Lua scripting layer are all here. If you're coming from Notepad++, it imports your config and sessions. There's also an editor minimap and live preview for Markdown and HTML.
+It's still Notepad++ at heart: a tabbed, splittable interface (Qt Advanced Docking System) with syntax highlighting for 80+ languages through vendored Scintilla and Lexilla. Macro recording and playback, session management, and an embedded Lua scripting layer are all here. If you're coming from Notepad++, it imports your config and sessions. There's also an editor minimap, live preview for Markdown and HTML, and a find-in-folder search that scans workspace directories with regex support.
 
 ### Extras worth knowing
 
