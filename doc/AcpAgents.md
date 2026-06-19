@@ -25,13 +25,17 @@ The reference implementation itself spawns the agent as a child and talks to it 
    - **Env** (optional key/value pairs merged with the inherited environment)
    - **Icon** (optional)
 4. Optionally set the new agent as the **Default Agent** for the `AI → Open AI Agent in …` menu actions.
-5. Built-in agents (e.g. `builtin:claude-code`) cannot be edited or deleted; you can clone their definition into a custom entry instead.
+5. Built-in agents (e.g. `builtin:claude-code`, `builtin:codex`) cannot be edited or deleted; you can clone their definition into a custom entry instead.
 
-The default built-in agent is **Claude Code** via `npx -y @zed-industries/claude-agent-acp`.
+Built-in agents:
+
+- **Claude Code** via `npx -y @agentclientprotocol/claude-agent-acp@latest` (the default fallback when no preferred default is configured).
+- **Codex** via `npx -y @zed-industries/codex-acp`.
 
 ## Runtime requirements
 
-- **Default Claude Code agent**: Node 18+ and `npx` on the user's `PATH`. The first launch downloads `@zed-industries/claude-agent-acp` (2–5 s spawn delay). Authentication uses `claude login` in a terminal; the agent surfaces "auth required" via stderr, which we classify as `AuthRequired` and display in the dock banner.
+- **Default Claude Code agent**: Node 18+ and `npx` on the user's `PATH`. The first launch downloads `@agentclientprotocol/claude-agent-acp@latest` (2-5 s spawn delay). Authentication uses `claude login` in a terminal; the agent surfaces "auth required" via stderr, which we classify as `AuthRequired` and display in the dock banner.
+- **Built-in Codex agent**: Node 18+ and `npx` on the user's `PATH`. The first launch downloads `@zed-industries/codex-acp`; authentication and credentials follow that adapter's own runtime requirements.
 - **Other agents**: whatever the agent's own runtime requires (e.g. `uvx` for Python agents, a native binary for Go agents).
 
 ## Debugging

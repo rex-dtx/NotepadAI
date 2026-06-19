@@ -35,7 +35,9 @@ public:
     explicit AcpAgentRegistry(ApplicationSettings *settings, QObject *parent = nullptr);
 
     static QString builtinClaudeCodeId();
+    static QString builtinCodexId();
     static AcpAgentDefinition builtinClaudeCodeDefinition();
+    static AcpAgentDefinition builtinCodexDefinition();
 
     QList<AcpAgentDefinition> agents() const;
     bool contains(const QString &id) const;

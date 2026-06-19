@@ -35,7 +35,7 @@ private slots:
     void initTestCase();
     void init();
 
-    void firstLaunch_seedsBuiltinClaudeCode();
+    void firstLaunch_seedsBuiltinAgents();
     void userAddRoundTrip_persistsAcrossInstances();
     void removeBuiltin_isRefused();
     void duplicateId_isRefused();
@@ -63,16 +63,24 @@ void TestAcpAgentRegistry::init()
     s.sync();
 }
 
-void TestAcpAgentRegistry::firstLaunch_seedsBuiltinClaudeCode()
+void TestAcpAgentRegistry::firstLaunch_seedsBuiltinAgents()
 {
     ApplicationSettings s;
     AcpAgentRegistry registry(&s);
 
     const auto agents = registry.agents();
-    QCOMPARE(agents.size(), 1);
-    QCOMPARE(agents.first().id, QStringLiteral("builtin:claude-code"));
+    QCOMPARE(agents.size(), 2);
+    QCOMPARE(agents.first().id, AcpAgentRegistry::builtinClaudeCodeId());
     QVERIFY(agents.first().builtin);
     QCOMPARE(agents.first().command, QStringLiteral("npx"));
+    QCOMPARE(agents.at(1).id, AcpAgentRegistry::builtinCodexId());
+    QVERIFY(agents.at(1).builtin);
+    QCOMPARE(agents.at(1).command, QStringLiteral("npx"));
+    const QStringList codexArgs{
+        QStringLiteral("-y"),
+        QStringLiteral("@zed-industries/codex-acp"),
+    };
+    QCOMPARE(agents.at(1).args, codexArgs);
 }
 
 void TestAcpAgentRegistry::userAddRoundTrip_persistsAcrossInstances()
@@ -92,9 +100,10 @@ void TestAcpAgentRegistry::userAddRoundTrip_persistsAcrossInstances()
 
     AcpAgentRegistry reloaded(&s);
     const auto agents = reloaded.agents();
-    QCOMPARE(agents.size(), 2);
+    QCOMPARE(agents.size(), 3);
     QVERIFY(reloaded.contains(QStringLiteral("user:foo")));
-    QVERIFY(reloaded.contains(QStringLiteral("builtin:claude-code")));
+    QVERIFY(reloaded.contains(AcpAgentRegistry::builtinClaudeCodeId()));
+    QVERIFY(reloaded.contains(AcpAgentRegistry::builtinCodexId()));
     QCOMPARE(reloaded.agent(QStringLiteral("user:foo")).name, QStringLiteral("Foo"));
 }
 
@@ -103,9 +112,11 @@ void TestAcpAgentRegistry::removeBuiltin_isRefused()
     ApplicationSettings s;
     AcpAgentRegistry registry(&s);
 
-    QVERIFY(!registry.removeAgent(QStringLiteral("builtin:claude-code")));
-    QCOMPARE(registry.agents().size(), 1);
-    QVERIFY(registry.contains(QStringLiteral("builtin:claude-code")));
+    QVERIFY(!registry.removeAgent(AcpAgentRegistry::builtinClaudeCodeId()));
+    QVERIFY(!registry.removeAgent(AcpAgentRegistry::builtinCodexId()));
+    QCOMPARE(registry.agents().size(), 2);
+    QVERIFY(registry.contains(AcpAgentRegistry::builtinClaudeCodeId()));
+    QVERIFY(registry.contains(AcpAgentRegistry::builtinCodexId()));
 }
 
 void TestAcpAgentRegistry::duplicateId_isRefused()
@@ -124,11 +135,11 @@ void TestAcpAgentRegistry::duplicateId_isRefused()
     dup.name = QStringLiteral("Foo2");
     dup.command = QStringLiteral("bar");
     QVERIFY(!registry.addAgent(dup));
-    QCOMPARE(registry.agents().size(), 2);
+    QCOMPARE(registry.agents().size(), 3);
 
     // Built-in id should also be refused.
     AcpAgentDefinition collidesWithBuiltin;
-    collidesWithBuiltin.id = QStringLiteral("builtin:claude-code");
+    collidesWithBuiltin.id = AcpAgentRegistry::builtinCodexId();
     collidesWithBuiltin.name = QStringLiteral("Hijack");
     collidesWithBuiltin.command = QStringLiteral("evil");
     QVERIFY(!registry.addAgent(collidesWithBuiltin));
@@ -139,7 +150,7 @@ void TestAcpAgentRegistry::defaultAgentId_fallsBackToBuiltin()
     ApplicationSettings s;
     AcpAgentRegistry registry(&s);
 
-    QCOMPARE(registry.defaultAgentId(), QStringLiteral("builtin:claude-code"));
+    QCOMPARE(registry.defaultAgentId(), AcpAgentRegistry::builtinClaudeCodeId());
 }
 
 void TestAcpAgentRegistry::autoApprovePolicy_defaultsToManual()

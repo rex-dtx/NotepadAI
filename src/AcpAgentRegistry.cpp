@@ -27,6 +27,7 @@
 
 namespace {
 constexpr const char kBuiltinClaudeCodeId[] = "builtin:claude-code";
+constexpr const char kBuiltinCodexId[]      = "builtin:codex";
 constexpr const char kPolicyManual[]        = "manual";
 constexpr const char kPolicyAllowAll[]      = "allowAll";
 }
@@ -34,6 +35,11 @@ constexpr const char kPolicyAllowAll[]      = "allowAll";
 QString AcpAgentRegistry::builtinClaudeCodeId()
 {
     return QString::fromLatin1(kBuiltinClaudeCodeId);
+}
+
+QString AcpAgentRegistry::builtinCodexId()
+{
+    return QString::fromLatin1(kBuiltinCodexId);
 }
 
 AcpAgentDefinition AcpAgentRegistry::builtinClaudeCodeDefinition()
@@ -51,6 +57,21 @@ AcpAgentDefinition AcpAgentRegistry::builtinClaudeCodeDefinition()
     return def;
 }
 
+AcpAgentDefinition AcpAgentRegistry::builtinCodexDefinition()
+{
+    AcpAgentDefinition def;
+    def.id = builtinCodexId();
+    def.name = QStringLiteral("Codex");
+    def.command = QStringLiteral("npx");
+    def.args = QStringList{
+        QStringLiteral("-y"),
+        QStringLiteral("@zed-industries/codex-acp"),
+    };
+    def.icon = QString();
+    def.builtin = true;
+    return def;
+}
+
 AcpAgentRegistry::AcpAgentRegistry(ApplicationSettings *settings, QObject *parent)
     : QObject(parent)
     , m_settings(settings)
@@ -62,6 +83,7 @@ void AcpAgentRegistry::load()
 {
     m_agents.clear();
     m_agents.append(builtinClaudeCodeDefinition());
+    m_agents.append(builtinCodexDefinition());
 
     if (!m_settings) {
         return;
