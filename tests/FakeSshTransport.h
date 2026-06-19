@@ -292,6 +292,12 @@ public:
     qintptr socketFd() const override { return -1; } // no real QSocketNotifier in tests
     void disconnect() override {}
 
+    // Scriptable block directions (mirrors libssh2_session_block_directions).
+    // Default 0 (not blocked). Tests set this to BlockOutbound to exercise the
+    // write-notifier arm path in serviceSftpLane.
+    int fakeBlockDirections = 0;
+    int blockDirections() const override { return fakeBlockDirections; }
+
     // FIX-3: scriptable keepalive probe. Default 15 (secs-to-next on success);
     // set keepaliveReturn < 0 to simulate a fatal socket error during the send.
     int sendKeepalive() override

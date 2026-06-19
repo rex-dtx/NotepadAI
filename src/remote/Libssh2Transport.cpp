@@ -828,6 +828,12 @@ QString Libssh2Transport::lastErrorMessage() const
     return (msg && len > 0) ? QString::fromUtf8(msg, len) : QString();
 }
 
+int Libssh2Transport::blockDirections() const
+{
+    if (!m_session) return 0;
+    return libssh2_session_block_directions(m_session);
+}
+
 void Libssh2Transport::disconnect()
 {
     // Tear the SFTP layer down first (frees its handles + the implicit channel)

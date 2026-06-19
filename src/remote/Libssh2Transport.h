@@ -96,6 +96,7 @@ public:
     void disconnect() override;
     int lastErrno() const override;
     QString lastErrorMessage() const override;
+    int blockDirections() const override;
 
 private:
     _LIBSSH2_CHANNEL *channel(int channelId) const { return m_channels.value(channelId, nullptr); }

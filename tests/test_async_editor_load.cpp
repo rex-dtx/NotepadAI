@@ -77,12 +77,12 @@ public:
     QByteArray lastWriteData;
     bool failNextWrite = false;
 
-    void readFileAsync(const QString &path, ReadCallback cb) override
+    void readFileAsync(const QString &path, const ReadCallback &cb) override
     {
-        pendingReads.append({path, std::move(cb)});
+        pendingReads.append({path, cb});
     }
 
-    void writeFileAsync(const QString &path, const QByteArray &data, WriteCallback cb) override
+    void writeFileAsync(const QString &path, const QByteArray &data, const WriteCallback &cb) override
     {
         lastWritePath = path;
         lastWriteData = data;

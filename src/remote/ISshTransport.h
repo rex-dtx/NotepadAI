@@ -46,6 +46,12 @@ public:
         ChannelBusy, // server denied channel (MaxSessions) — transient back-pressure
     };
 
+    // Bitmask values returned by blockDirections() (mirrors libssh2).
+    // After any libssh2 call returns EAGAIN, blockDirections() reports what the
+    // library is blocked on. Use this to decide whether to arm the write notifier.
+    static constexpr int BlockInbound  = 0x0001;
+    static constexpr int BlockOutbound = 0x0002;
+
     // D1a: identifies which of the two long-lived SFTP channels an op targets.
     // Bulk = file read/write (editor open/save); Meta = readdir/stat/poll-watch.
     // Each lane opens its own LIBSSH2_SFTP session so a large bulk transfer never
@@ -240,6 +246,11 @@ public:
     // log events to distinguish session-level EAGAIN from SFTP-protocol EAGAIN.
     virtual int lastErrno() const { return 0; }
     virtual QString lastErrorMessage() const { return {}; }
+
+    // After an EAGAIN, reports what libssh2 is blocked on: BlockInbound (waiting
+    // for server data — read notifier suffices) and/or BlockOutbound (send buffer
+    // full — write notifier must be armed). Returns 0 when not connected.
+    virtual int blockDirections() const { return 0; }
 };
 
 } // namespace remote

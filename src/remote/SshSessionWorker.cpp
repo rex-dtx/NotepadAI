@@ -1081,6 +1081,8 @@ void SshSessionWorker::serviceSftpLane(SftpLane lane, QList<SftpOp> &queue, bool
     while (!queue.isEmpty()) {
         const ISshTransport::Step initStep = ensureSftpLaneInited(lane, inited);
         if (initStep == ISshTransport::Step::Again) {
+            if (m_transport->blockDirections() & ISshTransport::BlockOutbound)
+                setWriteNotifierEnabled(true);
             return;
         }
         if (initStep == ISshTransport::Step::Error) {
@@ -1090,7 +1092,9 @@ void SshSessionWorker::serviceSftpLane(SftpLane lane, QList<SftpOp> &queue, bool
         }
         SftpOp &op = queue.first();
         if (!advanceSftpOp(lane, op)) {
-            return; // EAGAIN mid-op: resume on the next socket edge
+            if (m_transport->blockDirections() & ISshTransport::BlockOutbound)
+                setWriteNotifierEnabled(true);
+            return;
         }
         queue.removeFirst(); // finished (a *Done signal was emitted)
     }
