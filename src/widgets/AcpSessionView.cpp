@@ -40,6 +40,8 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QEvent>
+#include <QDir>
+#include <QFileInfo>
 #include <QFileDialog>
 #include <QFocusEvent>
 #include <QFont>
@@ -73,6 +75,7 @@ namespace {
 // bottom". Used both for the user's at-bottom recognition (the flag flips on
 // when they reach this band) and for the programmatic scroll target.
 constexpr int kAtBottomEpsilonPx = 8;
+constexpr int kMaxSkillCompletions = 256;
 
 bool isEffortConfigOption(const AcpProtocol::AcpConfigOption &opt)
 {
@@ -2068,13 +2071,22 @@ bool AcpSessionView::inputKeyEventIsSubmit(QKeyEvent *ke) const
 void AcpSessionView::showCommandPopup()
 {
     if (!m_commandPopup || !m_model) return;
-    const auto &cmds = m_model->availableCommands();
-    if (cmds.isEmpty()) { hideCommandPopup(); return; }
-
     m_commandPopup->clear();
-    for (const auto &cmd : cmds) {
-        appendCommandItem(cmd);
+
+    if (m_completionTrigger == QLatin1Char('$')) {
+        const QStringList skills = cachedSkillNames();
+        if (skills.isEmpty()) { hideCommandPopup(); return; }
+        for (const QString &skill : skills) {
+            appendCompletionItem(QStringLiteral("$") + skill, skill);
+        }
+    } else {
+        const auto &cmds = m_model->availableCommands();
+        if (cmds.isEmpty()) { hideCommandPopup(); return; }
+        for (const auto &cmd : cmds) {
+            appendCommandItem(cmd);
+        }
     }
+
     m_commandPopup->setCurrentRow(0);
     m_commandPopup->show();
     resizeCommandPopup();
@@ -2107,33 +2119,49 @@ void AcpSessionView::filterCommandPopup()
     if (!m_input || !m_model) { hideCommandPopup(); return; }
     const QString text = m_input->toPlainText();
 
-    if (!text.startsWith(QLatin1Char('/')) || text.contains(QLatin1Char('\n'))) {
+    if (text.contains(QLatin1Char('\n'))
+        || !(text.startsWith(QLatin1Char('/')) || text.startsWith(QLatin1Char('$')))) {
         hideCommandPopup();
         return;
     }
 
-    const auto &cmds = m_model->availableCommands();
-    if (cmds.isEmpty()) { hideCommandPopup(); return; }
-
+    m_completionTrigger = text.front();
     const QString prefix = text.mid(1).toLower();
 
     if (!m_commandPopup->isVisible()) {
         showCommandPopup();
     }
 
-    // Rank: names that START WITH the typed prefix come first, names that only
-    // CONTAIN it as a substring come after. Original order is preserved within
-    // each tier. Empty prefix puts everything in the starts-with tier (no-op
-    // reorder), matching the unfiltered popup.
     m_commandPopup->clear();
-    for (const auto &cmd : cmds) {
-        if (prefix.isEmpty() || cmd.name.toLower().startsWith(prefix))
-            appendCommandItem(cmd);
-    }
-    for (const auto &cmd : cmds) {
-        const QString lower = cmd.name.toLower();
-        if (!prefix.isEmpty() && !lower.startsWith(prefix) && lower.contains(prefix))
-            appendCommandItem(cmd);
+    if (m_completionTrigger == QLatin1Char('$')) {
+        const QStringList skills = cachedSkillNames();
+        if (skills.isEmpty()) { hideCommandPopup(); return; }
+        for (const QString &skill : skills) {
+            if (prefix.isEmpty() || skill.toLower().startsWith(prefix))
+                appendCompletionItem(QStringLiteral("$") + skill, skill);
+        }
+        for (const QString &skill : skills) {
+            const QString lower = skill.toLower();
+            if (!prefix.isEmpty() && !lower.startsWith(prefix) && lower.contains(prefix))
+                appendCompletionItem(QStringLiteral("$") + skill, skill);
+        }
+    } else {
+        const auto &cmds = m_model->availableCommands();
+        if (cmds.isEmpty()) { hideCommandPopup(); return; }
+
+        // Rank: names that START WITH the typed prefix come first, names that only
+        // CONTAIN it as a substring come after. Original order is preserved within
+        // each tier. Empty prefix puts everything in the starts-with tier (no-op
+        // reorder), matching the unfiltered popup.
+        for (const auto &cmd : cmds) {
+            if (prefix.isEmpty() || cmd.name.toLower().startsWith(prefix))
+                appendCommandItem(cmd);
+        }
+        for (const auto &cmd : cmds) {
+            const QString lower = cmd.name.toLower();
+            if (!prefix.isEmpty() && !lower.startsWith(prefix) && lower.contains(prefix))
+                appendCommandItem(cmd);
+        }
     }
 
     if (m_commandPopup->count() == 0) {
@@ -2150,8 +2178,14 @@ void AcpSessionView::appendCommandItem(const AcpProtocol::AcpCommandInfo &cmd)
     QString label = QStringLiteral("/") + cmd.name;
     if (!cmd.description.isEmpty())
         label += QStringLiteral("  ") + cmd.description;
+    appendCompletionItem(label, cmd.name);
+}
+
+void AcpSessionView::appendCompletionItem(const QString &label, const QString &value)
+{
+    if (!m_commandPopup) return;
     auto *item = new QListWidgetItem(label, m_commandPopup);
-    item->setData(Qt::UserRole, cmd.name);
+    item->setData(Qt::UserRole, value);
 }
 
 void AcpSessionView::acceptCommandCompletion()
@@ -2161,11 +2195,87 @@ void AcpSessionView::acceptCommandCompletion()
     if (!item || item->isHidden()) { hideCommandPopup(); return; }
 
     const QString name = item->data(Qt::UserRole).toString();
-    m_input->setPlainText(QStringLiteral("/") + name + QStringLiteral(" "));
+    const QChar trigger = m_completionTrigger == QLatin1Char('$')
+        ? QLatin1Char('$')
+        : QLatin1Char('/');
+    m_input->setPlainText(QString(trigger) + name + QStringLiteral(" "));
     QTextCursor cur = m_input->textCursor();
     cur.movePosition(QTextCursor::End);
     m_input->setTextCursor(cur);
     hideCommandPopup();
+}
+
+QString AcpSessionView::owningDockWorkingDirectory() const
+{
+    for (QWidget *w = parentWidget(); w; w = w->parentWidget()) {
+        if (auto *dock = qobject_cast<AiAgentDock *>(w)) {
+            return dock->workingDirectory();
+        }
+    }
+    return QString();
+}
+
+QString AcpSessionView::resolveSkillsDirectory(const QString &workingDirectory) const
+{
+    if (workingDirectory.isEmpty())
+        return {};
+
+    QDir dir(workingDirectory);
+    QString previous;
+    while (true) {
+        const QString candidate = dir.filePath(QStringLiteral(".agents/skills"));
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isDir())
+            return info.absoluteFilePath();
+
+        const QString current = dir.absolutePath();
+        if (current == previous || !dir.cdUp())
+            break;
+        previous = current;
+    }
+    return {};
+}
+
+QStringList AcpSessionView::cachedSkillNames()
+{
+    const QString cwd = owningDockWorkingDirectory();
+    const QString skillsDir = resolveSkillsDirectory(cwd);
+    const QFileInfo skillsInfo(skillsDir);
+    const QDateTime mtime = skillsInfo.exists() ? skillsInfo.lastModified() : QDateTime();
+
+    if (cwd != m_skillCacheCwd || skillsDir != m_skillCacheDir || mtime != m_skillCacheMtime) {
+        m_skillCacheCwd = cwd;
+        m_skillCacheDir = skillsDir;
+        m_skillCacheMtime = mtime;
+        m_skillCacheNames = scanSkillNames(skillsDir);
+    }
+    return m_skillCacheNames;
+}
+
+QStringList AcpSessionView::scanSkillNames(const QString &skillsDirectory) const
+{
+    if (skillsDirectory.isEmpty())
+        return {};
+
+    QDir skillsDir(skillsDirectory);
+    if (!skillsDir.exists())
+        return {};
+
+    const QFileInfoList entries = skillsDir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable,
+        QDir::Name | QDir::IgnoreCase);
+
+    QStringList names;
+    names.reserve(qMin(entries.size(), kMaxSkillCompletions));
+    for (const QFileInfo &entry : entries) {
+        const QString name = entry.fileName();
+        if (name.isEmpty() || name.startsWith(QLatin1Char('.')))
+            continue;
+        names.append(name);
+        if (names.size() >= kMaxSkillCompletions)
+            break;
+    }
+    return names;
 }
 
 void AcpSessionView::positionImproveButton()
@@ -2194,8 +2304,8 @@ void AcpSessionView::updateImproveButtonState()
         return;
     }
 
-    // Hide when bare slash command (no arguments).
-    static const QRegularExpression bareCmd(QStringLiteral("^\\s*/\\w+\\s*$"));
+    // Hide when bare slash command or skill reference (no arguments).
+    static const QRegularExpression bareCmd(QStringLiteral("^\\s*[/\\$]\\w+\\s*$"));
     if (bareCmd.match(text).hasMatch()) {
         m_improveBtn->hide();
         return;
@@ -2232,14 +2342,8 @@ void AcpSessionView::onImproveClicked()
 
     const auto images = m_attachmentList->peekAll();
 
-    // Find the owning dock to get the working directory.
-    QString workingDir;
-    for (QWidget *w = parentWidget(); w; w = w->parentWidget()) {
-        if (auto *dock = qobject_cast<AiAgentDock *>(w)) {
-            workingDir = dock->workingDirectory();
-            break;
-        }
-    }
+    // Use the agent's captured spawn cwd, not the live active workspace.
+    const QString workingDir = owningDockWorkingDirectory();
 
     const QList<AcpProtocol::AcpCommandInfo> commands =
         m_model ? m_model->availableCommands() : QList<AcpProtocol::AcpCommandInfo>{};

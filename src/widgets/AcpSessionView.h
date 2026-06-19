@@ -22,6 +22,7 @@
 #include <QElapsedTimer>
 #include <QFont>
 #include <QHash>
+#include <QDateTime>
 #include <QPointer>
 #include <QString>
 #include <QStringList>
@@ -204,13 +205,18 @@ private:
     // settings are unavailable (test harness).
     QFont chatFont() const;
 
-    // Slash-command completion popup.
+    // Slash-command / skill completion popup.
     void showCommandPopup();
     void hideCommandPopup();
     void resizeCommandPopup();
     void filterCommandPopup();
     void acceptCommandCompletion();
     void appendCommandItem(const AcpProtocol::AcpCommandInfo &cmd);
+    void appendCompletionItem(const QString &label, const QString &value);
+    QString owningDockWorkingDirectory() const;
+    QString resolveSkillsDirectory(const QString &workingDirectory) const;
+    QStringList cachedSkillNames();
+    QStringList scanSkillNames(const QString &skillsDirectory) const;
 
     AcpSessionModel *m_model = nullptr;       // non-owning
     AcpConnection *m_connection = nullptr;    // non-owning
@@ -312,8 +318,13 @@ private:
     bool m_stickToBottom = true;
     bool m_programmaticScroll = false;
 
-    // Slash-command completion
+    // Slash-command / skill completion
     QListWidget *m_commandPopup = nullptr;
+    QChar m_completionTrigger = QLatin1Char('/');
+    QString m_skillCacheCwd;
+    QString m_skillCacheDir;
+    QDateTime m_skillCacheMtime;
+    QStringList m_skillCacheNames;
 
     // Prompt improve button (floating inside m_input)
     QToolButton *m_improveBtn = nullptr;
