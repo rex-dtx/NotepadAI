@@ -36,6 +36,7 @@ private slots:
     void groupIdIncrementsPerTurn();
     void loadRoundTrip();
     void imageBlocksSurviveRoundTrip();
+    void detachingHistoryStoreFlushesPendingSnapshot();
 };
 
 void TestAcpSessionModel::emptySessionDoesNotPersist()
@@ -217,6 +218,29 @@ void TestAcpSessionModel::imageBlocksSurviveRoundTrip()
     QCOMPARE(content.at(1).kind, AcpProtocol::AcpContentBlock::Kind::Image);
     QCOMPARE(content.at(1).imageData, imgBytes);
     QCOMPARE(content.at(1).mimeType, QStringLiteral("image/png"));
+}
+
+void TestAcpSessionModel::detachingHistoryStoreFlushesPendingSnapshot()
+{
+    QTemporaryDir tmp;
+    AcpHistoryStore store;
+    store.setHistoryDir(tmp.path());
+    QSignalSpy spy(&store, &AcpHistoryStore::flushed);
+
+    {
+        AcpSessionModel model(QStringLiteral("detach"), QStringLiteral("proj"), tmp.path());
+        model.setHistoryStore(&store);
+        model.onMessageChunk(QStringLiteral("pending snapshot"));
+        model.setHistoryStore(nullptr);
+    }
+
+    QVERIFY(spy.wait(2000));
+
+    AcpSessionModel reloaded(QStringLiteral("detach"), QStringLiteral("ignored"), tmp.path());
+    QCOMPARE(reloaded.messages().size(), 1);
+    QCOMPARE(reloaded.messages().first().content.first().text,
+             QStringLiteral("pending snapshot"));
+    QCOMPARE(reloaded.projectId(), QStringLiteral("proj"));
 }
 
 QTEST_GUILESS_MAIN(TestAcpSessionModel)

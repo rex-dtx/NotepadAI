@@ -27,6 +27,7 @@
 #include <QJsonValue>
 #include <QLoggingCategory>
 #include <QMetaObject>
+#include <QTimer>
 #include <utility>
 
 #include "AcpHistoryStore.h"
@@ -35,6 +36,8 @@
 using namespace AcpProtocol;
 
 namespace {
+
+constexpr int kPersistSnapshotDebounceMs = 500;
 
 QString defaultHistoryDir()
 {
@@ -129,10 +132,16 @@ AcpSessionModel::AcpSessionModel(QString sessionId,
     loadFromDisk();
 }
 
-AcpSessionModel::~AcpSessionModel() = default;
+AcpSessionModel::~AcpSessionModel()
+{
+    flushPendingPersist();
+}
 
 void AcpSessionModel::setHistoryStore(AcpHistoryStore *store)
 {
+    if (m_historyStore && m_historyStore != store) {
+        flushPendingPersist();
+    }
     m_historyStore = store;
 }
 
@@ -416,6 +425,31 @@ void AcpSessionModel::schedulePersistIfNeeded()
         return;
     }
     if (isEmpty()) {
+        return;
+    }
+    m_persistDirty = true;
+    if (!m_persistTimer) {
+        m_persistTimer = new QTimer(this);
+        m_persistTimer->setSingleShot(true);
+        m_persistTimer->setInterval(kPersistSnapshotDebounceMs);
+        connect(m_persistTimer, &QTimer::timeout,
+                this, &AcpSessionModel::flushPendingPersist);
+    }
+    if (!m_persistTimer->isActive()) {
+        m_persistTimer->start();
+    }
+}
+
+void AcpSessionModel::flushPendingPersist()
+{
+    if (!m_persistDirty) {
+        return;
+    }
+    if (m_persistTimer && m_persistTimer->isActive()) {
+        m_persistTimer->stop();
+    }
+    m_persistDirty = false;
+    if (m_historyStore == nullptr || isEmpty()) {
         return;
     }
     const QJsonObject payload = toHistoryJson();
@@ -727,6 +761,7 @@ void AcpSessionModel::onPromptEnded()
     emit isProcessingChanged(false);
     emit turnEnded(turnGroup);
     schedulePersistIfNeeded();
+    flushPendingPersist();
 }
 
 void AcpSessionModel::appendUserMessage(const QString &text,

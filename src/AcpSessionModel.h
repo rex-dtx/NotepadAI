@@ -35,6 +35,7 @@
 #include "AcpProtocol.h"
 
 class AcpHistoryStore;
+class QTimer;
 
 // Host-side per-message record. Distinct from AcpContentBlock (which is a
 // wire payload type) — kept in the host-side header so it doesn't pollute
@@ -66,9 +67,10 @@ struct AcpTimelineEntry
 // available modes/models/commands/config options. Subscribes to AcpConnection
 // signals via public slots — Group 4 wires the QObject connections.
 //
-// Persistence: when `setHistoryStore` is called, every state-mutating event
-// posts a full JSON snapshot to the worker store via QMetaObject::invokeMethod
-// (queued, thread-safe). The model never blocks on writes.
+// Persistence: when `setHistoryStore` is called, state-mutating events coalesce
+// a full JSON snapshot before posting it to the worker store via
+// QMetaObject::invokeMethod (queued, thread-safe). The model never blocks on
+// writes and never rebuilds snapshots per streamed tool update.
 //
 // Load-on-construct: the constructor synchronously reads
 // `<historyDirOverride or AppDataLocation/acp-history>/<sessionId>.json`
@@ -171,6 +173,7 @@ signals:
 
 private:
     void schedulePersistIfNeeded();
+    void flushPendingPersist();
     QString resolveHistoryDir() const;
     QString resolveHistoryFilePath() const;
 
@@ -180,6 +183,8 @@ private:
     QString m_historyDirOverride; // empty = use default AppDataLocation
 
     AcpHistoryStore *m_historyStore = nullptr; // non-owning
+    QTimer *m_persistTimer = nullptr;
+    bool m_persistDirty = false;
 
     QVector<AcpMessage> m_messages;
     QHash<QString, AcpProtocol::AcpToolCall> m_toolCalls;

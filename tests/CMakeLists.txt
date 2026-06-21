@@ -492,6 +492,21 @@ target_sources(test_acp_message_widget_streaming PRIVATE
 )
 add_test(NAME AcpMessageWidgetStreaming COMMAND test_acp_message_widget_streaming)
 
+# --- AcpToolCallCard: lazy/coalesced tool-output body rendering ---
+qt_add_executable(test_acp_tool_call_card test_acp_tool_call_card.cpp)
+target_include_directories(test_acp_tool_call_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/widgets
+)
+target_link_libraries(test_acp_tool_call_card PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+target_sources(test_acp_tool_call_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/AcpProtocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/AcpProtocol.h
+    ${CMAKE_SOURCE_DIR}/src/widgets/AcpToolCallCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/widgets/AcpToolCallCard.h
+)
+add_test(NAME AcpToolCallCard COMMAND test_acp_tool_call_card)
+
 # --- ProfileScope: lock-free per-tag timing aggregation ---
 qt_add_executable(test_profile_scope test_profile_scope.cpp)
 target_include_directories(test_profile_scope PRIVATE ${CMAKE_SOURCE_DIR}/src)

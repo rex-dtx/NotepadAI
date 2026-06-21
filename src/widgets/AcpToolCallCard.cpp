@@ -54,6 +54,7 @@ constexpr const char *kDiffDelMark = "#d9534f";
 // is just a guard so a pathological full-file paste doesn't lock the UI.
 constexpr int kMaxLcsLines = 2000;
 constexpr int kMaxRawOutputChars = 60000;
+constexpr int kBodyRenderDebounceMs = 80;
 
 enum class DiffKind : std::uint8_t { Context, Add, Remove };
 struct DiffLine
@@ -109,28 +110,30 @@ QVector<DiffLine> lcsLineDiff(const QStringList &oldLines, const QStringList &ne
         }
     }
     QVector<DiffLine> out;
+    out.reserve(m + n);
     int i = m, j = n;
     while (i > 0 && j > 0) {
         if (oldLines[i - 1] == newLines[j - 1]) {
-            out.prepend({DiffKind::Context, i, j, oldLines[i - 1]});
+            out.append({DiffKind::Context, i, j, oldLines[i - 1]});
             --i;
             --j;
         } else if (dp[i - 1][j] > dp[i][j - 1]) {
-            out.prepend({DiffKind::Remove, i, 0, oldLines[i - 1]});
+            out.append({DiffKind::Remove, i, 0, oldLines[i - 1]});
             --i;
         } else {
-            out.prepend({DiffKind::Add, 0, j, newLines[j - 1]});
+            out.append({DiffKind::Add, 0, j, newLines[j - 1]});
             --j;
         }
     }
     while (i > 0) {
-        out.prepend({DiffKind::Remove, i, 0, oldLines[i - 1]});
+        out.append({DiffKind::Remove, i, 0, oldLines[i - 1]});
         --i;
     }
     while (j > 0) {
-        out.prepend({DiffKind::Add, 0, j, newLines[j - 1]});
+        out.append({DiffKind::Add, 0, j, newLines[j - 1]});
         --j;
     }
+    std::reverse(out.begin(), out.end());
     return out;
 }
 
@@ -226,6 +229,7 @@ QString renderDiffBlock(const QJsonObject &block, const DiffPalette &pal)
              QString::number(newLines.size()).size()));
 
     QString html;
+    html.reserve(path.size() + oldText.size() + newText.size() + rows.size() * 96 + 256);
     html += QStringLiteral(
                 "<div style=\"background: %1; color: %2; padding: 4px 6px; "
                 "border: 1px solid %3; border-radius: 4px; "
@@ -532,39 +536,66 @@ AcpToolCallCard::AcpToolCallCard(const AcpProtocol::AcpToolCall &initial, QWidge
         setCollapsed(!checked);
     });
 
+    m_renderTimer = new QTimer(this);
+    m_renderTimer->setSingleShot(true);
+    m_renderTimer->setInterval(kBodyRenderDebounceMs);
+    connect(m_renderTimer, &QTimer::timeout, this, &AcpToolCallCard::flushBodyRender);
+
     refreshHeader();
-    rerenderBody();
-    // Cards land collapsed by default — the title alone is enough to scan
-    // a turn; click the chevron to read the body. Keeps long transcripts
-    // skimmable without forcing the user to collapse each card by hand.
-    // Diffs are an exception: their value is in the body, so auto-expand.
+    // Cards land collapsed by default — the title alone is enough to scan a
+    // turn. Body rendering is intentionally lazy: tool output can be huge, and
+    // collapsed QTextDocument layout must not sit in the update hot path.
     setCollapsed(true);
-    maybeAutoExpandForDiff();
 }
 
 void AcpToolCallCard::apply(const AcpProtocol::AcpToolCallUpdate &update)
 {
+    bool headerChanged = false;
+    bool bodyChanged = false;
     if (update.title.has_value()) {
-        m_title = *update.title;
+        if (m_title != *update.title) {
+            m_title = *update.title;
+            headerChanged = true;
+        }
     }
     if (update.kind.has_value()) {
-        m_kind = *update.kind;
+        if (m_kind != *update.kind) {
+            m_kind = *update.kind;
+            headerChanged = true;
+        }
     }
     if (update.status.has_value()) {
-        m_status = *update.status;
+        if (m_status != *update.status) {
+            m_status = *update.status;
+            headerChanged = true;
+        }
     }
     if (update.content.has_value()) {
         m_content = *update.content;
+        bodyChanged = true;
     }
     if (update.rawInput.has_value()) {
         m_rawInput = *update.rawInput;
+        headerChanged = true;
+        bodyChanged = true;
     }
     if (update.rawOutput.has_value()) {
         m_rawOutput = *update.rawOutput;
+        bodyChanged = true;
     }
-    refreshHeader();
-    rerenderBody();
-    maybeAutoExpandForDiff();
+    if (headerChanged) {
+        refreshHeader();
+    }
+    if (bodyChanged) {
+        m_bodyDirty = true;
+    }
+    if (m_bodyDirty) {
+        if (!m_collapsed && isTerminalStatus()) {
+            flushBodyRender();
+        } else {
+            scheduleBodyRender();
+        }
+    }
 }
 
 bool AcpToolCallCard::hasDiffContent() const
@@ -578,12 +609,12 @@ bool AcpToolCallCard::hasDiffContent() const
     return false;
 }
 
-void AcpToolCallCard::maybeAutoExpandForDiff()
+bool AcpToolCallCard::isTerminalStatus() const
 {
-    if (m_autoExpandedForDiff || m_userToggled) return;
-    if (!hasDiffContent()) return;
-    m_autoExpandedForDiff = true;
-    setCollapsed(false);
+    return m_status == QLatin1String("completed")
+           || m_status == QLatin1String("failed")
+           || m_status == QLatin1String("cancelled")
+           || m_status == QLatin1String("canceled");
 }
 
 QString AcpToolCallCard::statusGlyph() const
@@ -779,9 +810,37 @@ void AcpToolCallCard::refreshHeader()
     }
 }
 
+void AcpToolCallCard::scheduleBodyRender()
+{
+    if (!m_bodyDirty) return;
+    if (m_collapsed) {
+        if (m_renderTimer && m_renderTimer->isActive()) {
+            m_renderTimer->stop();
+        }
+        return;
+    }
+    if (m_renderTimer) {
+        if (!m_renderTimer->isActive()) {
+            m_renderTimer->start();
+        }
+    } else {
+        flushBodyRender();
+    }
+}
+
+void AcpToolCallCard::flushBodyRender()
+{
+    if (!m_bodyDirty) return;
+    if (m_renderTimer && m_renderTimer->isActive()) {
+        m_renderTimer->stop();
+    }
+    rerenderBody();
+}
+
 void AcpToolCallCard::rerenderBody()
 {
     if (!m_body) return;
+    m_bodyDirty = false;
 
     if (hasDiffContent()) {
         // Resolve palette colors to hex strings — QTextDocument's CSS subset
@@ -918,23 +977,12 @@ void AcpToolCallCard::rerenderBody()
 
 void AcpToolCallCard::refitBodyHeight()
 {
-    if (!m_body) return;
     // Width from our own already-set geometry, not the child viewport — the
     // child has not been laid out yet inside our resizeEvent.
     int marginL = 0, marginT = 0, marginR = 0, marginB = 0;
     if (m_outer) {
         m_outer->getContentsMargins(&marginL, &marginT, &marginR, &marginB);
     }
-    const int w = width() - marginL - marginR;
-    if (w <= 0) return;
-    QTextDocument *doc = m_body->document();
-    // Force a full layout pass for the current width before measuring —
-    // QTextDocument under-reports height for freshly-set multi-line HTML
-    // (the diff body) until the layout engine has run, which clips an
-    // expanded card down to roughly its first line.
-    const int bodyH = qMax(0, static_cast<int>(std::ceil(layoutDocumentHeight(doc, w))));
-    m_body->setFixedHeight(bodyH);
-
     // Pin the card's own height. setFixedHeight on the inner browser only
     // clamps the browser; the card's QFrame sizeHint still cascades through
     // QAbstractScrollArea's font-derived default and inflates the card.
@@ -945,6 +993,24 @@ void AcpToolCallCard::refitBodyHeight()
         }
     }
     int cardH = marginT + marginB + headerH;
+    if (m_collapsed || !m_body) {
+        setFixedHeight(cardH);
+        return;
+    }
+
+    const int w = width() - marginL - marginR;
+    if (w <= 0) {
+        setFixedHeight(cardH);
+        return;
+    }
+    QTextDocument *doc = m_body->document();
+    // Force a full layout pass for the current width before measuring —
+    // QTextDocument under-reports height for freshly-set multi-line HTML
+    // (the diff body) until the layout engine has run, which clips an
+    // expanded card down to roughly its first line.
+    const int bodyH = qMax(0, static_cast<int>(std::ceil(layoutDocumentHeight(doc, w))));
+    m_body->setFixedHeight(bodyH);
+
     // Gate on the LOGICAL expand state, not m_body->isVisible(): a freshly
     // inserted/auto-expanded card can still be unshown (parent not yet painted)
     // when the synchronous + deferred refit runs, so isVisible() reads false
@@ -954,9 +1020,7 @@ void AcpToolCallCard::refitBodyHeight()
     // card in the transcript (the diff cards' overlap bug). m_collapsed is
     // authoritative and independent of show timing, so the height stays correct
     // whether or not the card is on screen at measure time.
-    if (!m_collapsed) {
-        cardH += (m_outer ? m_outer->spacing() : 0) + bodyH;
-    }
+    cardH += (m_outer ? m_outer->spacing() : 0) + bodyH;
     setFixedHeight(cardH);
 }
 
@@ -973,7 +1037,11 @@ void AcpToolCallCard::scheduleRefit()
     QTimer::singleShot(0, this, [guard]() {
         if (!guard) return;
         guard->m_refitScheduled = false;
-        guard->refitBodyHeight();
+        if (!guard->m_collapsed && guard->m_bodyDirty) {
+            guard->flushBodyRender();
+        } else {
+            guard->refitBodyHeight();
+        }
     });
 }
 
@@ -981,13 +1049,20 @@ void AcpToolCallCard::resizeEvent(QResizeEvent *event)
 {
     QFrame::resizeEvent(event);
     refreshHeader();
-    refitBodyHeight();
+    if (!m_collapsed && m_bodyDirty) {
+        flushBodyRender();
+    } else {
+        refitBodyHeight();
+    }
 }
 
 void AcpToolCallCard::setCollapsed(bool collapsed)
 {
     m_collapsed = collapsed;
     if (m_body) m_body->setVisible(!collapsed);
+    if (collapsed && m_renderTimer && m_renderTimer->isActive()) {
+        m_renderTimer->stop();
+    }
     if (m_expandBtn) {
         m_expandBtn->blockSignals(true);
         m_expandBtn->setChecked(!collapsed);
@@ -998,6 +1073,7 @@ void AcpToolCallCard::setCollapsed(bool collapsed)
     // grows back when re-expanded). The body may have been laid out at a
     // stale width while hidden, so follow up with a deferred refit once the
     // expanded geometry settles — otherwise the diff clips on first expand.
+    if (!collapsed) flushBodyRender();
     refitBodyHeight();
     if (!collapsed) scheduleRefit();
 }
@@ -1016,8 +1092,11 @@ void AcpToolCallCard::setChatFont(const QFont &font)
     if (m_titleLabel) m_titleLabel->setFont(font);
     if (m_body) m_body->document()->setDefaultFont(font);
 
-    // Re-render so the HTML branch re-bakes the font, then refit under the new
-    // metrics. rerenderBody() already calls refitBodyHeight()/scheduleRefit().
     refreshHeader(); // re-elide title under the new font metrics
-    rerenderBody();
+    m_bodyDirty = true;
+    if (m_collapsed) {
+        refitBodyHeight();
+    } else {
+        flushBodyRender();
+    }
 }

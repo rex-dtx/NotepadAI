@@ -28,6 +28,7 @@
 
 class QLabel;
 class QTextBrowser;
+class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
@@ -46,7 +47,7 @@ public:
 
     void setCollapsed(bool collapsed);
     bool isCollapsed() const { return m_collapsed; }
-    bool shouldPreserveExpanded() const { return m_userToggled || m_autoExpandedForDiff; }
+    bool shouldPreserveExpanded() const { return m_userToggled; }
 
     // Apply the chat (Default Font) typeface explicitly. Required because this
     // card and its inner QTextBrowser both carry a stylesheet, and styled
@@ -62,11 +63,13 @@ protected:
 
 private:
     void refreshHeader();
+    void scheduleBodyRender();
+    void flushBodyRender();
     void rerenderBody();
     void refitBodyHeight();
     void scheduleRefit();
-    void maybeAutoExpandForDiff();
     bool hasDiffContent() const;
+    bool isTerminalStatus() const;
     QString statusGlyph() const;
     QString computeEnrichedTitle() const;
 
@@ -87,8 +90,9 @@ private:
 
     bool m_collapsed = false;
     bool m_userToggled = false;          // user has explicitly clicked the chevron
-    bool m_autoExpandedForDiff = false;  // we've already auto-expanded once for diff content
+    bool m_bodyDirty = true;             // body document is stale vs m_content/rawInput/rawOutput
     bool m_refitScheduled = false;       // a deferred refit is already queued
+    QTimer *m_renderTimer = nullptr;     // coalesces expensive QTextDocument body renders
 
     QLabel *m_statusIcon = nullptr;
     QLabel *m_titleLabel = nullptr;
