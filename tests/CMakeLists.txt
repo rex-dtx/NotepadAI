@@ -776,6 +776,30 @@ target_sources(test_path_status_index PRIVATE
 )
 add_test(NAME PathStatusIndex COMMAND test_path_status_index)
 
+# --- SubmoduleStatusFetcher: per-submodule `git status` fan-out lifecycle.
+#     Regression for the delete-folder-in-submodule crash — a killed/crashed
+#     QProcess emits BOTH errorOccurred and finished, so onTaskFinished must be
+#     idempotent (no UAF / null deref, m_inflight decremented exactly once,
+#     entriesReady emitted exactly once). Driven offline via the spawn-override
+#     test seam (no real submodule or git binary required). ---
+qt_add_executable(test_submodule_status_fetcher test_submodule_status_fetcher.cpp)
+target_include_directories(test_submodule_status_fetcher PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/git
+)
+target_link_libraries(test_submodule_status_fetcher PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_submodule_status_fetcher PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/git/SubmoduleStatusFetcher.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/SubmoduleStatusFetcher.h
+    ${CMAKE_SOURCE_DIR}/src/git/GitProcessRunner.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitProcessRunner.h
+    ${CMAKE_SOURCE_DIR}/src/git/GitStatusParser.cpp
+    ${CMAKE_SOURCE_DIR}/src/git/GitStatusParser.h
+    ${CMAKE_SOURCE_DIR}/src/git/GitStatusEntry.h
+)
+add_test(NAME SubmoduleStatusFetcher COMMAND test_submodule_status_fetcher)
+
+
 # --- MarkdownRenderer: md4c HTML output, truncation, fence mapping, anchors, highlighting ---
 qt_add_executable(test_markdown_renderer test_markdown_renderer.cpp)
 target_include_directories(test_markdown_renderer PRIVATE

@@ -62,6 +62,19 @@ public:
 
     bool isRunning() const { return m_inflight > 0; }
 
+    // --- Test seam (offline, deterministic) ----------------------------------
+    // Override the spawned program/args so a unit test can drive the
+    // killed-process double-signal path (errorOccurred + finished for one
+    // QProcess) without a real submodule or a git executable on PATH. When set,
+    // fetch() bypasses the git-availability guard. Not used in production.
+    void setSpawnOverrideForTesting(const QString &program, const QStringList &args)
+    {
+        m_overrideProgram = program;
+        m_overrideArgs = args;
+    }
+    // Shorten the per-task kill timeout so a test can force the kill() path fast.
+    void setTimeoutMsForTesting(int ms) { m_timeoutMs = ms; }
+
 signals:
     // Aggregated entries from every submodule's status output. relPath fields
     // are already prefixed with each submodule's path so they are relative to
@@ -85,6 +98,12 @@ private:
     GitStatusEntries m_pending;
     int m_inflight   = 0;
     int m_generation = 0;
+
+    // Test-only spawn override (see setSpawnOverrideForTesting). Empty in
+    // production, in which case the real git executable + status argv are used.
+    QString     m_overrideProgram;
+    QStringList m_overrideArgs;
+    int         m_timeoutMs = 30000; // kPerSubmoduleTimeoutMs; overridable in tests
 };
 
 #endif // SUBMODULE_STATUS_FETCHER_H

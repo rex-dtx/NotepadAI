@@ -21,6 +21,7 @@
 #include "GitProcessRunner.h"
 #include "GitStatusParser.h"
 
+#include <QPointer>
 #include <QProcess>
 #include <QTimer>
 
@@ -28,7 +29,10 @@ namespace {
 constexpr int kPerSubmoduleTimeoutMs = 30000;
 } // namespace
 
-SubmoduleStatusFetcher::SubmoduleStatusFetcher(QObject *parent) : QObject(parent) {}
+SubmoduleStatusFetcher::SubmoduleStatusFetcher(QObject *parent) : QObject(parent)
+{
+    m_timeoutMs = kPerSubmoduleTimeoutMs;
+}
 
 SubmoduleStatusFetcher::~SubmoduleStatusFetcher()
 {
@@ -47,6 +51,13 @@ void SubmoduleStatusFetcher::cancelAll()
             t->proc->kill();
             t->proc->deleteLater();
         } else if (t->proc) {
+            // Already-finished proc. Under the current same-thread
+            // direct-connection design no further signal can fire on it, but we
+            // disconnect anyway before freeing `t`: it keeps both branches
+            // symmetric and stays UAF-safe if the connection type or thread
+            // affinity ever changes (a queued readyRead/finished would
+            // otherwise reference the freed Task). Mirrors row-30 convention.
+            t->proc->disconnect(this);
             t->proc->deleteLater();
         }
         delete t;
@@ -60,7 +71,9 @@ void SubmoduleStatusFetcher::fetch(const QVector<Submodule> &submodules)
 {
     cancelAll();
 
-    if (submodules.isEmpty() || GitProcessRunner::gitExecutable().isEmpty()) {
+    const bool haveSpawnTarget =
+        !m_overrideProgram.isEmpty() || !GitProcessRunner::gitExecutable().isEmpty();
+    if (submodules.isEmpty() || !haveSpawnTarget) {
         // Single-shot empty emission on the next tick so callers see a
         // deterministic signal regardless of whether anything spawned.
         QTimer::singleShot(0, this, [this]() {
@@ -84,15 +97,22 @@ void SubmoduleStatusFetcher::startOne(const Submodule &sub, int generation)
     t->generation = generation;
     t->proc = new QProcess(this);
 
-    const QString gitExe = GitProcessRunner::gitExecutable();
-    const QStringList argv = {
-        QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
-        QStringLiteral("status"), QStringLiteral("--porcelain=v2"),
-        QStringLiteral("-z"),
-        QStringLiteral("--untracked-files=all"),
-        QStringLiteral("--renames"),
-    };
-    t->proc->setProgram(gitExe);
+    QString program;
+    QStringList argv;
+    if (!m_overrideProgram.isEmpty()) {
+        program = m_overrideProgram;
+        argv = m_overrideArgs;
+    } else {
+        program = GitProcessRunner::gitExecutable();
+        argv = {
+            QStringLiteral("-c"), QStringLiteral("core.quotepath=false"),
+            QStringLiteral("status"), QStringLiteral("--porcelain=v2"),
+            QStringLiteral("-z"),
+            QStringLiteral("--untracked-files=all"),
+            QStringLiteral("--renames"),
+        };
+    }
+    t->proc->setProgram(program);
     t->proc->setArguments(argv);
     t->proc->setWorkingDirectory(sub.absPath);
     t->proc->setProcessEnvironment(GitProcessRunner::baseEnv());
@@ -103,6 +123,11 @@ void SubmoduleStatusFetcher::startOne(const Submodule &sub, int generation)
     });
     connect(t->proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, t](int code, QProcess::ExitStatus status) {
+        // A killed/crashed process emits BOTH finished and errorOccurred for
+        // the same QProcess. onTaskFinished disconnects this task on first
+        // entry, so the partner signal can never re-enter; the generation +
+        // null guards here are belt-and-suspenders for a stale/late delivery.
+        if (t->generation != m_generation || !t->proc) return;
         // Drain any remaining stdout the readyRead signal hasn't dispatched yet.
         t->stdoutBuf.append(t->proc->readAllStandardOutput());
         const int effectiveExit = (status == QProcess::CrashExit) ? -1 : code;
@@ -111,15 +136,21 @@ void SubmoduleStatusFetcher::startOne(const Submodule &sub, int generation)
     connect(t->proc, &QProcess::errorOccurred, this, [this, t](QProcess::ProcessError) {
         // Errors map to "skip this submodule" — drain whatever we have and
         // finish so other submodules still count down.
-        if (t->generation != m_generation) return;
+        if (t->generation != m_generation || !t->proc) return;
         t->stdoutBuf.append(t->proc->readAllStandardOutput());
         onTaskFinished(t, -1);
     });
 
-    // Per-task timeout: kill the process; finished() will fire with -1.
-    QTimer::singleShot(kPerSubmoduleTimeoutMs, t->proc, [t]() {
-        if (t->proc && t->proc->state() != QProcess::NotRunning) {
-            t->proc->kill();
+    // Per-task timeout: kill the process; its finished()/errorOccurred() will
+    // fire and flow through the (idempotent) onTaskFinished, so m_inflight is
+    // still decremented and entriesReady is never stranded. Guard the process
+    // with a QPointer and bind the timer to `this` (which outlives every Task)
+    // so a fire after the task was freed/cancelled is a harmless no-op rather
+    // than a use-after-free.
+    QPointer<QProcess> procGuard(t->proc);
+    QTimer::singleShot(m_timeoutMs, this, [procGuard]() {
+        if (procGuard && procGuard->state() != QProcess::NotRunning) {
+            procGuard->kill();
         }
     });
 
@@ -129,9 +160,21 @@ void SubmoduleStatusFetcher::startOne(const Submodule &sub, int generation)
 
 void SubmoduleStatusFetcher::onTaskFinished(Task *t, int exitCode)
 {
+    // IDEMPOTENT GUARD. A killed/crashed QProcess emits BOTH finished and
+    // errorOccurred, so this can be reached twice for one Task. The first entry
+    // nulls t->proc; a second entry bails HERE — before --m_inflight — so each
+    // Task decrements the counter exactly once (a double decrement would drive
+    // m_inflight negative or fire entriesReady while siblings are still live).
+    if (!t->proc) return;
+
+    // Sever this task from its QProcess up front so the partner signal of the
+    // pair cannot re-enter this slot at all (mirrors GitProcessRunner teardown).
+    t->proc->disconnect(this);
+
     if (t->generation != m_generation) {
         // Stale completion from a cancelled round — discard silently.
-        if (t->proc) t->proc->deleteLater();
+        t->proc->deleteLater();
+        t->proc = nullptr;
         return;
     }
 
@@ -148,12 +191,12 @@ void SubmoduleStatusFetcher::onTaskFinished(Task *t, int exitCode)
             m_pending.append(std::move(e));
         }
     }
-    // Note: exitCode != 0 (e.g. submodule directory is empty / not a repo)
-    // is silently treated as "no entries". This matches the user-visible
-    // outcome of no decorations for that subtree, which is preferable to a
-    // hard error.
+    // Note: exitCode != 0 (e.g. submodule directory is empty / not a repo, or
+    // the process was killed by the per-task timeout) is silently treated as
+    // "no entries". This matches the user-visible outcome of no decorations for
+    // that subtree, which is preferable to a hard error.
 
-    if (t->proc) t->proc->deleteLater();
+    t->proc->deleteLater();
     t->proc = nullptr;
 
     --m_inflight;
