@@ -34,6 +34,26 @@ GoalConfigWidget::GoalConfigWidget(AcpAgentRegistry *registry,
 {
     buildUi();
     populateAgents();
+    connect(m_agentCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+                const QString agentId = m_agentCombo->currentData().toString();
+                if (agentId.isEmpty() || !m_settings)
+                    return;
+
+                const QString settingsJson = m_settings->get("Ai/GoalAgentSettings", QString());
+                GoalAgentSettings goalSettings;
+                if (!settingsJson.isEmpty()) {
+                    goalSettings = GoalAgentSettings::fromJson(
+                        QJsonDocument::fromJson(settingsJson.toUtf8()).object());
+                }
+                if (goalSettings.agentId == agentId)
+                    return;
+
+                goalSettings.agentId = agentId;
+                m_settings->setValue(
+                    QStringLiteral("Ai/GoalAgentSettings"),
+                    QString::fromUtf8(QJsonDocument(goalSettings.toJson()).toJson(QJsonDocument::Compact)));
+            });
     populateTemplates();
     populatePresets();
     updateRowCount();
@@ -208,8 +228,17 @@ void GoalConfigWidget::populateAgents()
         if (a.id == goalSettings.agentId)
             selectedIdx = i;
     }
-    if (m_agentCombo->count() > 0)
-        m_agentCombo->setCurrentIndex(selectedIdx);
+    if (m_agentCombo->count() == 0)
+        return;
+
+    m_agentCombo->setCurrentIndex(selectedIdx);
+    const QString effectiveAgentId = m_agentCombo->currentData().toString();
+    if (!goalSettings.agentId.isEmpty() && goalSettings.agentId != effectiveAgentId) {
+        goalSettings.agentId = effectiveAgentId;
+        m_settings->setValue(
+            QStringLiteral("Ai/GoalAgentSettings"),
+            QString::fromUtf8(QJsonDocument(goalSettings.toJson()).toJson(QJsonDocument::Compact)));
+    }
 }
 
 void GoalConfigWidget::populateTemplates()

@@ -1,16 +1,20 @@
 #include "SendWithGoalDialog.h"
 
 #include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "ApplicationSettings.h"
 #include "GoalConfigWidget.h"
 
 SendWithGoalDialog::SendWithGoalDialog(AcpAgentRegistry *registry,
                                        ApplicationSettings *settings,
                                        QWidget *parent)
     : QDialog(parent)
+    , m_settings(settings)
 {
     setWindowTitle(tr("Send with Goal"));
     setMinimumWidth(440);
@@ -42,15 +46,14 @@ SendWithGoalDialog::SendWithGoalDialog(AcpAgentRegistry *registry,
 
 SendWithGoalDialog::~SendWithGoalDialog() = default;
 
-bool SendWithGoalDialog::validate()
+bool SendWithGoalDialog::validate(const GoalConfigResult &result)
 {
-    const GoalConfigResult r = m_goalConfig->result();
-    if (r.criteriaList.isEmpty()) {
+    if (result.criteriaList.isEmpty()) {
         m_errorLabel->setText(tr("At least one criterion is required."));
         m_errorLabel->show();
         return false;
     }
-    if (r.agentId.isEmpty()) {
+    if (result.agentId.isEmpty()) {
         m_errorLabel->setText(tr("Select a goal-agent."));
         m_errorLabel->show();
         return false;
@@ -61,8 +64,21 @@ bool SendWithGoalDialog::validate()
 
 void SendWithGoalDialog::onStart()
 {
-    if (!validate())
+    const GoalConfigResult result = m_goalConfig->result();
+    if (!validate(result))
         return;
+
+    if (m_settings) {
+        const QString settingsJson = m_settings->get("Ai/GoalAgentSettings", QString());
+        QJsonObject settingsObject = QJsonDocument::fromJson(settingsJson.toUtf8()).object();
+        if (settingsObject.value(QStringLiteral("agentId")).toString() != result.agentId) {
+            settingsObject.insert(QStringLiteral("agentId"), result.agentId);
+            m_settings->setValue(
+                QStringLiteral("Ai/GoalAgentSettings"),
+                QString::fromUtf8(QJsonDocument(settingsObject).toJson(QJsonDocument::Compact)));
+        }
+    }
+
     accept();
 }
 

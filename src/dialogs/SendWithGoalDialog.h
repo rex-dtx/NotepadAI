@@ -9,6 +9,7 @@ class ApplicationSettings;
 class GoalConfigWidget;
 class QLabel;
 class QPushButton;
+struct GoalConfigResult;
 
 struct SendWithGoalResult
 {
@@ -36,8 +37,9 @@ private slots:
     void onStart();
 
 private:
-    bool validate();
+    bool validate(const GoalConfigResult &result);
 
+    ApplicationSettings *m_settings = nullptr;
     GoalConfigWidget *m_goalConfig = nullptr;
     QLabel *m_errorLabel = nullptr;
     QPushButton *m_startBtn = nullptr;

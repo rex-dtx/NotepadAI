@@ -302,6 +302,29 @@ target_sources(test_goal_draft_generator PRIVATE
 )
 add_test(NAME GoalDraftGenerator COMMAND test_goal_draft_generator)
 
+# --- SendWithGoalDialog: persist and restore agent selection across dialog exits ---
+qt_add_executable(test_send_with_goal_dialog test_send_with_goal_dialog.cpp)
+target_include_directories(test_send_with_goal_dialog PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/dialogs
+    ${CMAKE_SOURCE_DIR}/src/widgets
+)
+target_link_libraries(test_send_with_goal_dialog PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+target_sources(test_send_with_goal_dialog PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/AcpAgentDefinition.h
+    ${CMAKE_SOURCE_DIR}/src/AcpAgentRegistry.cpp
+    ${CMAKE_SOURCE_DIR}/src/AcpAgentRegistry.h
+    ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.h
+    ${CMAKE_SOURCE_DIR}/src/GoalAgentSettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/GoalAgentSettings.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/SendWithGoalDialog.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/SendWithGoalDialog.h
+    ${CMAKE_SOURCE_DIR}/src/widgets/GoalConfigWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/widgets/GoalConfigWidget.h
+)
+add_test(NAME SendWithGoalDialog COMMAND test_send_with_goal_dialog)
+
 # --- AcpAgentManager: lifecycle, history worker-thread placement, shutdown ---
 qt_add_executable(test_acp_agent_manager test_acp_agent_manager.cpp)
 target_include_directories(test_acp_agent_manager PRIVATE
